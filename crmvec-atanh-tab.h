@@ -1,0 +1,56 @@
+/* from CORE-MATH src/binary64/atanh/atanh.c (MIT; see atanh.c here): cr_atanh's log tables
+   (they differ from asinh's); its B is log2's (LOG2_B0/B1) */
+static const double ATANH_R1[33] = 
+    {0x1p+0, 0x1.f5076p-1, 0x1.ea4bp-1, 0x1.dfc98p-1, 0x1.d5818p-1,
+    0x1.cb72p-1, 0x1.c199cp-1, 0x1.b7f76p-1, 0x1.ae8ap-1,
+    0x1.a5504p-1, 0x1.9c492p-1, 0x1.93738p-1, 0x1.8ace6p-1,
+    0x1.8258ap-1, 0x1.7a114p-1, 0x1.71f76p-1, 0x1.6a09ep-1,
+    0x1.6247ep-1, 0x1.5ab08p-1, 0x1.5342cp-1, 0x1.4bfdap-1,
+    0x1.44e08p-1, 0x1.3dea6p-1, 0x1.371a8p-1, 0x1.306fep-1,
+    0x1.29e9ep-1, 0x1.2387ap-1, 0x1.1d488p-1, 0x1.172b8p-1,
+    0x1.11302p-1, 0x1.0b558p-1, 0x1.059bp-1, 0x1p-1};
+static const double ATANH_R2[33] = 
+    {0x1p+0, 0x1.ffa74p-1, 0x1.ff4eap-1, 0x1.fef62p-1, 0x1.fe9dap-1,
+    0x1.fe452p-1, 0x1.fdeccp-1, 0x1.fd946p-1, 0x1.fd3c2p-1,
+    0x1.fce3ep-1, 0x1.fc8bcp-1, 0x1.fc33ap-1, 0x1.fbdbap-1,
+    0x1.fb83ap-1, 0x1.fb2bcp-1, 0x1.fad3ep-1, 0x1.fa7c2p-1,
+    0x1.fa246p-1, 0x1.f9ccap-1, 0x1.f975p-1, 0x1.f91d8p-1,
+    0x1.f8c6p-1, 0x1.f86e8p-1, 0x1.f8172p-1, 0x1.f7bfep-1,
+    0x1.f768ap-1, 0x1.f7116p-1, 0x1.f6ba4p-1, 0x1.f6632p-1,
+    0x1.f60c2p-1, 0x1.f5b52p-1, 0x1.f55e4p-1, 0x1.f5076p-1};
+static const double ATANH_L1[33][2] = {
+    {0x0p+0, 0x0p+0}, {-0x1.532c1269e2038p-27, 0x1.62e5p-7},
+    {0x1.ce42d81b54e84p-27, 0x1.62e3cp-6}, {-0x1.25826f815ec3dp-26, 0x1.0a2acp-5},
+    {0x1.0db1b1e7cee11p-26, 0x1.62e4ap-5}, {-0x1.1f3a8c6c95003p-26, 0x1.bb9dcp-5},
+    {-0x1.774cd4fb8c30dp-26, 0x1.0a2b2p-4}, {0x1.452e56c030a0ap-29, 0x1.3687fp-4},
+    {0x1.6b63c4966a79ap-28, 0x1.62e41p-4}, {-0x1.b20a21ccb525ep-28, 0x1.8f40ap-4},
+    {0x1.4006cfb3d8f85p-26, 0x1.bb9d1p-4}, {-0x1.cdb026b310c41p-26, 0x1.e7f9bp-4},
+    {-0x1.69124fdc0f16dp-26, 0x1.0a2b08p-3}, {-0x1.084656cdc2727p-26, 0x1.205958p-3},
+    {-0x1.376fa8b0357fdp-26, 0x1.3687cp-3}, {0x1.e56ae55a47b4ap-28, 0x1.4cb5e8p-3},
+    {0x1.070ff8834eeb4p-26, 0x1.62e44p-3}, {0x1.623516109f4fep-26, 0x1.79129p-3},
+    {-0x1.ec656b95fbdacp-29, 0x1.8f40bp-3}, {0x1.f0ca2e729f51p-28, 0x1.a56ed8p-3},
+    {-0x1.7d260a858354ap-26, 0x1.bb9d68p-3}, {0x1.e7279075503d3p-27, 0x1.d1cb9p-3},
+    {0x1.39e1a0a503873p-27, 0x1.e7f9dp-3}, {0x1.cd86d7b87c3d6p-26, 0x1.fe27d8p-3},
+    {0x1.060ab88de341ep-26, 0x1.0a2b24p-2}, {0x1.20a860d3f939p-28, 0x1.154244p-2},
+    {-0x1.dacee95fc2f1p-27, 0x1.205974p-2}, {0x1.45de3a86e0acap-26, 0x1.2b707p-2},
+    {0x1.c164cbfb991afp-27, 0x1.3687bp-2}, {0x1.d3f66b24225efp-26, 0x1.419ec4p-2},
+    {0x1.fc023efa144bap-26, 0x1.4cb5f8p-2}, {0x1.086a8af6f26cp-28, 0x1.57cd28p-2},
+    {-0x1.05c610ca86c39p-30, 0x1.62e43p-2}};
+static const double ATANH_L2[33][2] = {
+    {0x0p+0, 0x0p+0}, {-0x1.37e152a129e4ep-28, 0x1.632p-12},
+    {-0x1.3f6c916b8be9cp-26, 0x1.63p-11}, {0x1.20505936739d5p-26, 0x1.0a24p-10},
+    {-0x1.23e2e8cb541bap-26, 0x1.62dcp-10}, {-0x1.acb7983ac4f5ep-32, 0x1.bbap-10},
+    {0x1.6f7c7689c63aep-28, 0x1.0a2ap-9}, {0x1.f5ca695b4c58bp-30, 0x1.368cp-9},
+    {-0x1.c6c18bd953226p-27, 0x1.62e6p-9}, {0x1.7a516c34846bdp-26, 0x1.8f46p-9},
+    {-0x1.f3b83dd8b853p-27, 0x1.bbap-9}, {-0x1.c3459046e4e57p-31, 0x1.e8p-9},
+    {0x1.b5c7e34cb79f6p-38, 0x1.0a2cp-8}, {-0x1.2487e9af9a692p-27, 0x1.205cp-8},
+    {0x1.f21bbc4ad79cep-26, 0x1.3687p-8}, {-0x1.550ffc857b731p-29, 0x1.4cb7p-8},
+    {0x1.87458ec1b7b34p-27, 0x1.62e2p-8}, {0x1.103d4fe83ee81p-26, 0x1.7911p-8},
+    {0x1.810483d3b398cp-27, 0x1.8f44p-8}, {-0x1.2085cb340608ep-27, 0x1.a573p-8},
+    {0x1.12698a119c42fp-26, 0x1.bb9dp-8}, {-0x1.edb8c172b4c33p-26, 0x1.d1ccp-8},
+    {-0x1.8b55b87a5e238p-26, 0x1.e7fep-8}, {0x1.be5e17763f78ap-26, 0x1.fe2bp-8},
+    {-0x1.c2d496790073ep-30, 0x1.0a2a8p-7}, {0x1.6542f523abeecp-26, 0x1.1541p-7},
+    {-0x1.b7fdbe5b193f8p-26, 0x1.205ap-7}, {0x1.fa4d42fe30c7cp-26, 0x1.2b7p-7},
+    {0x1.0d46ad04adc86p-26, 0x1.36888p-7}, {-0x1.1c22d02d17c4cp-26, 0x1.419fp-7},
+    {0x1.a7d1e330dcccep-30, 0x1.4cb7p-7}, {0x1.187025e656ba3p-31, 0x1.57cdp-7},
+    {-0x1.532c1269e2038p-27, 0x1.62e5p-7}};

@@ -7,10 +7,14 @@ CC      ?= gcc
 CFLAGS  ?= -O2
 FP      := -ffp-contract=off
 CR      := expf.c exp2f.c exp10f.c logf.c log2f.c log10f.c sinf.c cosf.c tanf.c powf.c \
-           exp.c sin.c cos.c tan.c log/log.c pow/pow.c
+           exp.c sin.c cos.c tan.c log/log.c pow/pow.c \
+           acosf.c acoshf.c asinf.c asinhf.c atanf.c atan2f.c atanhf.c cbrtf.c coshf.c \
+           erff.c erfcf.c expm1f.c hypotf.c log1pf.c sinhf.c tanhf.c \
+           acos.c acosh.c asin.c asinh.c atan.c atanh.c cbrt.c cosh.c erf.c erfc.c \
+           exp10.c exp2.c expm1.c hypot.c log1p.c log2.c sinh.c tanh.c atan2/atan2.c log10/log10.c
 HDR     := $(wildcard crmvec-*.h)
 
-all: libmvec.so.1 crtest libcrref.so
+all: libmvec.so.1 crtest libcrref.so bcheck hypot-midpoints
 
 libmvec.so.1: crmvec.c $(HDR) $(CR)
 	$(CC) $(CFLAGS) $(FP) -fPIC -shared -Wl,-soname,libmvec.so.1 -o $@ crmvec.c $(CR) -lm
@@ -21,7 +25,17 @@ crtest: crtest.c crtest-hard.h crmvec.c $(HDR) $(CR)
 libcrref.so: crref.c $(CR)
 	$(CC) $(CFLAGS) $(FP) -fPIC -shared -fopenmp -o $@ crref.c $(CR) -lm
 
-clean:
-	rm -f libmvec.so.1 crtest libcrref.so
+# baseline x86-64 on purpose (no -mavx): the SSE2 entry points' check must run on a CPU without AVX
+bcheck: bcheck.c
+	$(CC) $(CFLAGS) -o $@ bcheck.c -ldl
 
-.PHONY: all clean
+hypot-midpoints: hypot-midpoints.c crmvec.c $(HDR) $(CR)
+	$(CC) $(CFLAGS) $(FP) -mavx2 -mfma -o $@ hypot-midpoints.c crmvec.c $(CR) -lm
+
+clean:
+	rm -f libmvec.so.1 crtest libcrref.so bcheck hypot-midpoints
+
+print-sources:   # for the export script: every CORE-MATH source the build uses
+	@echo $(CR)
+
+.PHONY: all clean print-sources

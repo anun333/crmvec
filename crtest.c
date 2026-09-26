@@ -9,9 +9,9 @@
                              half with a random exponent over all doubles,
                              both signs), CORE-MATH's own hard cases +-1000
                              ulps, and edge values +-64 ulps
-     crtest verify2 [f...]   two arguments (powf, pow): 2^30 random pairs
-                             (main range, integer exponents, x near 1, raw
-                             bit patterns), plus every pair of ~40 specials
+     crtest verify2 [f...]   two arguments (powf, pow, atan2f, atan2, hypotf,
+                             hypot): 2^30 random pairs each, in four sets per
+                             kind (see P2), plus every pair of 40 specials
      crtest time             one core, min of 7 passes after a warm-up: crmvec
                              vs glibc's libmvec (dlopen by absolute path) vs
                              scalar CORE-MATH, twice: 16M inputs (memory-
@@ -33,40 +33,55 @@ typedef __m256 (*v8)(__m256);
 typedef __m256 (*v8v)(__m256, __m256);
 typedef __m256d (*v4)(__m256d);
 typedef __m256d (*v4v)(__m256d, __m256d);
-__m256 _ZGVdN8v_expf(__m256), _ZGVdN8v_exp2f(__m256), _ZGVdN8v_exp10f(__m256);
-__m256 _ZGVdN8v_logf(__m256), _ZGVdN8v_log2f(__m256), _ZGVdN8v_log10f(__m256);
-__m256 _ZGVdN8v_sinf(__m256), _ZGVdN8v_cosf(__m256), _ZGVdN8v_tanf(__m256), _ZGVdN8vv_powf(__m256, __m256);
-__m256d _ZGVdN4v_exp(__m256d), _ZGVdN4v_log(__m256d), _ZGVdN4v_sin(__m256d), _ZGVdN4v_cos(__m256d);
-__m256d _ZGVdN4v_tan(__m256d), _ZGVdN4vv_pow(__m256d, __m256d);
-float cr_expf(float), cr_exp2f(float), cr_exp10f(float), cr_logf(float), cr_log2f(float), cr_log10f(float);
-float cr_sinf(float), cr_cosf(float), cr_tanf(float), cr_powf(float, float);
-double cr_exp(double), cr_log(double), cr_sin(double), cr_cos(double), cr_tan(double), cr_pow(double, double);
+#define F1(n) __m256 _ZGVdN8v_##n(__m256); float cr_##n(float);
+#define D1(n) __m256d _ZGVdN4v_##n(__m256d); double cr_##n(double);
+F1(expf) F1(exp2f) F1(exp10f) F1(logf) F1(log2f) F1(log10f) F1(sinf) F1(cosf) F1(tanf)
+F1(acosf) F1(acoshf) F1(asinf) F1(asinhf) F1(atanf) F1(atanhf) F1(cbrtf) F1(coshf) F1(erff) F1(erfcf)
+F1(expm1f) F1(log1pf) F1(sinhf) F1(tanhf)
+D1(exp) D1(log) D1(sin) D1(cos) D1(tan)
+D1(acos) D1(acosh) D1(asin) D1(asinh) D1(atan) D1(atanh) D1(cbrt) D1(cosh) D1(erf) D1(erfc)
+D1(exp10) D1(exp2) D1(expm1) D1(log10) D1(log1p) D1(log2) D1(sinh) D1(tanh)
+__m256 _ZGVdN8vv_powf(__m256, __m256), _ZGVdN8vv_atan2f(__m256, __m256), _ZGVdN8vv_hypotf(__m256, __m256);
+float cr_powf(float, float), cr_atan2f(float, float), cr_hypotf(float, float);
+__m256d _ZGVdN4vv_pow(__m256d, __m256d), _ZGVdN4vv_atan2(__m256d, __m256d), _ZGVdN4vv_hypot(__m256d, __m256d);
+double cr_pow(double, double), cr_atan2(double, double), cr_hypot(double, double);
 #include "crtest-hard.h"   /* EXP_HARD, COS_HARD, TAN_HARD */
 
-/* lo < hi: uniform timing range; lo == hi == 0: log-uniform positive */
+/* lo < hi: uniform timing range; lo == hi == 0: log-uniform positive.
+   Timing ranges keep every input on glibc's fast path: until 2026-09-26
+   they reached overflow/underflow ([-104, 89] for expf), which sends a
+   whole glibc vector to its scalar slow path and made glibc look ~4x
+   slower than it is. */
+#define FE(n, lo, hi) {#n, _ZGVdN8v_##n, cr_##n, lo, hi}
 static const struct { const char *name; v8 vec; float (*cr)(float); float lo, hi; } F[] = {
-  /* timing ranges keep every input on glibc's fast path: until 2026-09-26
-     they reached overflow/underflow ([-104, 89] for expf), which sends a
-     whole glibc vector to its scalar slow path and made glibc look ~4x
-     slower than it is */
-  {"expf",   _ZGVdN8v_expf,   cr_expf,   -87.f,  87.f},
-  {"exp2f",  _ZGVdN8v_exp2f,  cr_exp2f,  -125.f, 125.f},
-  {"exp10f", _ZGVdN8v_exp10f, cr_exp10f, -37.f,  38.f},
-  {"logf",   _ZGVdN8v_logf,   cr_logf,   0, 0},
-  {"log2f",  _ZGVdN8v_log2f,  cr_log2f,  0, 0},
-  {"log10f", _ZGVdN8v_log10f, cr_log10f, 0, 0},
-  {"sinf",   _ZGVdN8v_sinf,   cr_sinf,   -100.f, 100.f},
-  {"cosf",   _ZGVdN8v_cosf,   cr_cosf,   -100.f, 100.f},
-  {"tanf",   _ZGVdN8v_tanf,   cr_tanf,   -100.f, 100.f},
+  FE(expf, -87.f, 87.f), FE(exp2f, -125.f, 125.f), FE(exp10f, -37.f, 38.f),
+  FE(logf, 0, 0), FE(log2f, 0, 0), FE(log10f, 0, 0),
+  FE(sinf, -100.f, 100.f), FE(cosf, -100.f, 100.f), FE(tanf, -100.f, 100.f),
+  FE(acosf, -1.f, 1.f), FE(acoshf, 1.f, 1000.f), FE(asinf, -1.f, 1.f), FE(asinhf, -1000.f, 1000.f),
+  FE(atanf, -1000.f, 1000.f), FE(atanhf, -1.f, 1.f), FE(cbrtf, -1000.f, 1000.f), FE(coshf, -80.f, 80.f),
+  FE(erff, -5.f, 5.f), FE(erfcf, -5.f, 9.f), FE(expm1f, -80.f, 80.f), FE(log1pf, -0.9f, 1000.f),
+  FE(sinhf, -80.f, 80.f), FE(tanhf, -10.f, 10.f),
 };
 #define NF (sizeof F / sizeof F[0])
 
-static const struct { const char *name; v4 vec; double (*cr)(double); double lo, hi; const double *hard; int nhard; } D[] = {
-  {"exp", _ZGVdN4v_exp, cr_exp, -746.0, 710.0, EXP_HARD, sizeof EXP_HARD / sizeof EXP_HARD[0]},
-  {"log", _ZGVdN4v_log, cr_log, 0, 0, 0, 0},
-  {"sin", _ZGVdN4v_sin, cr_sin, -100.0, 100.0, 0, 0},
-  {"cos", _ZGVdN4v_cos, cr_cos, -100.0, 100.0, COS_HARD, sizeof COS_HARD / sizeof COS_HARD[0]},
-  {"tan", _ZGVdN4v_tan, cr_tan, -100.0, 100.0, TAN_HARD, sizeof TAN_HARD / sizeof TAN_HARD[0]},
+#define NOHARD 0, 0
+#define HARDOF(a) a, sizeof a / sizeof a[0]
+#define DE(n, lo, hi, tlo, thi, hard) {#n, _ZGVdN4v_##n, cr_##n, lo, hi, tlo, thi, hard}
+static const struct { const char *name; v4 vec; double (*cr)(double); double lo, hi, tlo, thi; const double *hard; int nhard; } D[] = {
+  DE(exp, -746.0, 710.0, -700.0, 700.0, HARDOF(EXP_HARD)),
+  DE(log, 0, 0, 0, 0, NOHARD),
+  DE(sin, -100.0, 100.0, -100.0, 100.0, NOHARD),
+  DE(cos, -100.0, 100.0, -100.0, 100.0, HARDOF(COS_HARD)),
+  DE(tan, -100.0, 100.0, -100.0, 100.0, HARDOF(TAN_HARD)),
+  DE(acos, -1.0, 1.0, -1.0, 1.0, NOHARD), DE(asin, -1.0, 1.0, -1.0, 1.0, NOHARD),
+  DE(atan, -1000.0, 1000.0, -1000.0, 1000.0, NOHARD), DE(acosh, 1.0, 1000.0, 1.0, 1000.0, NOHARD),
+  DE(asinh, -1000.0, 1000.0, -1000.0, 1000.0, NOHARD), DE(atanh, -1.0, 1.0, -1.0, 1.0, NOHARD),
+  DE(cbrt, -1e6, 1e6, -1e6, 1e6, NOHARD), DE(cosh, -711.0, 711.0, -700.0, 700.0, NOHARD),
+  DE(sinh, -711.0, 711.0, -700.0, 700.0, NOHARD), DE(tanh, -20.0, 20.0, -20.0, 20.0, NOHARD),
+  DE(erf, -6.0, 6.0, -6.0, 6.0, NOHARD), DE(erfc, -6.0, 27.3, -6.0, 20.0, NOHARD),
+  DE(exp2, -1075.0, 1024.0, -1000.0, 1000.0, NOHARD), DE(exp10, -324.0, 309.0, -300.0, 300.0, NOHARD),
+  DE(expm1, -40.0, 710.0, -40.0, 700.0, NOHARD), DE(log2, 0, 0, 0, 0, NOHARD), DE(log10, 0, 0, 0, 0, NOHARD),
+  DE(log1p, -1.0, 1000.0, -0.9, 1000.0, NOHARD),
 };
 #define ND (sizeof D / sizeof D[0])
 
@@ -197,24 +212,67 @@ static int verify64(int argc, char **argv)
 
 /* ---- two arguments: sampled ------------------------------------------- */
 
-static void pair_input(uint64_t *s, int set, double *x, double *y, int is_float)
+/* two-argument functions: kind 0 = pow-like (main range, integer y, x near 1,
+   raw bits), kind 1 = atan2/hypot-like (both uniform, both log-uniform with
+   random signs, one tiny against one huge, raw bits) */
+static const struct { const char *name; int is_float, kind; v8v vf; float (*cf)(float, float); v4v vd; double (*cd)(double, double); } P2[] = {
+  {"powf", 1, 0, _ZGVdN8vv_powf, cr_powf, 0, 0}, {"pow", 0, 0, 0, 0, _ZGVdN4vv_pow, cr_pow},
+  {"atan2f", 1, 1, _ZGVdN8vv_atan2f, cr_atan2f, 0, 0}, {"atan2", 0, 1, 0, 0, _ZGVdN4vv_atan2, cr_atan2},
+  {"hypotf", 1, 1, _ZGVdN8vv_hypotf, cr_hypotf, 0, 0}, {"hypot", 0, 1, 0, 0, _ZGVdN4vv_hypot, cr_hypot},
+};
+#define NP2 (sizeof P2 / sizeof P2[0])
+static const char *SETS[2][4] = {{"main", "integer y", "x near 1", "raw bits"}, {"uniform", "log-uniform", "tiny vs huge", "raw bits"}};
+
+static double sgn(uint64_t r) { return (r >> 7) & 1 ? -1.0 : 1.0; }
+
+static void pair_input(uint64_t *s, int kind, int set, double *x, double *y, int is_float)
 {
   uint64_t r1 = splitmix(s), r2 = splitmix(s);
-  switch (set) {
+  if (set == 3) {                                          /* raw bit patterns */
+    if (is_float) { *x = f_of((uint32_t)r1); *y = f_of((uint32_t)r2); }
+    else { *x = d_of(r1); *y = d_of(r2); }
+    return;
+  }
+  if (kind == 0) switch (set) {
   case 0:                                                  /* main: x log-uniform > 0, y moderate */
     if (is_float) { *x = exp2(unit(r1) * 16.0 - 8.0); *y = unit(r2) * 30.0 - 15.0; }       /* |y log2 x| < 120 */
     else { *x = exp2(unit(r1) * 60.0 - 30.0); *y = unit(r2) * 60.0 - 30.0; }               /* < 900 */
     break;
-  case 1:                                                  /* integer y, any sign of x */
-    *x = (unit(r1) * 8.0 - 4.0); *y = (double)((int64_t)(r2 % 129) - 64);
-    break;
-  case 2:                                                  /* x near 1, large y */
-    *x = 1.0 + (unit(r1) - 0.5) * 0x1p-10; *y = (unit(r2) - 0.5) * 0x1p20;
-    break;
-  default:                                                 /* raw bit patterns */
-    if (is_float) { *x = f_of((uint32_t)r1); *y = f_of((uint32_t)r2); }
-    else { *x = d_of(r1); *y = d_of(r2); }
+  case 1: *x = (unit(r1) * 8.0 - 4.0); *y = (double)((int64_t)(r2 % 129) - 64); break;     /* integer y */
+  default: *x = 1.0 + (unit(r1) - 0.5) * 0x1p-10; *y = (unit(r2) - 0.5) * 0x1p20;          /* x near 1 */
+  } else switch (set) {
+  case 0: *x = unit(r1) * 200.0 - 100.0; *y = unit(r2) * 200.0 - 100.0; break;
+  case 1: { double e = is_float ? 250.0 : 2000.0;                                             /* log-uniform, signs */
+    *x = sgn(r1) * exp2(unit(r1) * e - e / 2); *y = sgn(r2) * exp2(unit(r2) * e - e / 2); } break;
+  default: { double e = is_float ? 100.0 : 900.0;                                             /* tiny vs huge */
+    *x = sgn(r1) * exp2(unit(r1) * 20.0 + e); *y = sgn(r2) * exp2(-unit(r2) * 20.0 - e);
+    if (r1 & 1) { double t = *x; *x = *y; *y = t; } }
   }
+  if (is_float) { *x = (float)*x; *y = (float)*y; }
+}
+
+static int eval_pairs(unsigned f, const double *x, const double *y, char *firstmsg, size_t cap)
+{
+  int b = 0;
+  if (P2[f].is_float) {
+    float xf[8], yf[8], r[8];
+    for (int i = 0; i < 8; i++) { xf[i] = (float)x[i]; yf[i] = (float)y[i]; }
+    _mm256_storeu_ps(r, P2[f].vf(_mm256_loadu_ps(xf), _mm256_loadu_ps(yf)));
+    for (int i = 0; i < 8; i++) { float w = P2[f].cf(xf[i], yf[i]); if (!same_f(r[i], w)) {
+      b++;
+#pragma omp critical
+      if (!firstmsg[0]) snprintf(firstmsg, cap, " (first: %s(%a, %a) = %a, want %a)", P2[f].name, xf[i], yf[i], r[i], w);
+    } }
+  } else {
+    double r[8];
+    for (int h = 0; h < 8; h += 4) _mm256_storeu_pd(r + h, P2[f].vd(_mm256_loadu_pd(x + h), _mm256_loadu_pd(y + h)));
+    for (int i = 0; i < 8; i++) { double w = P2[f].cd(x[i], y[i]); if (!same_d(r[i], w)) {
+      b++;
+#pragma omp critical
+      if (!firstmsg[0]) snprintf(firstmsg, cap, " (first: %s(%a, %a) = %a, want %a)", P2[f].name, x[i], y[i], r[i], w);
+    } }
+  }
+  return b;
 }
 
 static int verify2(int argc, char **argv)
@@ -225,57 +283,31 @@ static int verify2(int argc, char **argv)
                               0x1.0000000000001p0, 0x1.fffffffffffffp-1, 127.0, 128.0, -149.0, 1023.0, 1024.0, -1075.0, 0.75, 7.0};
   const int nsp = sizeof sp / sizeof sp[0];
   int bad_fns = 0;
-  for (int fl = 1; fl >= 0; fl--) {                        /* powf first, then pow */
-    const char *name = fl ? "powf" : "pow";
-    if (!wanted(name, argc, argv)) continue;
-    unsigned long long bad[4] = {0}, n = 0; char firstmsg[160] = "";
+  for (unsigned f = 0; f < NP2; f++) {
+    if (!wanted(P2[f].name, argc, argv)) continue;
+    unsigned long long bad[4] = {0}, n = 0; char firstmsg[200] = "";
 #pragma omp parallel for reduction(+ : n) schedule(static)
     for (long long blk = 0; blk < (1LL << 27); blk++) {    /* 2^27 blocks of 8 pairs = 2^30 */
-      uint64_t s = (uint64_t)blk * 0x9e3779b1ULL + 7 + fl; int set = blk & 3;
-      double x[8], y[8]; for (int i = 0; i < 8; i++) pair_input(&s, set, &x[i], &y[i], fl);
-      int b = 0;
-      if (fl) {
-        float xf[8], yf[8], r[8];
-        for (int i = 0; i < 8; i++) { xf[i] = (float)x[i]; yf[i] = (float)y[i]; }
-        _mm256_storeu_ps(r, _ZGVdN8vv_powf(_mm256_loadu_ps(xf), _mm256_loadu_ps(yf)));
-        for (int i = 0; i < 8; i++) if (!same_f(r[i], cr_powf(xf[i], yf[i]))) {
-          b++;
-#pragma omp critical
-          if (!firstmsg[0]) snprintf(firstmsg, sizeof firstmsg, " (first: powf(%a, %a) = %a, want %a)", xf[i], yf[i], r[i], cr_powf(xf[i], yf[i]));
-        }
-      } else {
-        double r[8];
-        for (int h = 0; h < 8; h += 4)
-          _mm256_storeu_pd(r + h, _ZGVdN4vv_pow(_mm256_loadu_pd(x + h), _mm256_loadu_pd(y + h)));
-        for (int i = 0; i < 8; i++) if (!same_d(r[i], cr_pow(x[i], y[i]))) {
-          b++;
-#pragma omp critical
-          if (!firstmsg[0]) snprintf(firstmsg, sizeof firstmsg, " (first: pow(%a, %a) = %a, want %a)", x[i], y[i], r[i], cr_pow(x[i], y[i]));
-        }
-      }
+      uint64_t s = (uint64_t)blk * 0x9e3779b1ULL + 7 + f; int set = blk & 3;
+      double x[8], y[8]; for (int i = 0; i < 8; i++) pair_input(&s, P2[f].kind, set, &x[i], &y[i], P2[f].is_float);
+      int b = eval_pairs(f, x, y, firstmsg, sizeof firstmsg);
       if (b) {
 #pragma omp atomic
         bad[set] += b;
       }
       n += 8;
     }
-    unsigned long long sb = 0, sn = 0;                      /* every pair of specials, both orders */
+    unsigned long long sb = 0, sn = 0;                      /* every pair of specials */
     for (int i = 0; i < nsp; i++)
-      for (int j = 0; j < nsp; j += 4) {
-        double x[4], y[4], r[4];
-        for (int k = 0; k < 4; k++) { x[k] = sp[i]; y[k] = sp[(j + k) % nsp]; }
-        if (fl) {
-          float xf[8] = {0}, yf[8] = {0}, rf[8];
-          for (int k = 0; k < 4; k++) { xf[k] = (float)x[k]; yf[k] = (float)y[k]; }
-          _mm256_storeu_ps(rf, _ZGVdN8vv_powf(_mm256_loadu_ps(xf), _mm256_loadu_ps(yf)));
-          for (int k = 0; k < 4; k++) { sn++; if (!same_f(rf[k], cr_powf(xf[k], yf[k]))) sb++; }
-        } else {
-          _mm256_storeu_pd(r, _ZGVdN4vv_pow(_mm256_loadu_pd(x), _mm256_loadu_pd(y)));
-          for (int k = 0; k < 4; k++) { sn++; if (!same_d(r[k], cr_pow(x[k], y[k]))) sb++; }
-        }
+      for (int j = 0; j < nsp; j += 8) {
+        double x[8], y[8];
+        for (int k = 0; k < 8; k++) { x[k] = sp[i]; y[k] = sp[(j + k) % nsp]; }
+        if (P2[f].is_float) for (int k = 0; k < 8; k++) { x[k] = (float)x[k]; y[k] = (float)y[k]; }
+        sb += eval_pairs(f, x, y, firstmsg, sizeof firstmsg); sn += 8;
       }
-    printf("%-4s random %llu pairs: %llu differ (main %llu, integer y %llu, x near 1 %llu, raw bits %llu) | specials %llu: %llu%s\n",
-           name, n, bad[0] + bad[1] + bad[2] + bad[3], bad[0], bad[1], bad[2], bad[3], sn, sb, firstmsg);
+    const char *const *L = SETS[P2[f].kind];
+    printf("%-6s random %llu pairs: %llu differ (%s %llu, %s %llu, %s %llu, %s %llu) | specials %llu: %llu%s\n",
+           P2[f].name, n, bad[0] + bad[1] + bad[2] + bad[3], L[0], bad[0], L[1], bad[1], L[2], bad[2], L[3], bad[3], sn, sb, firstmsg);
     bad_fns += (bad[0] + bad[1] + bad[2] + bad[3] + sb) != 0;
   }
   printf("VERDICT: %s\n", bad_fns ? "DIFFERS from CORE-MATH" : "IDENTICAL to CORE-MATH on every pair tried");
@@ -286,7 +318,11 @@ static int verify2(int argc, char **argv)
 
 static double now(void) { struct timespec t; clock_gettime(CLOCK_MONOTONIC, &t); return t.tv_sec + 1e-9 * t.tv_nsec; }
 
-#define BEST(dst, body) do { double t0_ = now(); body; double t_ = now() - t0_; if (pass && t_ < dst) dst = t_; } while (0)
+/* The barrier makes every store in body happen before the clock is read: clang
+   22 deleted the floor loop without it (its stores are dead to the optimiser),
+   which printed 0.000 ns and FOLDED. It emits no instruction, and it only
+   works on buffers whose address was published (see timing()). */
+#define BEST(dst, body) do { double t0_ = now(); body; __asm__ volatile("" ::: "memory"); double t_ = now() - t0_; if (pass && t_ < dst) dst = t_; } while (0)
 
 static void report(const char *name, const double *m, const double *h, double nm, double nh, double nhs)
 {
@@ -299,6 +335,10 @@ static int timing(int argc, char **argv)
   const long N = 1L << 24, H = 4096, R = 1024, RS = 128;
   float *x = aligned_alloc(32, N * 4), *x2 = aligned_alloc(32, N * 4), *y = aligned_alloc(32, N * 4);
   double *xd = aligned_alloc(32, N * 8), *xd2 = aligned_alloc(32, N * 8), *yd = aligned_alloc(32, N * 8);
+  /* Publish the buffers' addresses, so the barrier in BEST counts as a reader
+     of them. Without this LLVM may assume no asm sees freshly allocated
+     memory, and delete stores a later loop overwrites. */
+  __asm__ volatile("" :: "r"(x), "r"(x2), "r"(y), "r"(xd), "r"(xd2), "r"(yd) : "memory");
   void *g = dlopen("/usr/lib/x86_64-linux-gnu/libmvec.so.1", RTLD_NOW | RTLD_LOCAL);
   if (!g) { printf("VOID: glibc libmvec not loadable\n"); return 1; }
   double la[3]; getloadavg(la, 3);
@@ -316,6 +356,7 @@ static int timing(int argc, char **argv)
     }
     char sym[40]; snprintf(sym, sizeof sym, "_ZGVdN8v_%s", F[f].name);
     v8 gv = (v8)dlsym(g, sym), cv = F[f].vec; float (*cr)(float) = F[f].cr;
+    if (!gv) { printf("%-7s glibc has no %s\n", F[f].name, sym); continue; }
     double m[3] = {1e9, 1e9, 1e9}, h[3] = {1e9, 1e9, 1e9};
     for (int pass = 0; pass < 8; pass++) {
       BEST(m[0], for (long i = 0; i < N; i += 8) _mm256_storeu_ps(y + i, cv(_mm256_loadu_ps(x + i))));
@@ -327,28 +368,15 @@ static int timing(int argc, char **argv)
     }
     report(F[f].name, m, h, N, H * R, H * RS);
   }
-  if (wanted("powf", argc, argv)) {
-    for (long i = 0; i < N; i++) { x[i] = (float)exp2(rand() / (RAND_MAX + 1.0) * 20 - 10); x2[i] = (float)(rand() / (RAND_MAX + 1.0) * 20 - 10); }
-    v8v gv = (v8v)dlsym(g, "_ZGVdN8vv_powf");
-    double m[3] = {1e9, 1e9, 1e9}, h[3] = {1e9, 1e9, 1e9};
-    for (int pass = 0; pass < 8; pass++) {
-      BEST(m[0], for (long i = 0; i < N; i += 8) _mm256_storeu_ps(y + i, _ZGVdN8vv_powf(_mm256_loadu_ps(x + i), _mm256_loadu_ps(x2 + i))));
-      BEST(m[1], for (long i = 0; i < N; i += 8) _mm256_storeu_ps(y + i, gv(_mm256_loadu_ps(x + i), _mm256_loadu_ps(x2 + i))));
-      BEST(m[2], for (long i = 0; i < N; i++) y[i] = cr_powf(x[i], x2[i]));
-      BEST(h[0], for (long r = 0; r < R; r++) for (long i = 0; i < H; i += 8) _mm256_storeu_ps(y + i, _ZGVdN8vv_powf(_mm256_loadu_ps(x + i), _mm256_loadu_ps(x2 + i))));
-      BEST(h[1], for (long r = 0; r < R; r++) for (long i = 0; i < H; i += 8) _mm256_storeu_ps(y + i, gv(_mm256_loadu_ps(x + i), _mm256_loadu_ps(x2 + i))));
-      BEST(h[2], for (long r = 0; r < RS; r++) for (long i = 0; i < H; i++) y[i] = cr_powf(x[i], x2[i]));
-    }
-    report("powf", m, h, N, H * R, H * RS);
-  }
   for (unsigned f = 0; f < ND; f++) {
     if (!wanted(D[f].name, argc, argv)) continue;
     for (long i = 0; i < N; i++) {
       double u = rand() / (RAND_MAX + 1.0);
-      xd[i] = D[f].name[0] == 'e' ? -700.0 + 1400.0 * u : D[f].hi > D[f].lo ? D[f].lo + u * (D[f].hi - D[f].lo) : exp(u * 1400 - 700);
+      xd[i] = D[f].thi > D[f].tlo ? D[f].tlo + u * (D[f].thi - D[f].tlo) : exp(u * 1400 - 700);
     }
     char sym[40]; snprintf(sym, sizeof sym, "_ZGVdN4v_%s", D[f].name);
     v4 gv = (v4)dlsym(g, sym), cv = D[f].vec; double (*cr)(double) = D[f].cr;
+    if (!gv) { printf("%-7s glibc has no %s\n", D[f].name, sym); continue; }
     double m[3] = {1e9, 1e9, 1e9}, h[3] = {1e9, 1e9, 1e9};
     for (int pass = 0; pass < 8; pass++) {
       BEST(m[0], for (long i = 0; i < N; i += 4) _mm256_storeu_pd(yd + i, cv(_mm256_loadu_pd(xd + i))));
@@ -360,19 +388,39 @@ static int timing(int argc, char **argv)
     }
     report(D[f].name, m, h, N, H * R, H * RS);
   }
-  if (wanted("pow", argc, argv)) {
-    for (long i = 0; i < N; i++) { xd[i] = exp2(rand() / (RAND_MAX + 1.0) * 40 - 20); xd2[i] = rand() / (RAND_MAX + 1.0) * 40 - 20; }
-    v4v gv = (v4v)dlsym(g, "_ZGVdN4vv_pow");
-    double m[3] = {1e9, 1e9, 1e9}, h[3] = {1e9, 1e9, 1e9};
-    for (int pass = 0; pass < 8; pass++) {
-      BEST(m[0], for (long i = 0; i < N; i += 4) _mm256_storeu_pd(yd + i, _ZGVdN4vv_pow(_mm256_loadu_pd(xd + i), _mm256_loadu_pd(xd2 + i))));
-      BEST(m[1], for (long i = 0; i < N; i += 4) _mm256_storeu_pd(yd + i, gv(_mm256_loadu_pd(xd + i), _mm256_loadu_pd(xd2 + i))));
-      BEST(m[2], for (long i = 0; i < N; i++) yd[i] = cr_pow(xd[i], xd2[i]));
-      BEST(h[0], for (long r = 0; r < R; r++) for (long i = 0; i < H; i += 4) _mm256_storeu_pd(yd + i, _ZGVdN4vv_pow(_mm256_loadu_pd(xd + i), _mm256_loadu_pd(xd2 + i))));
-      BEST(h[1], for (long r = 0; r < R; r++) for (long i = 0; i < H; i += 4) _mm256_storeu_pd(yd + i, gv(_mm256_loadu_pd(xd + i), _mm256_loadu_pd(xd2 + i))));
-      BEST(h[2], for (long r = 0; r < RS; r++) for (long i = 0; i < H; i++) yd[i] = cr_pow(xd[i], xd2[i]));
+  for (unsigned f = 0; f < NP2; f++) {                          /* two arguments */
+    if (!wanted(P2[f].name, argc, argv)) continue;
+    for (long i = 0; i < N; i++) {
+      double u = rand() / (RAND_MAX + 1.0), v = rand() / (RAND_MAX + 1.0);
+      double a0 = P2[f].kind ? u * 200 - 100 : exp2(u * 20 - 10), b0 = v * 20 - 10;
+      if (P2[f].is_float) { x[i] = (float)a0; x2[i] = (float)b0; } else { xd[i] = a0; xd2[i] = b0; }
     }
-    report("pow", m, h, N, H * R, H * RS);
+    char sym[40]; snprintf(sym, sizeof sym, P2[f].is_float ? "_ZGVdN8vv_%s" : "_ZGVdN4vv_%s", P2[f].name);
+    double m[3] = {1e9, 1e9, 1e9}, h[3] = {1e9, 1e9, 1e9};
+    if (P2[f].is_float) {
+      v8v gv = (v8v)dlsym(g, sym), cv = P2[f].vf; float (*cr)(float, float) = P2[f].cf;
+      if (!gv) { printf("%-7s glibc has no %s\n", P2[f].name, sym); continue; }
+      for (int pass = 0; pass < 8; pass++) {
+        BEST(m[0], for (long i = 0; i < N; i += 8) _mm256_storeu_ps(y + i, cv(_mm256_loadu_ps(x + i), _mm256_loadu_ps(x2 + i))));
+        BEST(m[1], for (long i = 0; i < N; i += 8) _mm256_storeu_ps(y + i, gv(_mm256_loadu_ps(x + i), _mm256_loadu_ps(x2 + i))));
+        BEST(m[2], for (long i = 0; i < N; i++) y[i] = cr(x[i], x2[i]));
+        BEST(h[0], for (long r = 0; r < R; r++) for (long i = 0; i < H; i += 8) _mm256_storeu_ps(y + i, cv(_mm256_loadu_ps(x + i), _mm256_loadu_ps(x2 + i))));
+        BEST(h[1], for (long r = 0; r < R; r++) for (long i = 0; i < H; i += 8) _mm256_storeu_ps(y + i, gv(_mm256_loadu_ps(x + i), _mm256_loadu_ps(x2 + i))));
+        BEST(h[2], for (long r = 0; r < RS; r++) for (long i = 0; i < H; i++) y[i] = cr(x[i], x2[i]));
+      }
+    } else {
+      v4v gv = (v4v)dlsym(g, sym), cv = P2[f].vd; double (*cr)(double, double) = P2[f].cd;
+      if (!gv) { printf("%-7s glibc has no %s\n", P2[f].name, sym); continue; }
+      for (int pass = 0; pass < 8; pass++) {
+        BEST(m[0], for (long i = 0; i < N; i += 4) _mm256_storeu_pd(yd + i, cv(_mm256_loadu_pd(xd + i), _mm256_loadu_pd(xd2 + i))));
+        BEST(m[1], for (long i = 0; i < N; i += 4) _mm256_storeu_pd(yd + i, gv(_mm256_loadu_pd(xd + i), _mm256_loadu_pd(xd2 + i))));
+        BEST(m[2], for (long i = 0; i < N; i++) yd[i] = cr(xd[i], xd2[i]));
+        BEST(h[0], for (long r = 0; r < R; r++) for (long i = 0; i < H; i += 4) _mm256_storeu_pd(yd + i, cv(_mm256_loadu_pd(xd + i), _mm256_loadu_pd(xd2 + i))));
+        BEST(h[1], for (long r = 0; r < R; r++) for (long i = 0; i < H; i += 4) _mm256_storeu_pd(yd + i, gv(_mm256_loadu_pd(xd + i), _mm256_loadu_pd(xd2 + i))));
+        BEST(h[2], for (long r = 0; r < RS; r++) for (long i = 0; i < H; i++) yd[i] = cr(xd[i], xd2[i]));
+      }
+    }
+    report(P2[f].name, m, h, N, H * R, H * RS);
   }
   double lb[3]; getloadavg(lb, 3);
   printf("memory floor (y = 3x): %.3f ns/elem; load average before %.2f, after %.2f\n", floor_ns * 1e9 / N, la[0], lb[0]);

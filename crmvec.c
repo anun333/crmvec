@@ -55,14 +55,46 @@ AVX2I static inline __m256d reduce_pow2(__m256d t, __m256d *scale)
 }
 
 /* Lanes whose double result y could round to two different floats given a
-   relative error bound br: they must be recomputed. */
+   relative error bound br: they must be recomputed. FBR_SCALE=0 is the
+   control: no lane is ever recomputed, so the exhaustive check must then
+   find the inputs the bound exists for (1.0 is exact, so the default build
+   is unchanged). */
+#ifndef FBR_SCALE
+#define FBR_SCALE 1.0
+#endif
+#ifndef FBR_INT
+#define FBR_INT 0
+#endif
+#if FBR_INT
+/* The same test on the bits (2026-09-26 experiment). RN(y) to float is in
+   doubt only if a float midpoint lies within br |y| of y. Inside the normal
+   float range a midpoint's low 29 mantissa bits (as a double) are exactly
+   2^28, and br |y| is below br 2^53 units of y's last place, so the lane is in
+   doubt iff |low29(y) - 2^28| < br 2^53 (+1). A midpoint in the binade below
+   is 2^27 units away, out of reach for any br below 2^-26. Results outside
+   the normal float range (exponent field outside [897, 1150]) are flagged. */
 AVX2I static inline __m128i ambiguous(__m256d y, double br)
 {
+  const long long D = (long long)(br * FBR_SCALE * 0x1p53) + (FBR_SCALE != 0);
+  __m256i yb = _mm256_castpd_si256(y);
+  __m256i u = _mm256_sub_epi64(_mm256_and_si256(yb, _mm256_set1_epi64x(0x1fffffff)), _mm256_set1_epi64x(1 << 28));
+  __m256i m = _mm256_and_si256(_mm256_cmpgt_epi64(_mm256_set1_epi64x(D), u), _mm256_cmpgt_epi64(u, _mm256_set1_epi64x(-D)));
+  __m256i e = _mm256_sub_epi64(_mm256_and_si256(_mm256_srli_epi64(yb, 52), _mm256_set1_epi64x(0x7ff)), _mm256_set1_epi64x(897));
+  m = _mm256_or_si256(m, _mm256_or_si256(_mm256_cmpgt_epi64(_mm256_setzero_si256(), e),
+                                         _mm256_cmpgt_epi64(e, _mm256_set1_epi64x(1150 - 897))));
+  /* 4 x 64-bit mask to 4 x 32-bit */
+  return _mm256_castsi256_si128(_mm256_permutevar8x32_epi32(m, _mm256_setr_epi32(0, 2, 4, 6, 0, 2, 4, 6)));
+}
+#else
+AVX2I static inline __m128i ambiguous(__m256d y, double br)
+{
+  br *= FBR_SCALE;
   const __m256d B = _mm256_set1_pd(br);
   __m128 lo = _mm256_cvtpd_ps(_mm256_fnmadd_pd(y, B, y));
   __m128 hi = _mm256_cvtpd_ps(_mm256_fmadd_pd(y, B, y));
   return _mm_castps_si128(_mm_cmpneq_ps(lo, hi));
 }
+#endif
 
 /* inf or nan inputs: left to CORE-MATH for its exact special-value rules. */
 static inline __m128i nonfinite(__m128 x)
@@ -70,6 +102,55 @@ static inline __m128i nonfinite(__m128 x)
   __m128i a = _mm_and_si128(_mm_castps_si128(x), _mm_set1_epi32(0x7fffffff));
   return _mm_cmpgt_epi32(a, _mm_set1_epi32(0x7f7fffff));
 }
+
+/* asinf, cbrtf, erff, erfcf skip the rounding test: without it they are
+   still correct on all 2^32 inputs (the FBR_SCALE=0 control, 2026-09-26), and
+   dropping it made them 4-19% faster. NOTEST4=0 restores it. */
+#ifndef NOTEST4
+#define NOTEST4 1
+#endif
+#ifndef CR_LOOP_ERFF
+#define CR_LOOP_ERFF 0
+#endif
+#ifndef CR_LOOP_EXPM1
+#define CR_LOOP_EXPM1 0
+#endif
+#ifndef CR_LOOP_ATAN
+#define CR_LOOP_ATAN 1
+#endif
+#ifndef CR_LOOP_SINH
+#define CR_LOOP_SINH 1
+#endif
+#ifndef CR_LOOP_COSH
+#define CR_LOOP_COSH 1
+#endif
+#ifndef FINISH_COLD
+#define FINISH_COLD 0
+#endif
+#if FINISH_COLD
+/* The rare scalar fallback out of line: with its arrays in the entry point,
+   every call paid for a 32-byte-aligned frame and a stack-protector check
+   even when no lane was flagged (the expf ablation, 2026-09-26). */
+AVX2 __attribute__((noinline, cold)) static __m256 finish8_slow(__m256 xf, __m256 f, __m128i r0, __m128i r1,
+                                                               float (*cr)(float))
+{
+  float xs[8], fs[8]; int rs[8];
+  _mm256_storeu_ps(xs, xf); _mm256_storeu_ps(fs, f);
+  _mm_storeu_si128((__m128i *)rs, r0); _mm_storeu_si128((__m128i *)(rs + 4), r1);
+  for (int i = 0; i < 8; i++)
+    if (rs[i]) fs[i] = cr(xs[i]);
+  return _mm256_loadu_ps(fs);
+}
+AVX2 __attribute__((noinline, cold)) static __m256 finish8_2_slow(__m256 xf, __m256 yf, __m256 f, __m128i r0, __m128i r1,
+                                                                 float (*cr)(float, float))
+{
+  float xs[8], ys[8], fs[8]; int rs[8];
+  _mm256_storeu_ps(xs, xf); _mm256_storeu_ps(ys, yf); _mm256_storeu_ps(fs, f);
+  _mm_storeu_si128((__m128i *)rs, r0); _mm_storeu_si128((__m128i *)(rs + 4), r1);
+  for (int i = 0; i < 8; i++) if (rs[i]) fs[i] = cr(xs[i], ys[i]);
+  return _mm256_loadu_ps(fs);
+}
+#endif
 
 /* Assemble 8 lanes from two 4-lane double halves; recompute flagged lanes
    with the scalar correctly rounded function. */
@@ -79,6 +160,9 @@ AVX2I static inline __m256 finish8(__m256 xf, __m256d y0, __m256d y1, __m128i r0
   __m256 f = _mm256_set_m128(_mm256_cvtpd_ps(y1), _mm256_cvtpd_ps(y0));
   if (_mm_testz_si128(r0, r0) && _mm_testz_si128(r1, r1))
     return f;
+#if FINISH_COLD
+  return finish8_slow(xf, f, r0, r1, cr);
+#endif
   float xs[8], fs[8]; int rs[8];
   _mm256_storeu_ps(xs, xf); _mm256_storeu_ps(fs, f);
   _mm_storeu_si128((__m128i *)rs, r0); _mm_storeu_si128((__m128i *)(rs + 4), r1);
@@ -109,6 +193,7 @@ static const double C2[10] = {   /* 2^r = sum C2[i] r^i, Taylor, |r| <= 1/2 */
   0x1.3b2ab6fba4e77p-7, 0x1.5d87fe78a6731p-10, 0x1.430912f86c787p-13, 0x1.ffcbfc588b0c7p-17,
   0x1.62c0223a5c824p-20, 0x1.b5253d395e7c4p-24};
 
+#ifndef EXP2_TB
 /* 2^t for t in [-300, 300] (callers clamp); relative error < 2^-37. */
 AVX2I static inline __m256d exp2_core(__m256d t)
 {
@@ -117,17 +202,182 @@ AVX2I static inline __m256d exp2_core(__m256d t)
   for (int i = 8; i >= 0; i--) p = _mm256_fmadd_pd(p, r, _mm256_set1_pd(C2[i]));
   return _mm256_mul_pd(p, s);
 }
+#else
+/* The table-size experiment (2026-09-26): 2^t = 2^e T[j] p(r), t = e + j/N + r,
+   N = 2^EXP2_TB, |r| <= 1/(2N); p is Sollya's lowest-degree polynomial with
+   relative error <= 2^-39 (gen-exp2-variants.py). EXP2_LOOKUP 1 reads T with
+   vpermps from registers (N <= 16), 0 with a gather; EXP2_ESTRIN 1 evaluates
+   p by Estrin's scheme, 0 by Horner's. Not built by default. */
+#include "crmvec-exp2-var.h"
+#define EXP2_CAT(a, b) a##b
+#define EXP2_X(a, b) EXP2_CAT(a, b)
+#define EXP2_P EXP2_X(EXP2_P_, EXP2_TB)
+#define EXP2_T EXP2_X(EXP2_T_, EXP2_TB)
+#define EXP2_DEG EXP2_X(EXP2_DEG_, EXP2_TB)
+#define EXP2_N (1 << EXP2_TB)
+#ifndef EXP2_LOOKUP
+#define EXP2_LOOKUP 0
+#endif
+#ifndef EXP2_ESTRIN
+#define EXP2_ESTRIN 1
+#endif
 
-/* ln x for x > 0 finite (lanes with x <= 0 / inf / nan give ln 1 = 0 and
-   are flagged in *special); relative error < 2^-36. */
-AVX2I static inline __m256d log_core(__m128 xf, __m128i *special)
+AVX2I static inline __m256d exp2_poly(__m256d r)
+{
+#if EXP2_ESTRIN
+  __m256d q[6], pw = _mm256_mul_pd(r, r);
+  int n = 0;
+  /* without the pragmas gcc left degree 8 as a loop over q[] on the stack,
+     twice as slow (measured 2026-09-26) */
+#pragma GCC unroll 8
+  for (int i = 0; i <= EXP2_DEG; i += 2, n++)
+    q[n] = i + 1 <= EXP2_DEG ? _mm256_fmadd_pd(_mm256_set1_pd(EXP2_P[i + 1]), r, _mm256_set1_pd(EXP2_P[i]))
+                             : _mm256_set1_pd(EXP2_P[i]);
+#pragma GCC unroll 8
+  while (n > 1) {
+    int m = 0;
+#pragma GCC unroll 8
+    for (int i = 0; i < n; i += 2, m++) q[m] = i + 1 < n ? _mm256_fmadd_pd(q[i + 1], pw, q[i]) : q[i];
+    n = m; pw = _mm256_mul_pd(pw, pw);
+  }
+  return q[0];
+#else
+  __m256d p = _mm256_set1_pd(EXP2_P[EXP2_DEG]);
+  for (int i = EXP2_DEG - 1; i >= 0; i--) p = _mm256_fmadd_pd(p, r, _mm256_set1_pd(EXP2_P[i]));
+  return p;
+#endif
+}
+
+AVX2I static inline __m256d exp2_lookup(__m256i j)
+{
+#if EXP2_LOOKUP && EXP2_N <= 16
+  __m256i i2 = _mm256_slli_epi64(_mm256_and_si256(j, _mm256_set1_epi64x(3)), 1);
+  __m256i idx = _mm256_or_si256(i2, _mm256_slli_epi64(_mm256_add_epi64(i2, _mm256_set1_epi64x(1)), 32));
+#define EXP2_PERM(o) _mm256_castps_pd(_mm256_permutevar8x32_ps(_mm256_castpd_ps(_mm256_load_pd(EXP2_T + (o))), idx))
+  __m256d a = EXP2_PERM(0);
+#if EXP2_N >= 8
+  __m256d b2 = _mm256_castsi256_pd(_mm256_slli_epi64(j, 61));           /* bit 2 -> sign */
+  a = _mm256_blendv_pd(a, EXP2_PERM(4), b2);
+#endif
+#if EXP2_N >= 16
+  __m256d c = _mm256_blendv_pd(EXP2_PERM(8), EXP2_PERM(12), b2);
+  a = _mm256_blendv_pd(a, c, _mm256_castsi256_pd(_mm256_slli_epi64(j, 60)));   /* bit 3 */
+#endif
+  return a;
+#else
+  return _mm256_i64gather_pd(EXP2_T, j, 8);
+#endif
+}
+
+AVX2I static inline __m256d exp2_core(__m256d t)
+{
+  const __m256d BIG = _mm256_set1_pd(0x1.8p52);
+  __m256d kd = _mm256_add_pd(_mm256_mul_pd(t, _mm256_set1_pd(EXP2_N)), BIG);
+  __m256i k = _mm256_sub_epi64(_mm256_castpd_si256(kd), _mm256_castpd_si256(BIG));  /* round(t N) */
+  __m256d r = _mm256_fnmadd_pd(_mm256_sub_pd(kd, BIG), _mm256_set1_pd(1.0 / EXP2_N), t);
+  __m256i j = _mm256_and_si256(k, _mm256_set1_epi64x(EXP2_N - 1));
+  __m256i eb = _mm256_slli_epi64(_mm256_sub_epi64(k, j), 52 - EXP2_TB);   /* e << 52 */
+  __m256d s = _mm256_castsi256_pd(_mm256_add_epi64(_mm256_castpd_si256(exp2_lookup(j)), eb));
+  return _mm256_mul_pd(exp2_poly(r), s);
+}
+#endif
+
+/* s (1 + s^2/3 + ... + s^10/11) = atanh s for |s| <= 0.172, relative error
+   < 2^-36: log_core's series, shared */
+AVX2I static inline __m256d atanh_series(__m256d s)
+{
+  __m256d s2 = _mm256_mul_pd(s, s);
+  __m256d p = _mm256_set1_pd(1.0 / 11.0);
+  p = _mm256_fmadd_pd(p, s2, _mm256_set1_pd(1.0 / 9.0));
+  p = _mm256_fmadd_pd(p, s2, _mm256_set1_pd(1.0 / 7.0));
+  p = _mm256_fmadd_pd(p, s2, _mm256_set1_pd(1.0 / 5.0));
+  p = _mm256_fmadd_pd(p, s2, _mm256_set1_pd(1.0 / 3.0));
+  p = _mm256_fmadd_pd(p, s2, _mm256_set1_pd(1.0));
+  return _mm256_mul_pd(s, p);
+}
+
+#ifdef LOG_TB
+/* The table-size experiment (2026-09-26): ln x = k ln2 + ln c_i + log1p(r),
+   r = z/c_i - 1, glibc's layout (gen-log-variants.py): 1.0 is the centre of
+   the entry with invc = 1, logc = 0, so there is no cancellation near 1.
+   LOG_LOOKUP 0: two gathers; 1: vpermps from registers (N <= 16); 2: one
+   16-byte load per lane from interleaved (invc, logc) rows. Not built by
+   default. */
+#include "crmvec-log-var.h"
+#define LOG_CAT(a, b) a##b
+#define LOG_X(a, b) LOG_CAT(a, b)
+#define LOG_OFF LOG_X(LOG_OFF_, LOG_TB)
+#define LOG_DEG LOG_X(LOG_DEG_, LOG_TB)
+#define LOG_P LOG_X(LOG_P_, LOG_TB)
+#define LOG_IC LOG_X(LOG_IC_, LOG_TB)
+#define LOG_LC LOG_X(LOG_LC_, LOG_TB)
+#define LOG_ROW LOG_X(LOG_ROW_, LOG_TB)
+#define LOG_N (1 << LOG_TB)
+#ifndef LOG_LOOKUP
+#define LOG_LOOKUP 0
+#endif
+
+AVX2I static inline __m256d log_perm16(const double *T, __m256i i)
+{
+  __m256i i2 = _mm256_slli_epi64(_mm256_and_si256(i, _mm256_set1_epi64x(3)), 1);
+  __m256i idx = _mm256_or_si256(i2, _mm256_slli_epi64(_mm256_add_epi64(i2, _mm256_set1_epi64x(1)), 32));
+#define LOG_PERM(o) _mm256_castps_pd(_mm256_permutevar8x32_ps(_mm256_castpd_ps(_mm256_load_pd(T + (o))), idx))
+  __m256d a = LOG_PERM(0);
+#if LOG_N >= 8
+  __m256d b2 = _mm256_castsi256_pd(_mm256_slli_epi64(i, 61));
+  a = _mm256_blendv_pd(a, LOG_PERM(4), b2);
+#endif
+#if LOG_N >= 16
+  a = _mm256_blendv_pd(a, _mm256_blendv_pd(LOG_PERM(8), LOG_PERM(12), b2), _mm256_castsi256_pd(_mm256_slli_epi64(i, 60)));
+#endif
+  return a;
+}
+
+AVX2I static inline __m256d log_core_d(__m256d x)
+{
+  __m256i ix = _mm256_castpd_si256(x);
+  __m256i tmp = _mm256_sub_epi64(ix, _mm256_set1_epi64x(LOG_OFF));
+  __m256i i = _mm256_and_si256(_mm256_srli_epi64(tmp, 52 - LOG_TB), _mm256_set1_epi64x(LOG_N - 1));
+  __m256i k = _mm256_sub_epi64(_mm256_srli_epi64(_mm256_add_epi64(tmp, _mm256_set1_epi64x(1LL << 62)), 52),
+                               _mm256_set1_epi64x(1 << 10));                       /* tmp >> 52, signed */
+  __m256d z = _mm256_castsi256_pd(_mm256_sub_epi64(ix, _mm256_and_si256(tmp, _mm256_set1_epi64x((long long)0xfff0000000000000ULL))));
+  __m256d ic, lc;
+#if LOG_LOOKUP == 1 && LOG_N <= 16
+  ic = log_perm16(LOG_IC, i); lc = log_perm16(LOG_LC, i);
+#elif LOG_LOOKUP == 2
+  long long ii[4]; _mm256_storeu_si256((__m256i *)ii, i);
+  __m256d r01 = _mm256_set_m128d(_mm_load_pd(LOG_ROW + 2 * ii[1]), _mm_load_pd(LOG_ROW + 2 * ii[0]));
+  __m256d r23 = _mm256_set_m128d(_mm_load_pd(LOG_ROW + 2 * ii[3]), _mm_load_pd(LOG_ROW + 2 * ii[2]));
+  ic = _mm256_permute4x64_pd(_mm256_unpacklo_pd(r01, r23), 0xd8);
+  lc = _mm256_permute4x64_pd(_mm256_unpackhi_pd(r01, r23), 0xd8);
+#else
+  ic = _mm256_i64gather_pd(LOG_IC, i, 8); lc = _mm256_i64gather_pd(LOG_LC, i, 8);
+#endif
+  __m256d r = _mm256_fmsub_pd(z, ic, _mm256_set1_pd(1.0));
+  /* k to double by 1.5 * 2^52, not 2^52: k is negative below OFF, and 2^52 + k
+     would fall into the binade below (the first run of this experiment did
+     exactly that: half the positive inputs wrong) */
+  __m256d kd = _mm256_sub_pd(_mm256_castsi256_pd(_mm256_add_epi64(k, _mm256_set1_epi64x(0x4338000000000000LL))),
+                             _mm256_set1_pd(0x1.8p52));
+  __m256d w = _mm256_fmadd_pd(kd, _mm256_set1_pd(0x1.62e42fefa39efp-1), lc);
+  /* P(r) = c1 + c2 r + ... + cd r^(d-1), Estrin */
+  __m256d q[7], pw = _mm256_mul_pd(r, r);
+  int n = 0;
+  for (int j = 0; j < LOG_DEG; j += 2, n++)
+    q[n] = j + 1 < LOG_DEG ? _mm256_fmadd_pd(_mm256_set1_pd(LOG_P[j + 1]), r, _mm256_set1_pd(LOG_P[j]))
+                           : _mm256_set1_pd(LOG_P[j]);
+  while (n > 1) {
+    int m = 0;
+    for (int j = 0; j < n; j += 2, m++) q[m] = j + 1 < n ? _mm256_fmadd_pd(q[j + 1], pw, q[j]) : q[j];
+    n = m; pw = _mm256_mul_pd(pw, pw);
+  }
+  return _mm256_fmadd_pd(r, q[0], w);
+}
+#else
+/* ln x for a positive normal double x; relative error < 2^-36 */
+AVX2I static inline __m256d log_core_d(__m256d x)
 {
   const __m256d ONE = _mm256_set1_pd(1.0);
-  __m128i ux = _mm_castps_si128(xf);
-  __m128i sp = _mm_or_si128(_mm_cmpgt_epi32(_mm_set1_epi32(1), ux),            /* x <= 0 */
-                            _mm_cmpgt_epi32(ux, _mm_set1_epi32(0x7f7fffff)));  /* inf, nan */
-  *special = sp;
-  __m256d x = _mm256_cvtps_pd(_mm_blendv_ps(xf, _mm_set1_ps(1.0f), _mm_castsi128_ps(sp)));
   __m256i xb = _mm256_castpd_si256(x);
   __m256i ef = _mm256_and_si256(_mm256_srli_epi64(xb, 52), _mm256_set1_epi64x(0x7ff));
   __m256d m = _mm256_castsi256_pd(_mm256_or_si256(_mm256_and_si256(xb, _mm256_set1_epi64x(0x000fffffffffffffLL)),
@@ -148,6 +398,18 @@ AVX2I static inline __m256d log_core(__m128 xf, __m128i *special)
   p = _mm256_fmadd_pd(p, s2, _mm256_set1_pd(1.0 / 3.0));
   p = _mm256_fmadd_pd(p, s2, ONE);
   return _mm256_fmadd_pd(e, _mm256_set1_pd(0x1.62e42fefa39efp-1), _mm256_mul_pd(_mm256_add_pd(s, s), p));
+}
+#endif
+
+/* ln x for x > 0 finite (lanes with x <= 0 / inf / nan give ln 1 = 0 and
+   are flagged in *special); relative error < 2^-36. */
+AVX2I static inline __m256d log_core(__m128 xf, __m128i *special)
+{
+  __m128i ux = _mm_castps_si128(xf);
+  __m128i sp = _mm_or_si128(_mm_cmpgt_epi32(_mm_set1_epi32(1), ux),            /* x <= 0 */
+                            _mm_cmpgt_epi32(ux, _mm_set1_epi32(0x7f7fffff)));  /* inf, nan */
+  *special = sp;
+  return log_core_d(_mm256_cvtps_pd(_mm_blendv_ps(xf, _mm_set1_ps(1.0f), _mm_castsi128_ps(sp))));
 }
 
 /* ---- layer 2: functions -------------------------------------------- */
@@ -557,11 +819,442 @@ AVX2 __m256 _ZGVdN8vv_powf(__m256 xf, __m256 yf)
   __m256 f = _mm256_set_m128(_mm256_cvtpd_ps(y1), _mm256_cvtpd_ps(y0));
   if (_mm_testz_si128(r0, r0) && _mm_testz_si128(r1, r1))
     return f;
+#if FINISH_COLD
+  return finish8_2_slow(xf, yf, f, r0, r1, cr_powf);
+#endif
   float xs[8], ys[8], fs[8]; int rs[8];
   _mm256_storeu_ps(xs, xf); _mm256_storeu_ps(ys, yf); _mm256_storeu_ps(fs, f);
   _mm_storeu_si128((__m128i *)rs, r0); _mm_storeu_si128((__m128i *)(rs + 4), r1);
   for (int i = 0; i < 8; i++) if (rs[i]) fs[i] = cr_powf(xs[i], ys[i]);
   return _mm256_loadu_ps(fs);
+}
+
+/* ---- float functions for LLVM main and llvm#223817 (2026-09-26) ----- */
+
+/* Our own schemes in double, on the cores above, each decided lane by lane
+   by a rounding bracket, with CORE-MATH for undecided lanes and specials.
+   Float, so the 2^32 check is the proof: a bracket too tight for the real
+   error would show up there as a wrong result. */
+
+#define FLOAT_FROM_HALF(NAME, HALF, CR)                                               \
+  AVX2 __m256 _ZGVdN8v_##NAME(__m256 xf)                                              \
+  {                                                                                   \
+    __m128i r0, r1;                                                                   \
+    __m256d y0 = HALF(_mm256_castps256_ps128(xf), &r0);                               \
+    __m256d y1 = HALF(_mm256_extractf128_ps(xf, 1), &r1);                             \
+    return finish8(xf, y0, y1, r0, r1, CR);                                           \
+  }
+
+/* as finish8, for two-argument functions */
+AVX2I static inline __m256 finish8_2(__m256 xf, __m256 yf, __m256d y0, __m256d y1, __m128i r0, __m128i r1,
+                                     float (*cr)(float, float))
+{
+  __m256 f = _mm256_set_m128(_mm256_cvtpd_ps(y1), _mm256_cvtpd_ps(y0));
+  if (_mm_testz_si128(r0, r0) && _mm_testz_si128(r1, r1))
+    return f;
+#if FINISH_COLD
+  return finish8_2_slow(xf, yf, f, r0, r1, cr);
+#endif
+  float xs[8], ys[8], fs[8]; int rs[8];
+  _mm256_storeu_ps(xs, xf); _mm256_storeu_ps(ys, yf); _mm256_storeu_ps(fs, f);
+  _mm_storeu_si128((__m128i *)rs, r0); _mm_storeu_si128((__m128i *)(rs + 4), r1);
+  for (int i = 0; i < 8; i++) if (rs[i]) fs[i] = cr(xs[i], ys[i]);
+  return _mm256_loadu_ps(fs);
+}
+
+static const double INVFACT[14] = {   /* 1/n! */
+  1.0, 1.0, 0x1.0000000000000p-1, 0x1.5555555555555p-3, 0x1.5555555555555p-5, 0x1.1111111111111p-7,
+  0x1.6c16c16c16c17p-10, 0x1.a01a01a01a01ap-13, 0x1.a01a01a01a01ap-16, 0x1.71de3a556c734p-19,
+  0x1.27e4fb7789f5cp-22, 0x1.ae64567f544e4p-26, 0x1.1eed8eff8d898p-29, 0x1.6124613a86d09p-33};
+
+AVX2I static inline __m256d abs_pd(__m256d x)
+{ return _mm256_andnot_pd(_mm256_castsi256_pd(_mm256_set1_epi64x(1LL << 63)), x); }
+
+/* e^u - 1 in double: Taylor to u^13 for |u| < 1/2 (truncation < 2^-49
+   relative), else exp2_core - 1 (relative error < 2^-35.7 there) */
+AVX2I static inline __m256d expm1_d(__m256d u)
+{
+  __m256d p = _mm256_set1_pd(INVFACT[13]);
+  for (int n = 12; n >= 1; n--) p = _mm256_fmadd_pd(p, u, _mm256_set1_pd(INVFACT[n]));
+  __m256d small = _mm256_mul_pd(u, p);
+  __m256d t = _mm256_min_pd(_mm256_max_pd(_mm256_mul_pd(u, _mm256_set1_pd(0x1.71547652b82fep+0)),
+                                          _mm256_set1_pd(-300.0)), _mm256_set1_pd(300.0));
+  __m256d big = _mm256_sub_pd(exp2_core(t), _mm256_set1_pd(1.0));
+  return _mm256_blendv_pd(big, small, _mm256_cmp_pd(abs_pd(u), _mm256_set1_pd(0.5), _CMP_LT_OQ));
+}
+
+#define BR_HYP 0x1p-34
+
+AVX2I static inline __m256d expm1f_half(__m128 xf, __m128i *redo)
+{
+  __m256d y = expm1_d(_mm256_cvtps_pd(xf));
+  *redo = _mm_or_si128(ambiguous(y, BR_HYP), nonfinite(xf));
+  return y;
+}
+
+AVX2I static inline __m256d coshf_half(__m128 xf, __m128i *redo)
+{
+  __m256d t = _mm256_min_pd(_mm256_mul_pd(abs_pd(_mm256_cvtps_pd(xf)), _mm256_set1_pd(0x1.71547652b82fep+0)),
+                            _mm256_set1_pd(300.0));
+  __m256d y = _mm256_mul_pd(_mm256_add_pd(exp2_core(t), exp2_core(_mm256_sub_pd(_mm256_setzero_pd(), t))),
+                            _mm256_set1_pd(0.5));
+  *redo = _mm_or_si128(ambiguous(y, BR_HYP), nonfinite(xf));
+  return y;
+}
+
+AVX2I static inline __m256d sinhf_half(__m128 xf, __m128i *redo)
+{
+  __m256d x = _mm256_cvtps_pd(xf), ax = abs_pd(x), x2 = _mm256_mul_pd(x, x);
+  __m256d p = _mm256_set1_pd(INVFACT[13]);                  /* x (1 + x^2/3! + ... + x^12/13!) */
+  for (int n = 11; n >= 1; n -= 2) p = _mm256_fmadd_pd(p, x2, _mm256_set1_pd(INVFACT[n]));
+  __m256d small = _mm256_mul_pd(x, p);
+  __m256d t = _mm256_min_pd(_mm256_mul_pd(ax, _mm256_set1_pd(0x1.71547652b82fep+0)), _mm256_set1_pd(300.0));
+  __m256d big = _mm256_mul_pd(_mm256_sub_pd(exp2_core(t), exp2_core(_mm256_sub_pd(_mm256_setzero_pd(), t))),
+                              _mm256_set1_pd(0.5));
+  big = _mm256_or_pd(big, _mm256_and_pd(x, _mm256_castsi256_pd(_mm256_set1_epi64x(1LL << 63))));
+  __m256d y = _mm256_blendv_pd(big, small, _mm256_cmp_pd(ax, _mm256_set1_pd(0.5), _CMP_LT_OQ));
+  *redo = _mm_or_si128(ambiguous(y, BR_HYP), nonfinite(xf));
+  return y;
+}
+
+AVX2I static inline __m256d tanhf_half(__m128 xf, __m128i *redo)
+{
+  __m256d e = expm1_d(_mm256_mul_pd(_mm256_cvtps_pd(xf), _mm256_set1_pd(2.0)));   /* tanh x = e/(e + 2) */
+  __m256d y = _mm256_div_pd(e, _mm256_add_pd(e, _mm256_set1_pd(2.0)));
+  *redo = _mm_or_si128(ambiguous(y, BR_HYP), nonfinite(xf));
+  return y;
+}
+
+float cr_expm1f(float), cr_coshf(float), cr_sinhf(float), cr_tanhf(float), cr_hypotf(float, float);
+FLOAT_FROM_HALF(expm1f, expm1f_half, cr_expm1f)
+FLOAT_FROM_HALF(coshf, coshf_half, cr_coshf)
+FLOAT_FROM_HALF(sinhf, sinhf_half, cr_sinhf)
+FLOAT_FROM_HALF(tanhf, tanhf_half, cr_tanhf)
+
+/* ln(1 + v) in double for v > -1: 2 atanh(v/(2 + v)) where |v/(2+v)| <= 0.172
+   (never forms a rounded 1 + v), else log_core_d(1 + v); relative error
+   < 2^-35 from log_core's series plus a few roundings of the argument */
+AVX2I static inline __m256d log1p_d(__m256d v)
+{
+  __m256d near = _mm256_and_pd(_mm256_cmp_pd(v, _mm256_set1_pd(-0.29), _CMP_GE_OQ),
+                               _mm256_cmp_pd(v, _mm256_set1_pd(0.41), _CMP_LE_OQ));
+  __m256d a = atanh_series(_mm256_div_pd(v, _mm256_add_pd(v, _mm256_set1_pd(2.0))));
+  __m256d u = _mm256_add_pd(v, _mm256_set1_pd(1.0));
+  u = _mm256_blendv_pd(u, _mm256_set1_pd(2.0), near);                /* keep log_core_d's input normal */
+  return _mm256_blendv_pd(log_core_d(u), _mm256_add_pd(a, a), near);
+}
+
+/* lanes that are not finite or are outside (lo, hi) exclusive */
+AVX2I static inline __m128i outside(__m128 xf, float lo, float hi)
+{
+  __m128 in = _mm_and_ps(_mm_cmpgt_ps(xf, _mm_set1_ps(lo)), _mm_cmplt_ps(xf, _mm_set1_ps(hi)));
+  return _mm_or_si128(nonfinite(xf), _mm_castps_si128(_mm_xor_ps(in, _mm_castsi128_ps(_mm_set1_epi32(-1)))));
+}
+
+AVX2I static inline __m256d log1pf_half(__m128 xf, __m128i *redo)
+{
+  __m128i bad = outside(xf, -1.0f, __builtin_inff());
+  __m256d v = _mm256_cvtps_pd(_mm_blendv_ps(xf, _mm_setzero_ps(), _mm_castsi128_ps(bad)));
+  __m256d y = log1p_d(v);
+  *redo = _mm_or_si128(ambiguous(y, BR_HYP), bad);
+  return y;
+}
+
+AVX2I static inline __m256d asinhf_half(__m128 xf, __m128i *redo)
+{
+  const __m256d ONE = _mm256_set1_pd(1.0);
+  __m256d x = _mm256_cvtps_pd(xf), ax = abs_pd(x), x2 = _mm256_mul_pd(ax, ax);   /* exact */
+  __m256d w = _mm256_add_pd(ax, _mm256_div_pd(x2, _mm256_add_pd(ONE, _mm256_sqrt_pd(_mm256_add_pd(ONE, x2)))));
+  __m256d y = log1p_d(_mm256_and_pd(w, _mm256_cmp_pd(w, w, _CMP_ORD_Q)));         /* nan -> 0, flagged */
+  y = _mm256_or_pd(y, _mm256_and_pd(x, _mm256_castsi256_pd(_mm256_set1_epi64x(1LL << 63))));
+  *redo = _mm_or_si128(ambiguous(y, BR_HYP), nonfinite(xf));
+  return y;
+}
+
+AVX2I static inline __m256d acoshf_half(__m128 xf, __m128i *redo)
+{
+  __m128i bad = _mm_or_si128(nonfinite(xf), _mm_castps_si128(_mm_cmplt_ps(xf, _mm_set1_ps(1.0f))));
+  __m256d x = _mm256_cvtps_pd(_mm_blendv_ps(xf, _mm_set1_ps(1.0f), _mm_castsi128_ps(bad)));
+  __m256d xm = _mm256_sub_pd(x, _mm256_set1_pd(1.0)), xp = _mm256_add_pd(x, _mm256_set1_pd(1.0));   /* exact */
+  __m256d y = log1p_d(_mm256_add_pd(xm, _mm256_sqrt_pd(_mm256_mul_pd(xm, xp))));
+  *redo = _mm_or_si128(ambiguous(y, BR_HYP), bad);
+  return y;
+}
+
+AVX2I static inline __m256d atanhf_half(__m128 xf, __m128i *redo)
+{
+  __m128i bad = outside(xf, -1.0f, 1.0f);
+  __m256d x = _mm256_cvtps_pd(_mm_blendv_ps(xf, _mm_setzero_ps(), _mm_castsi128_ps(bad)));
+  __m256d v = _mm256_div_pd(_mm256_add_pd(x, x), _mm256_sub_pd(_mm256_set1_pd(1.0), x));   /* 2x/(1-x) */
+  __m256d y = _mm256_mul_pd(log1p_d(v), _mm256_set1_pd(0.5));
+  *redo = _mm_or_si128(ambiguous(y, BR_HYP), bad);
+  return y;
+}
+
+float cr_log1pf(float), cr_asinhf(float), cr_acoshf(float), cr_atanhf(float);
+FLOAT_FROM_HALF(log1pf, log1pf_half, cr_log1pf)
+FLOAT_FROM_HALF(asinhf, asinhf_half, cr_asinhf)
+FLOAT_FROM_HALF(acoshf, acoshf_half, cr_acoshf)
+FLOAT_FROM_HALF(atanhf, atanhf_half, cr_atanhf)
+
+/* cbrtf: |x| = m 2^(3k), m in [1, 8); a degree-3 start (6 bits), then four
+   Newton steps y <- (2y + m/y^2)/3, far past double precision */
+AVX2I static inline __m256d cbrtf_half(__m128 xf, __m128i *redo)
+{
+  const __m256d SIGN = _mm256_castsi256_pd(_mm256_set1_epi64x(1LL << 63));
+  __m128i zero = _mm_cmpeq_epi32(_mm_and_si128(_mm_castps_si128(xf), _mm_set1_epi32(0x7fffffff)), _mm_setzero_si128());
+  __m128i bad = _mm_or_si128(nonfinite(xf), zero);
+  __m256d x = _mm256_cvtps_pd(_mm_blendv_ps(xf, _mm_set1_ps(1.0f), _mm_castsi128_ps(bad)));
+  __m256d ax = abs_pd(x);
+  __m256i xb = _mm256_castpd_si256(ax);
+  __m256d e = _mm256_sub_pd(_mm256_castsi256_pd(_mm256_or_si256(_mm256_srli_epi64(xb, 52), _mm256_set1_epi64x(0x4330000000000000LL))),
+                            _mm256_set1_pd(0x1p52 + 1023.0));                       /* unbiased exponent */
+  __m256d k = _mm256_floor_pd(_mm256_mul_pd(e, _mm256_set1_pd(1.0 / 3.0)));        /* floor(e/3): no rounding crosses an integer */
+  __m256i kb = _mm256_castpd_si256(_mm256_add_pd(k, _mm256_set1_pd(0x1.8p52)));   /* low bits: k */
+  __m256i k3 = _mm256_add_epi64(_mm256_add_epi64(kb, kb), kb);
+  __m256d m = _mm256_castsi256_pd(_mm256_sub_epi64(xb, _mm256_slli_epi64(k3, 52))); /* ax 2^-3k, exact */
+  __m256d y = _mm256_fmadd_pd(_mm256_fmadd_pd(_mm256_fmadd_pd(_mm256_set1_pd(0x1.f67c96b2d1500p-10), m,
+                                _mm256_set1_pd(-0x1.332f429c06f0fp-5)), m, _mm256_set1_pd(0x1.5c30989824a45p-2)),
+                              m, _mm256_set1_pd(0x1.6b11de4b3e9eap-1));
+  for (int i = 0; i < 4; i++)
+    y = _mm256_mul_pd(_mm256_add_pd(_mm256_add_pd(y, y), _mm256_div_pd(m, _mm256_mul_pd(y, y))), _mm256_set1_pd(1.0 / 3.0));
+  y = _mm256_castsi256_pd(_mm256_add_epi64(_mm256_castpd_si256(y), _mm256_slli_epi64(kb, 52)));   /* times 2^k */
+  y = _mm256_or_pd(y, _mm256_and_pd(x, SIGN));
+#if NOTEST4   /* the zeroed-test control: correct on all 2^32 inputs without it */
+  *redo = bad;
+#else
+  *redo = _mm_or_si128(ambiguous(y, 0x1p-45), bad);
+#endif
+  return y;
+}
+
+/* atan t for t >= 0 (inf included), relative error below 2^-48: t > 1 goes
+   to pi/2 - atan(1/t); c = round(8t)/8 and atan t = atan c + atan u,
+   u = (t - c)/(1 + t c), |u| <= 1/16, by the series to u^13 */
+static const double ATAN_K8[9] = {0x0.0p+0, 0x1.fd5ba9aac2f6ep-4, 0x1.f5b75f92c80ddp-3, 0x1.6f61941e4def1p-2,
+  0x1.dac670561bb4fp-2, 0x1.1e00babdefeb4p-1, 0x1.4978fa3269ee1p-1, 0x1.700a7c5784634p-1, 0x1.921fb54442d18p-1};
+AVX2I static inline __m256d atan_d(__m256d t)
+{
+  const __m256d ONE = _mm256_set1_pd(1.0);
+  __m256d inv = _mm256_cmp_pd(t, ONE, _CMP_GT_OQ);
+  __m256d a = _mm256_blendv_pd(t, _mm256_div_pd(ONE, t), inv);
+  __m256d c = _mm256_mul_pd(_mm256_round_pd(_mm256_mul_pd(a, _mm256_set1_pd(8.0)), _MM_FROUND_TO_NEAREST_INT | _MM_FROUND_NO_EXC),
+                            _mm256_set1_pd(0.125));
+  __m256i ki = _mm256_and_si256(_mm256_castpd_si256(_mm256_add_pd(_mm256_mul_pd(c, _mm256_set1_pd(8.0)), _mm256_set1_pd(0x1.8p52))),
+                                _mm256_set1_epi64x(15));
+  __m256d u = _mm256_div_pd(_mm256_sub_pd(a, c), _mm256_fmadd_pd(a, c, ONE));
+  __m256d u2 = _mm256_mul_pd(u, u);
+  __m256d p = _mm256_set1_pd(0x1.3b13b13b13b14p-4);
+  p = _mm256_fmadd_pd(p, u2, _mm256_set1_pd(-0x1.745d1745d1746p-4));
+  p = _mm256_fmadd_pd(p, u2, _mm256_set1_pd(0x1.c71c71c71c71cp-4));
+  p = _mm256_fmadd_pd(p, u2, _mm256_set1_pd(-0x1.2492492492492p-3));
+  p = _mm256_fmadd_pd(p, u2, _mm256_set1_pd(0x1.999999999999ap-3));
+  p = _mm256_fmadd_pd(p, u2, _mm256_set1_pd(-0x1.5555555555555p-2));
+  __m256d r = _mm256_add_pd(_mm256_i64gather_pd(ATAN_K8, ki, 8), _mm256_fmadd_pd(_mm256_mul_pd(u, u2), p, u));
+  return _mm256_blendv_pd(r, _mm256_sub_pd(_mm256_set1_pd(0x1.921fb54442d18p+0), r), inv);
+}
+
+#define BR_ATAN 0x1p-44
+
+AVX2I static inline __m256d atanf_half(__m128 xf, __m128i *redo)
+{
+  __m256d x = _mm256_cvtps_pd(xf);
+  __m256d y = _mm256_or_pd(atan_d(abs_pd(x)), _mm256_and_pd(x, _mm256_castsi256_pd(_mm256_set1_epi64x(1LL << 63))));
+  *redo = _mm_or_si128(ambiguous(y, BR_ATAN), nonfinite(xf));
+  return y;
+}
+
+AVX2I static inline __m256d asinf_half(__m128 xf, __m128i *redo)       /* atan(x / sqrt(1 - x^2)) */
+{
+  __m128i bad = _mm_or_si128(nonfinite(xf), _mm_castps_si128(_mm_cmpgt_ps(_mm_andnot_ps(_mm_set1_ps(-0.0f), xf), _mm_set1_ps(1.0f))));
+  __m256d x = _mm256_cvtps_pd(_mm_blendv_ps(xf, _mm_setzero_ps(), _mm_castsi128_ps(bad)));
+  __m256d ax = abs_pd(x), ONE = _mm256_set1_pd(1.0);
+  __m256d t = _mm256_div_pd(ax, _mm256_sqrt_pd(_mm256_mul_pd(_mm256_sub_pd(ONE, ax), _mm256_add_pd(ONE, ax))));
+  __m256d y = _mm256_or_pd(atan_d(t), _mm256_and_pd(x, _mm256_castsi256_pd(_mm256_set1_epi64x(1LL << 63))));
+#if NOTEST4   /* the zeroed-test control: correct on all 2^32 inputs without it */
+  *redo = bad;
+#else
+  *redo = _mm_or_si128(ambiguous(y, BR_ATAN), bad);
+#endif
+  return y;
+}
+
+AVX2I static inline __m256d acosf_half(__m128 xf, __m128i *redo)       /* 2 atan(sqrt((1 - x)/(1 + x))) */
+{
+  __m128i bad = _mm_or_si128(nonfinite(xf), _mm_castps_si128(_mm_cmpgt_ps(_mm_andnot_ps(_mm_set1_ps(-0.0f), xf), _mm_set1_ps(1.0f))));
+  __m256d x = _mm256_cvtps_pd(_mm_blendv_ps(xf, _mm_setzero_ps(), _mm_castsi128_ps(bad))), ONE = _mm256_set1_pd(1.0);
+  __m256d t = _mm256_sqrt_pd(_mm256_div_pd(_mm256_sub_pd(ONE, x), _mm256_add_pd(ONE, x)));
+  __m256d a = atan_d(t);
+  __m256d y = _mm256_add_pd(a, a);
+  *redo = _mm_or_si128(ambiguous(y, BR_ATAN), bad);
+  return y;
+}
+
+/* atan2f: atan(|y/x|), then pi - that for x < 0, with the sign of y; zeros,
+   infinities and nans go to CORE-MATH. Not checkable exhaustively (2^64
+   pairs), so its argument is atan_d's bound, which holds for every double t,
+   not only float ones: the u^15 truncation is below 2^-60 relative, the
+   quotient's rounding moves atan by at most 2^-53 relative (t/((1+t^2) atan t)
+   <= 1), the table and pi/2 carry 2^-53, a few sums round; BR_ATAN = 2^-44
+   leaves over 2^3 of margin. pi - a never cancels (a <= pi/2). */
+AVX2I static inline __m256d atan2f_half(__m128 yf, __m128 xf, __m128i *redo)
+{
+  const __m256d SIGN = _mm256_castsi256_pd(_mm256_set1_epi64x(1LL << 63));
+  __m128i z = _mm_or_si128(_mm_cmpeq_epi32(_mm_and_si128(_mm_castps_si128(yf), _mm_set1_epi32(0x7fffffff)), _mm_setzero_si128()),
+                           _mm_cmpeq_epi32(_mm_and_si128(_mm_castps_si128(xf), _mm_set1_epi32(0x7fffffff)), _mm_setzero_si128()));
+  __m128i bad = _mm_or_si128(z, _mm_or_si128(nonfinite(yf), nonfinite(xf)));
+  __m256d y = _mm256_cvtps_pd(_mm_blendv_ps(yf, _mm_set1_ps(1.0f), _mm_castsi128_ps(bad)));
+  __m256d x = _mm256_cvtps_pd(_mm_blendv_ps(xf, _mm_set1_ps(1.0f), _mm_castsi128_ps(bad)));
+  __m256d a = atan_d(_mm256_div_pd(abs_pd(y), abs_pd(x)));
+  a = _mm256_blendv_pd(a, _mm256_sub_pd(_mm256_set1_pd(0x1.921fb54442d18p+1), a), x);   /* x < 0: sign bit selects */
+  __m256d r = _mm256_or_pd(a, _mm256_and_pd(y, SIGN));
+  *redo = _mm_or_si128(ambiguous(r, BR_ATAN), bad);
+  return r;
+}
+
+float cr_cbrtf(float), cr_atanf(float), cr_asinf(float), cr_acosf(float), cr_atan2f(float, float);
+FLOAT_FROM_HALF(cbrtf, cbrtf_half, cr_cbrtf)
+FLOAT_FROM_HALF(atanf, atanf_half, cr_atanf)
+FLOAT_FROM_HALF(asinf, asinf_half, cr_asinf)
+FLOAT_FROM_HALF(acosf, acosf_half, cr_acosf)
+
+AVX2 __m256 _ZGVdN8vv_atan2f(__m256 yf, __m256 xf)
+{
+  __m128i r0, r1;
+  __m256d y0 = atan2f_half(_mm256_castps256_ps128(yf), _mm256_castps256_ps128(xf), &r0);
+  __m256d y1 = atan2f_half(_mm256_extractf128_ps(yf, 1), _mm256_extractf128_ps(xf, 1), &r1);
+  return finish8_2(yf, xf, y0, y1, r0, r1, cr_atan2f);
+}
+
+/* erff and erfcf: CORE-MATH's schemes transcribed (their tables in
+   crmvec-erff-tab.h, crmvec-erfcf-tab.h), with a rounding test added since
+   the operation order is theirs but our fma use may differ; the 2^32 check
+   is the proof */
+#include "crmvec-erff-tab.h"
+#include "crmvec-erfcf-tab.h"
+#define BR_ERF 0x1p-42
+
+AVX2I static inline __m256d gather_row(const double *base, __m256i row, int k, int stride)
+{ return _mm256_i64gather_pd(base + k, _mm256_mul_epu32(row, _mm256_set1_epi64x(stride)), 8); }
+
+AVX2I static inline __m256d erff_half(__m128 xf, __m128i *redo)
+{
+  const __m256d SIGN = _mm256_castsi256_pd(_mm256_set1_epi64x(1LL << 63));
+  __m256d x = _mm256_cvtps_pd(xf), ax = abs_pd(x), sg = _mm256_and_pd(x, SIGN);
+  /* |x| < 7/16: x times a degree-7 polynomial in x^2 */
+  __m256d z2 = _mm256_mul_pd(x, x), z4 = _mm256_mul_pd(z2, z2), z8 = _mm256_mul_pd(z4, z4);
+#define S_(k) _mm256_set1_pd(ERFF_S[k])
+  __m256d c0 = _mm256_add_pd(S_(0), _mm256_mul_pd(z2, S_(1))), c2 = _mm256_add_pd(S_(2), _mm256_mul_pd(z2, S_(3)));
+  __m256d c4 = _mm256_add_pd(S_(4), _mm256_mul_pd(z2, S_(5))), c6 = _mm256_add_pd(S_(6), _mm256_mul_pd(z2, S_(7)));
+#undef S_
+  c0 = _mm256_add_pd(c0, _mm256_mul_pd(z4, c2)); c4 = _mm256_add_pd(c4, _mm256_mul_pd(z4, c6));
+  c0 = _mm256_add_pd(c0, _mm256_mul_pd(z8, c4));
+  __m256d ys = _mm256_mul_pd(x, c0);
+  /* 7/16 <= |x| <= 0x1.f5a888p+1: the polynomial for the sixteenth |x| is in */
+  __m256d v = _mm256_floor_pd(_mm256_mul_pd(ax, _mm256_set1_pd(16.0)));
+  __m256d vi = _mm256_min_pd(_mm256_max_pd(_mm256_sub_pd(v, _mm256_set1_pd(7.0)), _mm256_setzero_pd()), _mm256_set1_pd(55.0));
+  __m256i row = _mm256_and_si256(_mm256_castpd_si256(_mm256_add_pd(vi, _mm256_set1_pd(0x1.8p52))), _mm256_set1_epi64x(63));
+  __m256d z = _mm256_sub_pd(_mm256_sub_pd(ax, _mm256_set1_pd(0.03125)), _mm256_mul_pd(_mm256_set1_pd(0.0625), v));
+  __m256d w2 = _mm256_mul_pd(z, z), w4 = _mm256_mul_pd(w2, w2);
+  const double *C = &ERFF_C[0][0];
+  __m256d d0 = _mm256_add_pd(gather_row(C, row, 0, 8), _mm256_mul_pd(z, gather_row(C, row, 1, 8)));
+  __m256d d2 = _mm256_add_pd(gather_row(C, row, 2, 8), _mm256_mul_pd(z, gather_row(C, row, 3, 8)));
+  __m256d d4 = _mm256_add_pd(gather_row(C, row, 4, 8), _mm256_mul_pd(z, gather_row(C, row, 5, 8)));
+  __m256d d6 = _mm256_add_pd(gather_row(C, row, 6, 8), _mm256_mul_pd(z, gather_row(C, row, 7, 8)));
+  d0 = _mm256_add_pd(d0, _mm256_mul_pd(w2, d2)); d4 = _mm256_add_pd(d4, _mm256_mul_pd(w2, d6));
+  d0 = _mm256_add_pd(d0, _mm256_mul_pd(w4, d4));
+  __m256d ym = _mm256_or_pd(abs_pd(d0), sg);
+  __m256d y = _mm256_blendv_pd(ym, ys, _mm256_cmp_pd(ax, _mm256_set1_pd(0x1.cp-2), _CMP_LT_OQ));
+  y = _mm256_blendv_pd(y, _mm256_or_pd(_mm256_set1_pd(1.0), sg), _mm256_cmp_pd(ax, _mm256_set1_pd(0x1.f5a888p+1), _CMP_GT_OQ));
+#if NOTEST4   /* the zeroed-test control: correct on all 2^32 inputs without it */
+  *redo = nonfinite(xf);
+#else
+  *redo = _mm_or_si128(ambiguous(y, BR_ERF), nonfinite(xf));
+#endif
+  return y;
+}
+
+AVX2I static inline __m256d erfcf_half(__m128 xf, __m128i *redo)
+{
+  const __m256d ONE = _mm256_set1_pd(1.0), MAGIC = _mm256_set1_pd(0x1.8p52);
+  __m128i u = _mm_castps_si128(xf), at = _mm_and_si128(u, _mm_set1_epi32(0x7fffffff));
+  __m256d x = _mm256_cvtps_pd(xf), axd = abs_pd(x), x2 = _mm256_mul_pd(axd, axd);
+  __m256i neg = _mm256_cvtepi32_epi64(_mm_srai_epi32(u, 31));                       /* all ones if x < 0 */
+  /* near 0: 1 - x P(x^2) */
+#define S_(k) _mm256_set1_pd(ERFCF_S[k])
+  __m256d f0 = _mm256_mul_pd(x, _mm256_add_pd(S_(0), _mm256_mul_pd(x2, _mm256_add_pd(S_(1), _mm256_mul_pd(x2,
+                  _mm256_add_pd(S_(2), _mm256_mul_pd(x2, _mm256_add_pd(S_(3), _mm256_mul_pd(x2, S_(4))))))))));
+#undef S_
+  __m256d ysmall = _mm256_sub_pd(ONE, f0);
+  /* main range: exp(-x^2) as 2^(j/128) e^-d, times the rational form in z */
+  __m256d jt = _mm256_sub_pd(_mm256_mul_pd(x2, _mm256_set1_pd(0x1.71547652b82fep+0)), _mm256_set1_pd(0x1.00004p+10));
+  __m256i w = _mm256_srli_epi64(_mm256_slli_epi64(_mm256_castpd_si256(jt), 12), 48);        /* 16 bits */
+  __m256i j = _mm256_sub_epi64(w, _mm256_slli_epi64(_mm256_srli_epi64(w, 15), 16));          /* as signed */
+  __m256d jd = _mm256_sub_pd(_mm256_castsi256_pd(_mm256_add_epi64(j, _mm256_castpd_si256(MAGIC))), MAGIC);
+  __m256i jh = _mm256_sub_epi64(_mm256_srli_epi64(_mm256_add_epi64(j, _mm256_set1_epi64x(0x100000)), 7), _mm256_set1_epi64x(0x2000));
+  __m256i su = _mm256_add_epi64(jh, _mm256_or_si256(_mm256_set1_epi64x(0x3ff), _mm256_and_si256(neg, _mm256_set1_epi64x(1 << 11))));
+  __m256d S = _mm256_castsi256_pd(_mm256_slli_epi64(su, 52));
+  __m256d d = _mm256_add_pd(_mm256_add_pd(x2, _mm256_mul_pd(_mm256_set1_pd(0x1.62e42fefap-8), jd)),
+                            _mm256_mul_pd(_mm256_set1_pd(0x1.cf79abd6f5dc8p-47), jd));
+  __m256d dd = _mm256_mul_pd(d, d);
+  __m256d e0 = _mm256_i64gather_pd(ERFCF_E, _mm256_and_si256(j, _mm256_set1_epi64x(127)), 8);
+  __m256d f = _mm256_add_pd(d, _mm256_mul_pd(dd, _mm256_add_pd(
+      _mm256_add_pd(_mm256_set1_pd(-0x1.ffffffffff333p-2), _mm256_mul_pd(d, _mm256_set1_pd(0x1.5555555556a14p-3))),
+      _mm256_mul_pd(dd, _mm256_add_pd(_mm256_set1_pd(-0x1.55556666659b4p-5), _mm256_mul_pd(d, _mm256_set1_pd(0x1.1111074cc7b22p-7)))))));
+  __m256d hi = _mm256_castsi256_pd(_mm256_cvtepi32_epi64(_mm_cmpgt_epi32(at, _mm_set1_epi32(0x40051000))));
+#define CT(k) _mm256_blendv_pd(_mm256_set1_pd(ERFCF_CT[0][k]), _mm256_set1_pd(ERFCF_CT[1][k]), hi)
+  __m256d z = _mm256_div_pd(_mm256_sub_pd(axd, CT(0)), _mm256_add_pd(axd, CT(1)));
+  __m256d z2 = _mm256_mul_pd(z, z), z4 = _mm256_mul_pd(z2, z2), z8 = _mm256_mul_pd(z4, z4);
+#define P2_(a, b) _mm256_add_pd(CT(3 + a), _mm256_mul_pd(z, CT(3 + b)))
+  __m256d sp = _mm256_add_pd(
+      _mm256_add_pd(_mm256_add_pd(P2_(0, 1), _mm256_mul_pd(z2, P2_(2, 3))), _mm256_mul_pd(z4, _mm256_add_pd(P2_(4, 5), _mm256_mul_pd(z2, P2_(6, 7))))),
+      _mm256_mul_pd(z8, _mm256_add_pd(_mm256_add_pd(P2_(8, 9), _mm256_mul_pd(z2, P2_(10, 11))), _mm256_mul_pd(z4, CT(3 + 12)))));
+#undef P2_
+  sp = _mm256_add_pd(CT(2), _mm256_mul_pd(z, sp));
+#undef CT
+  __m256d r = _mm256_mul_pd(_mm256_mul_pd(S, _mm256_sub_pd(e0, _mm256_mul_pd(f, e0))), sp);
+  __m256d ymain = _mm256_add_pd(_mm256_and_pd(_mm256_castsi256_pd(neg), _mm256_set1_pd(2.0)), r);
+  /* branches, in cr_erfcf's order of precedence (the last blend wins) */
+  __m256d y = _mm256_blendv_pd(ymain, ysmall, _mm256_castsi256_pd(_mm256_cvtepi32_epi64(
+                  _mm_cmpgt_epi32(_mm_set1_epi32(0x3db80001), at))));                        /* |x| <= 0x1.7p-4 */
+  y = _mm256_blendv_pd(y, ONE, _mm256_castsi256_pd(_mm256_cvtepi32_epi64(
+                  _mm_cmpgt_epi32(_mm_set1_epi32(0x32e2dfc5), at))));                        /* rounds to 1 */
+  y = _mm256_blendv_pd(y, _mm256_setzero_pd(), _mm256_castsi256_pd(_mm256_cvtepi32_epi64(
+                  _mm_cmpgt_epi32(at, _mm_set1_epi32(0x4120ddfb)))));                        /* |x| >= 0x1.41bbf8p+3: 0 */
+  __m128i vneg = _mm_cmpgt_epi32(_mm_setzero_si128(), u);
+  __m128i below = _mm_and_si128(vneg, _mm_cmpgt_epi32(at, _mm_set1_epi32(0x407547ca)));     /* x < -0x1.ea8f94p+1: 2 */
+  y = _mm256_blendv_pd(y, _mm256_set1_pd(2.0), _mm256_castsi256_pd(_mm256_cvtepi32_epi64(below)));
+  __m128i exc = _mm_cmpeq_epi32(u, _mm_set1_epi32((int)0xb76c9f62u));                       /* cr_erfcf's exception */
+#if NOTEST4   /* the zeroed-test control: correct on all 2^32 inputs without it */
+  *redo = _mm_or_si128(nonfinite(xf), exc);
+#else
+  *redo = _mm_or_si128(_mm_or_si128(ambiguous(y, BR_ERF), nonfinite(xf)), exc);
+#endif
+  return y;
+}
+
+float cr_erff(float), cr_erfcf(float);
+#if !CR_LOOP_ERFF
+FLOAT_FROM_HALF(erff, erff_half, cr_erff)
+#endif
+FLOAT_FROM_HALF(erfcf, erfcf_half, cr_erfcf)
+
+/* hypotf: x^2 and y^2 are exact in double, fma adds them with one rounding,
+   and sqrt rounds once more: relative error < 2^-52 */
+AVX2I static inline __m256d hypotf_half(__m128 xf, __m128 yf, __m128i *redo)
+{
+  __m256d x = _mm256_cvtps_pd(xf), y = _mm256_cvtps_pd(yf);
+  __m256d r = _mm256_sqrt_pd(_mm256_fmadd_pd(x, x, _mm256_mul_pd(y, y)));
+  *redo = _mm_or_si128(ambiguous(r, 0x1p-50), _mm_or_si128(nonfinite(xf), nonfinite(yf)));
+  return r;
+}
+
+AVX2 __m256 _ZGVdN8vv_hypotf(__m256 xf, __m256 yf)
+{
+  __m128i r0, r1;
+  __m256d y0 = hypotf_half(_mm256_castps256_ps128(xf), _mm256_castps256_ps128(yf), &r0);
+  __m256d y1 = hypotf_half(_mm256_extractf128_ps(xf, 1), _mm256_extractf128_ps(yf, 1), &r1);
+  return finish8_2(xf, yf, y0, y1, r0, r1, cr_hypotf);
 }
 
 /* ---- double exp (added 2026-09-26, the calibration run) ------------- */
@@ -615,6 +1308,1282 @@ AVX2I static inline __m256d exp_fast(__m256d x, __m256d *redo)
   __m256i sh = _mm256_slli_epi64(_mm256_srli_epi64(_mm256_and_si256(jb, _mm256_set1_epi64x(0xfffffffffffffLL)), 12), 52);
   return _mm256_castsi256_pd(_mm256_add_epi64(_mm256_castpd_si256(lb), sh));
 }
+
+/* th + tl = 2^(k/4096) from EXP_T0/EXP_T1 by muldd, and 2^(k >> 12) as bits to
+   add to a result's exponent, for k in the low bits of kb = k + 1.5 2^52:
+   exp2, exp10 and expm1 use these same tables and this same product (their
+   muldd differ only in the order of two addends, and IEEE addition commutes) */
+AVX2I static inline __m256d exp_tables(__m256i kb, __m256d *tl, __m256i *scale)
+{
+  __m256i i1 = _mm256_slli_epi64(_mm256_and_si256(kb, _mm256_set1_epi64x(0x3f)), 1);
+  __m256i i0 = _mm256_slli_epi64(_mm256_and_si256(_mm256_srli_epi64(kb, 6), _mm256_set1_epi64x(0x3f)), 1);
+  const double *T0 = &EXP_T0[0][0], *T1 = &EXP_T1[0][0];
+  __m256d t0l = _mm256_i64gather_pd(T0, i0, 8), t0h = _mm256_i64gather_pd(T0 + 1, i0, 8);
+  __m256d t1l = _mm256_i64gather_pd(T1, i1, 8), t1h = _mm256_i64gather_pd(T1 + 1, i1, 8);
+  __m256d th = _mm256_mul_pd(t1h, t0h);
+  *tl = _mm256_add_pd(_mm256_add_pd(_mm256_mul_pd(t1h, t0l), _mm256_mul_pd(t1l, t0h)), _mm256_fmsub_pd(t1h, t0h, th));
+  *scale = _mm256_slli_epi64(_mm256_srli_epi64(_mm256_and_si256(kb, _mm256_set1_epi64x(0xfffffffffffffLL)), 12), 52);
+  return th;
+}
+
+/* every bound transcribed after 2026-09-26 midday is scaled by this;
+   crtest's control rebuilds with 0 */
+#ifndef CM_EPS_SCALE
+#define CM_EPS_SCALE 1.0
+#endif
+
+/* exp2 and exp10: CORE-MATH's fast paths transcribed, as exp_fast is; lanes
+   outside the normal-result range, and failed tests, go to cr_exp2/cr_exp10 */
+double cr_exp2(double), cr_exp10(double);
+
+AVX2I static inline __m256d exp2_fast(__m256d x, __m256d *redo)
+{
+  __m256d ok = _mm256_and_pd(_mm256_cmp_pd(x, _mm256_set1_pd(-1022.0), _CMP_GE_OQ),
+                             _mm256_cmp_pd(x, _mm256_set1_pd(1024.0), _CMP_LT_OQ));
+  x = _mm256_and_pd(x, ok);
+  __m256d sx = _mm256_mul_pd(_mm256_set1_pd(4096.0), x);
+  __m256d fx = _mm256_round_pd(sx, _MM_FROUND_TO_NEAREST_INT | _MM_FROUND_NO_EXC);
+  __m256d z = _mm256_sub_pd(sx, fx), z2 = _mm256_mul_pd(z, z);
+  __m256d tl; __m256i sc;
+  __m256d th = exp_tables(_mm256_castpd_si256(_mm256_add_pd(fx, _mm256_set1_pd(0x1.8p52))), &tl, &sc);
+  __m256d tz = _mm256_mul_pd(th, z);
+  __m256d pl = _mm256_add_pd(_mm256_add_pd(_mm256_set1_pd(0x1.62e42fefa39efp-13), _mm256_mul_pd(z, _mm256_set1_pd(0x1.ebfbdff82c58fp-27))),
+                             _mm256_mul_pd(z2, _mm256_add_pd(_mm256_set1_pd(0x1.c6b08d73b3e01p-41), _mm256_mul_pd(z, _mm256_set1_pd(0x1.3b2ab6fdda001p-55)))));
+  __m256d fl = _mm256_add_pd(_mm256_mul_pd(tz, pl), tl);
+  const __m256d EPS = _mm256_set1_pd(0x1.fdp-63 * CM_EPS_SCALE);
+  __m256d ub = _mm256_add_pd(th, _mm256_add_pd(fl, EPS)), fh = _mm256_add_pd(th, _mm256_sub_pd(fl, EPS));
+  *redo = _mm256_or_pd(_mm256_cmp_pd(ub, fh, _CMP_NEQ_UQ), _mm256_xor_pd(ok, _mm256_castsi256_pd(_mm256_set1_epi64x(-1))));
+  return _mm256_castsi256_pd(_mm256_add_epi64(_mm256_castpd_si256(fh), sc));
+}
+
+AVX2I static inline __m256d exp10_fast(__m256d x, __m256d *redo)
+{
+  __m256d ok = _mm256_and_pd(_mm256_cmp_pd(x, _mm256_set1_pd(-0x1.33a7146f72a42p+8), _CMP_GT_OQ),
+                             _mm256_cmp_pd(x, _mm256_set1_pd(0x1.34413509f79fep+8), _CMP_LE_OQ));
+  x = _mm256_and_pd(x, ok);
+  __m256d t = _mm256_round_pd(_mm256_mul_pd(_mm256_set1_pd(0x1.a934f0979a371p+13), x), _MM_FROUND_TO_NEAREST_INT | _MM_FROUND_NO_EXC);
+  __m256d tl; __m256i sc;
+  __m256d th = exp_tables(_mm256_castpd_si256(_mm256_add_pd(t, _mm256_set1_pd(0x1.8p52))), &tl, &sc);
+  __m256d dx = _mm256_sub_pd(_mm256_sub_pd(x, _mm256_mul_pd(_mm256_set1_pd(0x1.34413508p-14), t)),
+                             _mm256_mul_pd(_mm256_set1_pd(0x1.f79fef311f12bp-46), t));
+  __m256d dx2 = _mm256_mul_pd(dx, dx);
+  __m256d p = _mm256_add_pd(_mm256_add_pd(_mm256_set1_pd(0x1.26bb1bbb55516p+1), _mm256_mul_pd(dx, _mm256_set1_pd(0x1.53524c73cea69p+1))),
+                            _mm256_mul_pd(dx2, _mm256_add_pd(_mm256_set1_pd(0x1.0470591fd74e1p+1), _mm256_mul_pd(dx, _mm256_set1_pd(0x1.2bd760a1f32a5p+0)))));
+  __m256d fx = _mm256_mul_pd(th, dx), fl = _mm256_add_pd(tl, _mm256_mul_pd(fx, p));
+  const __m256d EPS = _mm256_set1_pd(2.17e-19 * CM_EPS_SCALE);
+  __m256d ub = _mm256_add_pd(th, _mm256_add_pd(fl, EPS)), lb = _mm256_add_pd(th, _mm256_sub_pd(fl, EPS));
+  *redo = _mm256_or_pd(_mm256_cmp_pd(ub, lb, _CMP_NEQ_UQ), _mm256_xor_pd(ok, _mm256_castsi256_pd(_mm256_set1_epi64x(-1))));
+  return _mm256_castsi256_pd(_mm256_add_epi64(_mm256_castpd_si256(_mm256_add_pd(th, fl)), sc));
+}
+
+/* log2: CORE-MATH's cr_log2 fast path transcribed. Lanes that are not
+   positive normal finite numbers go to cr_log2; exact powers of two return
+   their exponent, as cr_log2 does. */
+double cr_log2(double);
+#include "crmvec-log2-tab.h"
+
+AVX2I static inline __m256d log2_fast(__m256d x, __m256d *redo)
+{
+  const __m256i MANT = _mm256_set1_epi64x(0xfffffffffffffLL);
+  __m256i u = _mm256_castpd_si256(x);
+  __m256i ok = _mm256_and_si256(_mm256_cmpgt_epi64(u, _mm256_set1_epi64x(0x000fffffffffffffLL)),
+                                _mm256_cmpgt_epi64(_mm256_set1_epi64x(0x7ff0000000000000LL), u));
+  u = _mm256_blendv_epi8(_mm256_castpd_si256(_mm256_set1_pd(1.5)), u, ok);
+  __m256i e = _mm256_sub_epi64(_mm256_srli_epi64(u, 52), _mm256_set1_epi64x(0x3ff));
+  __m256d ed = _mm256_sub_pd(_mm256_castsi256_pd(_mm256_add_epi64(e, _mm256_castpd_si256(_mm256_set1_pd(0x1.8p52)))),
+                             _mm256_set1_pd(0x1.8p52));
+  __m256i tu = _mm256_and_si256(u, MANT);
+  __m256i exact = _mm256_cmpeq_epi64(tu, _mm256_setzero_si256());
+  __m256i i = _mm256_srli_epi64(tu, 52 - 5);
+  __m256i d = _mm256_and_si256(tu, _mm256_set1_epi64x((long long)(~0ULL >> 17)));
+  __m256i j = _mm256_add_epi64(_mm256_add_epi64(tu, _mm256_i64gather_epi64(LOG2_B0, i, 8)),
+                               _mm256_mul_epi32(_mm256_i64gather_epi64(LOG2_B1, i, 8), _mm256_srli_epi64(d, 16)));
+  j = _mm256_srli_epi64(j, 52 - 10);
+  __m256d t = _mm256_castsi256_pd(_mm256_or_si256(tu, _mm256_set1_epi64x(0x3ffLL << 52)));
+  __m256i i1 = _mm256_srli_epi64(j, 5), i2 = _mm256_and_si256(j, _mm256_set1_epi64x(0x1f));
+  __m256i i1x = _mm256_slli_epi64(i1, 1), i2x = _mm256_slli_epi64(i2, 1);
+  __m256d r = _mm256_mul_pd(_mm256_i64gather_pd(LOG2_R1, i1, 8), _mm256_i64gather_pd(LOG2_R2, i2, 8));
+  __m256d o = _mm256_mul_pd(r, t), dxl = _mm256_fmsub_pd(r, t, o);
+  __m256d dxh = _mm256_sub_pd(o, _mm256_set1_pd(0x1.71548p+0));
+  __m256d dx = _mm256_add_pd(dxh, dxl), dx2 = _mm256_mul_pd(dx, dx);
+  __m256d f = _mm256_mul_pd(dx2, _mm256_add_pd(
+      _mm256_add_pd(_mm256_set1_pd(-0x1.62e41d56c64p-2), _mm256_mul_pd(dx, _mm256_set1_pd(0x1.47fd2632d2d32p-3))),
+      _mm256_mul_pd(dx2, _mm256_add_pd(_mm256_set1_pd(-0x1.5504497831ba7p-4), _mm256_mul_pd(dx, _mm256_set1_pd(0x1.7a3314c5bef3cp-5))))));
+  const double *L1 = &LOG2_L1[0][0], *L2 = &LOG2_L2[0][0];
+  __m256d lt = _mm256_add_pd(_mm256_add_pd(_mm256_i64gather_pd(L1 + 1, i1x, 8), _mm256_i64gather_pd(L2 + 1, i2x, 8)), ed);
+  __m256d lh = _mm256_add_pd(lt, dxh), ll = _mm256_add_pd(_mm256_sub_pd(lt, lh), dxh);
+  ll = _mm256_add_pd(ll, _mm256_add_pd(_mm256_add_pd(_mm256_add_pd(_mm256_i64gather_pd(L1, i1x, 8), _mm256_i64gather_pd(L2, i2x, 8)), dxl),
+                                       _mm256_mul_pd(dxh, _mm256_set1_pd(-0x1.ad47a2f472159p-22))));
+  ll = _mm256_add_pd(ll, f);
+  const __m256d EPS = _mm256_set1_pd(2.64e-22 * CM_EPS_SCALE);
+  __m256d lb = _mm256_add_pd(lh, _mm256_sub_pd(ll, EPS)), ub = _mm256_add_pd(lh, _mm256_add_pd(ll, EPS));
+  lb = _mm256_blendv_pd(lb, ed, _mm256_castsi256_pd(exact));
+  __m256d good = _mm256_or_pd(_mm256_cmp_pd(lb, ub, _CMP_EQ_OQ), _mm256_castsi256_pd(exact));
+  *redo = _mm256_xor_pd(_mm256_and_pd(good, _mm256_castsi256_pd(ok)), _mm256_castsi256_pd(_mm256_set1_epi64x(-1)));
+  return lb;
+}
+
+/* log10: CORE-MATH's cr_log10_fast transcribed (log's scheme with its own
+   tables, then d_mul by 1/ln 10 in double-double), absolute bound 0x1.04p-69 */
+double cr_log10(double);
+#include "crmvec-log10-tab.h"
+
+AVX2I static inline __m256d log10_fast(__m256d x, __m256d *redo)
+{
+  const __m256i MANT = _mm256_set1_epi64x(0xfffffffffffffLL);
+  __m256i u = _mm256_castpd_si256(x);
+  __m256i ok = _mm256_and_si256(_mm256_cmpgt_epi64(u, _mm256_set1_epi64x(0x000fffffffffffffLL)),
+                                _mm256_cmpgt_epi64(_mm256_set1_epi64x(0x7ff0000000000000LL), u));
+  u = _mm256_blendv_epi8(_mm256_castpd_si256(_mm256_set1_pd(1.5)), u, ok);
+  __m256i m = _mm256_and_si256(u, MANT);
+  __m256i c = _mm256_cmpgt_epi64(m, _mm256_set1_epi64x(0x6a09e667f3bcdLL - 1));          /* -1 if c */
+  __m256i e = _mm256_sub_epi64(_mm256_sub_epi64(_mm256_srli_epi64(u, 52), _mm256_set1_epi64x(0x3ff)), c);
+  __m256d y = _mm256_castsi256_pd(_mm256_add_epi64(_mm256_slli_epi64(_mm256_add_epi64(_mm256_set1_epi64x(0x3ff), c), 52), m));
+  __m256i em = _mm256_or_si256(m, _mm256_set1_epi64x(1LL << 52));
+  __m256i idx = _mm256_sub_epi64(_mm256_srlv_epi64(em, _mm256_sub_epi64(_mm256_set1_epi64x(43), c)), _mm256_set1_epi64x(362));
+  __m256i i2 = _mm256_slli_epi64(idx, 1);
+  __m256d r = _mm256_i64gather_pd(LOG10_INVERSE, idx, 8);
+  __m256d l1 = _mm256_i64gather_pd(&LOG10_INV[0][0], i2, 8), l2 = _mm256_i64gather_pd(&LOG10_INV[0][1], i2, 8);
+  __m256d z = _mm256_fmadd_pd(r, y, _mm256_set1_pd(-1.0));
+  __m256d z2 = _mm256_mul_pd(z, z);
+  __m256d p45 = _mm256_fmadd_pd(_mm256_set1_pd(-0x1.55362255e0f63p-3), z, _mm256_set1_pd(0x1.999a14758b084p-3));
+  __m256d p23 = _mm256_fmadd_pd(_mm256_set1_pd(-0x1.0000000537df6p-2), z, _mm256_set1_pd(0x1.555555554f4d8p-2));
+  __m256d ph = _mm256_fmadd_pd(p45, z2, p23);
+  ph = _mm256_fmadd_pd(ph, z, _mm256_set1_pd(-0x1.ffffffffffffap-2));
+  ph = _mm256_mul_pd(ph, z2);
+  __m256d ee = _mm256_sub_pd(_mm256_castsi256_pd(_mm256_add_epi64(e, _mm256_castpd_si256(_mm256_set1_pd(0x1.8p52)))),
+                             _mm256_set1_pd(0x1.8p52));
+  __m256d a = _mm256_fmadd_pd(ee, _mm256_set1_pd(0x1.62e42fefa38p-1), l1);
+  __m256d h = _mm256_add_pd(a, z), l = _mm256_sub_pd(z, _mm256_sub_pd(h, a));
+  l = _mm256_add_pd(ph, _mm256_add_pd(l, l2));
+  l = _mm256_fmadd_pd(ee, _mm256_set1_pd(0x1.ef35793c7673p-45), l);
+  const __m256d H = _mm256_set1_pd(0x1.bcb7b1526e50ep-2), L = _mm256_set1_pd(0x1.95355baaafad3p-57);
+  __m256d hi = _mm256_mul_pd(h, H);                                             /* d_mul */
+  __m256d t = _mm256_fmadd_pd(l, H, _mm256_fmsub_pd(h, H, hi));
+  __m256d lo = _mm256_fmadd_pd(h, L, t);
+  const __m256d ERR = _mm256_set1_pd(0x1.04p-69 * CM_EPS_SCALE);
+  __m256d left = _mm256_add_pd(hi, _mm256_sub_pd(lo, ERR)), right = _mm256_add_pd(hi, _mm256_add_pd(lo, ERR));
+  *redo = _mm256_or_pd(_mm256_cmp_pd(left, right, _CMP_NEQ_UQ), _mm256_castsi256_pd(_mm256_xor_si256(ok, _mm256_set1_epi64x(-1))));
+  return left;
+}
+
+/* expm1: CORE-MATH's cr_expm1 fast paths transcribed: |x| < 1/4 from a
+   table of e^(i/128) - 1 (bound z^2 0x1.ap-65 + 2^-104), else exp's scheme
+   with -1 folded in exactly (bound 1.64e-19 th). Lanes with |x| < 2^-53,
+   x <= -0x1.25e4f7b2737fap+5, x >= 0x1.62e42fefa39fp+9 or not finite go to
+   cr_expm1. */
+double cr_expm1(double);
+#include "crmvec-expm1-tab.h"
+
+AVX2I static inline __m256d expm1_fast(__m256d x, __m256d *redo)
+{
+  const __m256d MAGIC = _mm256_set1_pd(0x1.8p52), ONE = _mm256_set1_pd(1.0);
+  __m256d ax = abs_pd(x);
+  __m256d ok = _mm256_and_pd(_mm256_and_pd(_mm256_cmp_pd(ax, _mm256_set1_pd(0x1p-53), _CMP_GE_OQ),
+                                           _mm256_cmp_pd(x, _mm256_set1_pd(0x1.62e42fefa39fp+9), _CMP_LT_OQ)),
+                             _mm256_cmp_pd(x, _mm256_set1_pd(-0x1.25e4f7b2737fap+5), _CMP_GT_OQ));
+  x = _mm256_blendv_pd(ONE, x, ok);
+  ax = abs_pd(x);
+  __m256d small = _mm256_cmp_pd(ax, _mm256_set1_pd(0.25), _CMP_LT_OQ);
+  /* |x| < 1/4 */
+  __m256d xs = _mm256_and_pd(x, small);
+  __m256d sx = _mm256_mul_pd(_mm256_set1_pd(0x1p7), xs);
+  __m256d fx = _mm256_round_pd(sx, _MM_FROUND_TO_NEAREST_INT | _MM_FROUND_NO_EXC);
+  __m256d z = _mm256_sub_pd(sx, fx), z2 = _mm256_mul_pd(z, z);
+  __m256i ti = _mm256_slli_epi64(_mm256_and_si256(_mm256_castpd_si256(_mm256_add_pd(_mm256_add_pd(fx, _mm256_set1_pd(32.0)), MAGIC)),
+                                                  _mm256_set1_epi64x(127)), 1);
+  __m256d th = _mm256_i64gather_pd(&EXPM1_TZ[0][1], ti, 8), tl = _mm256_i64gather_pd(&EXPM1_TZ[0][0], ti, 8);
+  __m256d fh = _mm256_mul_pd(z, _mm256_set1_pd(0x1p-7));
+  __m256d fl = _mm256_mul_pd(z2, _mm256_add_pd(
+      _mm256_add_pd(_mm256_set1_pd(0x1p-15), _mm256_mul_pd(z, _mm256_set1_pd(0x1.55555555551adp-24))),
+      _mm256_mul_pd(z2, _mm256_add_pd(_mm256_set1_pd(0x1.555555555599cp-33), _mm256_mul_pd(z,
+          _mm256_add_pd(_mm256_set1_pd(0x1.11111ad1ad69dp-42), _mm256_mul_pd(z, _mm256_set1_pd(0x1.6c16c168b1fb5p-52))))))));
+  __m256d eps = _mm256_mul_pd(_mm256_fmadd_pd(z2, _mm256_set1_pd(0x1.ap-65), _mm256_set1_pd(0x1p-104)), _mm256_set1_pd(CM_EPS_SCALE));
+  __m256d rh = _mm256_add_pd(th, fh);                                           /* fasttwosum(th, fh) */
+  __m256d rl = _mm256_sub_pd(fh, _mm256_sub_pd(rh, th));
+  rl = _mm256_add_pd(rl, _mm256_add_pd(tl, fl));
+  __m256d mh = _mm256_mul_pd(fh, th);                                           /* muldd(th, tl, fh, fl) */
+  __m256d ml = _mm256_add_pd(_mm256_add_pd(_mm256_mul_pd(fh, tl), _mm256_mul_pd(fl, th)), _mm256_fmsub_pd(fh, th, mh));
+  __m256d sh = _mm256_add_pd(rh, mh);                                           /* fastsum(rh, rl, mh, ml) */
+  __m256d sl = _mm256_add_pd(_mm256_add_pd(rl, ml), _mm256_sub_pd(mh, _mm256_sub_pd(sh, rh)));
+  __m256d ubs = _mm256_add_pd(sh, _mm256_add_pd(sl, eps)), lbs = _mm256_add_pd(sh, _mm256_sub_pd(sl, eps));
+  /* |x| >= 1/4 */
+  __m256d xb = _mm256_blendv_pd(x, ONE, small);
+  __m256d t = _mm256_round_pd(_mm256_mul_pd(xb, _mm256_set1_pd(0x1.71547652b82fep+12)), _MM_FROUND_TO_NEAREST_INT | _MM_FROUND_NO_EXC);
+  __m256i kb = _mm256_castpd_si256(_mm256_add_pd(t, MAGIC));
+  __m256d btl; __m256i sc;
+  __m256d bth = exp_tables(kb, &btl, &sc);
+  __m256d dx = _mm256_add_pd(_mm256_sub_pd(xb, _mm256_mul_pd(_mm256_set1_pd(0x1.62e42ffp-13), t)),
+                             _mm256_mul_pd(_mm256_set1_pd(0x1.718432a1b0e26p-47), t));
+  __m256d dx2 = _mm256_mul_pd(dx, dx);
+  __m256d pp = _mm256_add_pd(_mm256_add_pd(ONE, _mm256_mul_pd(dx, _mm256_set1_pd(0x1p-1))),
+                             _mm256_mul_pd(dx2, _mm256_add_pd(_mm256_set1_pd(0x1.55555557e54ffp-3), _mm256_mul_pd(dx, _mm256_set1_pd(0x1.55555553a12f4p-5)))));
+  __m256d bfh = bth, bfl = _mm256_add_pd(btl, _mm256_mul_pd(_mm256_mul_pd(bth, dx), pp));
+  __m256d beps = _mm256_mul_pd(_mm256_set1_pd(1.64e-19 * CM_EPS_SCALE), bth);
+  __m256i ie = _mm256_sub_epi64(_mm256_srli_epi64(_mm256_and_si256(kb, _mm256_set1_epi64x(0xfffffffffffffLL)), 12),
+                                _mm256_set1_epi64x(1LL << 39));
+  __m256d off = _mm256_castsi256_pd(_mm256_slli_epi64(_mm256_sub_epi64(_mm256_set1_epi64x(2048 + 1023), ie), 52));
+  __m256d s1 = _mm256_add_pd(off, bfh);
+  __m256d e1 = _mm256_sub_pd(bfh, _mm256_sub_pd(s1, off));                    /* ie < 53: fasttwosum(off, fh) */
+  __m256d e2 = _mm256_sub_pd(off, _mm256_sub_pd(s1, bfh));                    /* ie < 75: fasttwosum(fh, off) */
+  __m256d lt53 = _mm256_castsi256_pd(_mm256_cmpgt_epi64(_mm256_set1_epi64x(53), ie));
+  __m256d lt75 = _mm256_castsi256_pd(_mm256_cmpgt_epi64(_mm256_set1_epi64x(75), ie));
+  __m256d e = _mm256_blendv_pd(_mm256_and_pd(e2, lt75), e1, lt53);
+  bfh = _mm256_blendv_pd(bfh, s1, lt75);
+  bfl = _mm256_add_pd(bfl, e);
+  __m256d ubb = _mm256_add_pd(bfh, _mm256_add_pd(bfl, beps)), lbb = _mm256_add_pd(bfh, _mm256_sub_pd(bfl, beps));
+  __m256d rb = _mm256_castsi256_pd(_mm256_add_epi64(_mm256_castpd_si256(lbb), sc));
+  __m256d r = _mm256_blendv_pd(rb, lbs, small);
+  __m256d diff = _mm256_blendv_pd(_mm256_cmp_pd(ubb, lbb, _CMP_NEQ_UQ), _mm256_cmp_pd(ubs, lbs, _CMP_NEQ_UQ), small);
+  *redo = _mm256_or_pd(diff, _mm256_xor_pd(ok, _mm256_castsi256_pd(_mm256_set1_epi64x(-1))));
+  return r;
+}
+
+/* log1p: CORE-MATH's cr_log1p fast path transcribed, all four bands
+   computed and the right one kept per lane: |x| < 0x1.19bp-21, < 2^-12
+   (bound 0x1.ap-64 x), < 1/16 (series, bound 0x1.b6p-52 x^3), else the
+   64-entry table on 1 + x as a double-double (bound 0x1.ap-65). Lanes with
+   |x| < 2^-53, x <= -1, x >= 2^1021, or not finite, go to cr_log1p. */
+double cr_log1p(double);
+#include "crmvec-log1p-tab.h"
+
+AVX2I static inline __m256d log1p_fast(__m256d x, __m256d *redo)
+{
+  const __m256d ONE = _mm256_set1_pd(1.0), SC = _mm256_set1_pd(CM_EPS_SCALE);
+  __m256d ax = abs_pd(x);
+  __m256d ok = _mm256_and_pd(_mm256_and_pd(_mm256_cmp_pd(ax, _mm256_set1_pd(0x1p-53), _CMP_GE_OQ),
+                                           _mm256_cmp_pd(x, _mm256_set1_pd(-1.0), _CMP_GT_OQ)),
+                             _mm256_cmp_pd(x, _mm256_set1_pd(0x1p1021), _CMP_LT_OQ));
+  x = _mm256_blendv_pd(_mm256_set1_pd(0.5), x, ok);
+  ax = abs_pd(x);
+  __m256d x2 = _mm256_mul_pd(x, x);
+  /* |x| < 2^-12: ln1 = x */
+  __m256d la = _mm256_mul_pd(x2, _mm256_add_pd(_mm256_set1_pd(-0x1.00000000001d1p-1), _mm256_mul_pd(x, _mm256_set1_pd(0x1.55555555558f7p-2))));
+  __m256d lb0 = _mm256_mul_pd(x2, _mm256_add_pd(
+      _mm256_add_pd(_mm256_set1_pd(-0x1.ffffffffffffdp-2), _mm256_mul_pd(x, _mm256_set1_pd(0x1.5555555555551p-2))),
+      _mm256_mul_pd(x2, _mm256_add_pd(_mm256_set1_pd(-0x1.000000d5555e1p-2), _mm256_mul_pd(x, _mm256_set1_pd(0x1.99999b442f73fp-3))))));
+  __m256d ln0_a = _mm256_blendv_pd(lb0, la, _mm256_cmp_pd(ax, _mm256_set1_pd(0x1.19bp-21), _CMP_LT_OQ));
+  __m256d eps_a = _mm256_mul_pd(_mm256_mul_pd(_mm256_set1_pd(0x1.ap-64), x), SC);
+  /* 2^-12 <= |x| < 1/16: series */
+#define C_(k) _mm256_set1_pd(k)
+#define P2_(a, b) _mm256_add_pd(C_(a), _mm256_mul_pd(x, C_(b)))
+  __m256d x3 = _mm256_mul_pd(x2, x), x4 = _mm256_mul_pd(x2, x2), hx = _mm256_mul_pd(_mm256_set1_pd(-0.5), x);
+  __m256d ln1_b = _mm256_fmadd_pd(hx, x, x);
+  __m256d ln0_b = _mm256_fmadd_pd(hx, x, _mm256_sub_pd(x, ln1_b));
+  __m256d f = _mm256_add_pd(
+      _mm256_add_pd(P2_(0x1.5555555555555p-2, -0x1p-2), _mm256_mul_pd(x2, P2_(0x1.9999999999b41p-3, -0x1.555555555583bp-3))),
+      _mm256_mul_pd(x4, _mm256_add_pd(
+          _mm256_add_pd(P2_(0x1.24924923f39ep-3, -0x1.fffffffe42e43p-4), _mm256_mul_pd(x2, P2_(0x1.c71c75511d70bp-4, -0x1.99999de10510fp-4))),
+          _mm256_mul_pd(x4, _mm256_add_pd(P2_(0x1.7457e81b175f6p-4, -0x1.554fb43e54e0fp-4), _mm256_mul_pd(x2, P2_(0x1.3ed68744f3d18p-4, -0x1.28558ad5a7ac4p-4)))))));
+#undef P2_
+  ln0_b = _mm256_add_pd(ln0_b, _mm256_mul_pd(x3, f));
+  __m256d eps_b = _mm256_mul_pd(_mm256_mul_pd(x3, _mm256_set1_pd(0x1.b6p-52)), SC);
+  /* |x| >= 1/16: the table, on t + dt = 1 + x */
+  __m256d big53 = _mm256_cmp_pd(x, _mm256_set1_pd(0x1p53), _CMP_GE_OQ);
+  __m256d s1 = _mm256_add_pd(ONE, x);
+  __m256d tt = _mm256_blendv_pd(s1, x, big53);
+  __m256d dt = _mm256_blendv_pd(_mm256_sub_pd(x, _mm256_sub_pd(s1, ONE)),
+                                _mm256_and_pd(ONE, _mm256_cmp_pd(x, _mm256_set1_pd(0x1p106), _CMP_LT_OQ)), big53);
+  __m256i j = _mm256_sub_epi64(_mm256_castpd_si256(tt), _mm256_set1_epi64x(0x3fe6a00000000000LL));
+  __m256i j1 = _mm256_and_si256(_mm256_srli_epi64(j, 52 - 6), _mm256_set1_epi64x(0x3f));
+  __m256i je = _mm256_sub_epi64(_mm256_srli_epi64(_mm256_add_epi64(j, _mm256_set1_epi64x(1LL << 62)), 52), _mm256_set1_epi64x(1024));
+  __m256d rs = _mm256_castsi256_pd(_mm256_sub_epi64(_mm256_castpd_si256(_mm256_i64gather_pd(LOG1P_RF, j1, 8)), _mm256_slli_epi64(je, 52)));
+  __m256d dh = _mm256_mul_pd(rs, tt), dl = _mm256_add_pd(_mm256_fmsub_pd(rs, tt, dh), _mm256_mul_pd(rs, dt));
+  __m256d dm = _mm256_sub_pd(dh, ONE);
+  __m256d xh = _mm256_add_pd(dm, dl), xl = _mm256_sub_pd(dl, _mm256_sub_pd(xh, dm));   /* fasttwosum(dh - 1, dl) */
+  __m256d xx = _mm256_mul_pd(xh, xh);
+#define Q2_(a, b) _mm256_add_pd(C_(a), _mm256_mul_pd(xh, C_(b)))
+  xl = _mm256_add_pd(xl, _mm256_mul_pd(xx, _mm256_add_pd(Q2_(-0x1.000000000003dp-1, 0x1.5555555554cf5p-2),
+        _mm256_mul_pd(xx, _mm256_add_pd(Q2_(-0x1.ffffffeca2939p-3, 0x1.99999a3661724p-3),
+                                        _mm256_mul_pd(xx, Q2_(-0x1.555d345bfe6fdp-3, 0x1.247b887a6e5edp-3)))))));
+#undef Q2_
+#undef C_
+  __m256d jed = _mm256_sub_pd(_mm256_castsi256_pd(_mm256_add_epi64(je, _mm256_castpd_si256(_mm256_set1_pd(0x1.8p52)))), _mm256_set1_pd(0x1.8p52));
+  __m256d L1 = _mm256_mul_pd(_mm256_set1_pd(0x1.62e42fefa4p-1), jed), L0 = _mm256_mul_pd(_mm256_set1_pd(-0x1.8432a1b0e2634p-43), jed);
+  __m256i j2 = _mm256_slli_epi64(j1, 1);
+  __m256d ln1_c = _mm256_add_pd(_mm256_i64gather_pd(&LOG1P_LF[0][1], j2, 8), L1);
+  __m256d ln0_c = _mm256_add_pd(_mm256_i64gather_pd(&LOG1P_LF[0][0], j2, 8), L0);
+  __m256d sh = _mm256_add_pd(ln1_c, xh);                                         /* fastsum(ln1, ln0, xh, xl) */
+  ln0_c = _mm256_add_pd(_mm256_add_pd(ln0_c, xl), _mm256_sub_pd(xh, _mm256_sub_pd(sh, ln1_c)));
+  ln1_c = sh;
+  __m256d eps_c = _mm256_set1_pd(0x1.ap-65 * CM_EPS_SCALE);
+  /* keep the band this lane is in */
+  __m256d a12 = _mm256_cmp_pd(ax, _mm256_set1_pd(0x1p-12), _CMP_LT_OQ), a16 = _mm256_cmp_pd(ax, _mm256_set1_pd(0.0625), _CMP_LT_OQ);
+  __m256d ln1 = _mm256_blendv_pd(ln1_c, _mm256_blendv_pd(ln1_b, x, a12), a16);
+  __m256d ln0 = _mm256_blendv_pd(ln0_c, _mm256_blendv_pd(ln0_b, ln0_a, a12), a16);
+  __m256d eps = _mm256_blendv_pd(eps_c, _mm256_blendv_pd(eps_b, eps_a, a12), a16);
+  __m256d lb = _mm256_add_pd(ln1, _mm256_sub_pd(ln0, eps)), ub = _mm256_add_pd(ln1, _mm256_add_pd(ln0, eps));
+  *redo = _mm256_or_pd(_mm256_cmp_pd(lb, ub, _CMP_NEQ_UQ), _mm256_xor_pd(ok, _mm256_castsi256_pd(_mm256_set1_epi64x(-1))));
+  return lb;
+}
+
+/* cbrt: CORE-MATH's cr_cbrt transcribed for round-to-nearest: cubic
+   start, a cubic Newton-type step, one Newton step on y^3 in extended
+   precision, and its test that the correction dy is not within 2^-75 of a
+   half ulp. Lanes that fail it, lanes near an exactly representable cube
+   (cr_cbrt's exact-case fixup), and zero, subnormal, inf and nan inputs go
+   to cr_cbrt. */
+double cr_cbrt(double);
+
+AVX2I static inline __m256d cbrt_fast(__m256d x, __m256d *redo)
+{
+  const __m256i MANT = _mm256_set1_epi64x(0xfffffffffffffLL), SIGNI = _mm256_set1_epi64x(1LL << 63);
+  const __m256d MAGIC = _mm256_set1_pd(0x1.8p52);
+  __m256i hx = _mm256_castpd_si256(x);
+  __m256i eb = _mm256_and_si256(_mm256_srli_epi64(hx, 52), _mm256_set1_epi64x(0x7ff));
+  __m256i ok = _mm256_andnot_si256(_mm256_or_si256(_mm256_cmpeq_epi64(eb, _mm256_setzero_si256()),
+                                                   _mm256_cmpeq_epi64(eb, _mm256_set1_epi64x(0x7ff))), _mm256_set1_epi64x(-1));
+  hx = _mm256_blendv_epi8(_mm256_castpd_si256(_mm256_set1_pd(1.0)), hx, ok);
+  eb = _mm256_and_si256(_mm256_srli_epi64(hx, 52), _mm256_set1_epi64x(0x7ff));
+  __m256i mant = _mm256_and_si256(hx, MANT), sign = _mm256_and_si256(hx, SIGNI);
+  __m256d ed = _mm256_sub_pd(_mm256_castsi256_pd(_mm256_add_epi64(_mm256_add_epi64(eb, _mm256_set1_epi64x(3072)), _mm256_castpd_si256(MAGIC))), MAGIC);
+  __m256d etd = _mm256_floor_pd(_mm256_mul_pd(ed, _mm256_set1_pd(1.0 / 3.0)));   /* e/3: exact floor */
+  __m256d itd = _mm256_fnmadd_pd(etd, _mm256_set1_pd(3.0), ed);
+  __m256i et = _mm256_sub_epi64(_mm256_castpd_si256(_mm256_add_pd(etd, MAGIC)), _mm256_castpd_si256(MAGIC));
+  __m256i it = _mm256_sub_epi64(_mm256_castpd_si256(_mm256_add_pd(itd, MAGIC)), _mm256_castpd_si256(MAGIC));
+  __m256d z = _mm256_castsi256_pd(_mm256_or_si256(mant, _mm256_set1_epi64x(0x3ffLL << 52)));
+  __m256d zz = _mm256_castsi256_pd(_mm256_or_si256(_mm256_add_epi64(_mm256_castpd_si256(z), _mm256_slli_epi64(it, 52)), sign));
+  __m256d esc = _mm256_blendv_pd(_mm256_blendv_pd(_mm256_set1_pd(1.0), _mm256_set1_pd(0x1.428a2f98d728bp+0),
+                                                  _mm256_castsi256_pd(_mm256_cmpeq_epi64(it, _mm256_set1_epi64x(1)))),
+                                 _mm256_set1_pd(0x1.965fea53d6e3dp+0), _mm256_castsi256_pd(_mm256_cmpeq_epi64(it, _mm256_set1_epi64x(2))));
+  __m256d cvt2 = _mm256_or_pd(esc, _mm256_castsi256_pd(sign));
+  __m256d rscv = _mm256_castsi256_pd(_mm256_or_si256(_mm256_slli_epi64(_mm256_sub_epi64(_mm256_set1_epi64x(1023), it), 52), sign));
+  __m256d r = _mm256_div_pd(_mm256_set1_pd(1.0), z), rr = _mm256_mul_pd(r, rscv), z2 = _mm256_mul_pd(z, z);
+  __m256d c0 = _mm256_add_pd(_mm256_set1_pd(0x1.1b0babccfef9cp-1), _mm256_mul_pd(z, _mm256_set1_pd(0x1.2c9a3e94d1da5p-1)));
+  __m256d c2 = _mm256_add_pd(_mm256_set1_pd(-0x1.4dc30b1a1ddbap-3), _mm256_mul_pd(z, _mm256_set1_pd(0x1.7a8d3e4ec9b07p-6)));
+  __m256d y = _mm256_add_pd(c0, _mm256_mul_pd(z2, c2)), y2 = _mm256_mul_pd(y, y);
+  const __m256d U0 = _mm256_set1_pd(0x1.5555555555555p-2), U1 = _mm256_set1_pd(0x1.c71c71c71c71cp-3);
+  __m256d h = _mm256_sub_pd(_mm256_mul_pd(y2, _mm256_mul_pd(y, r)), _mm256_set1_pd(1.0));
+  y = _mm256_sub_pd(y, _mm256_mul_pd(_mm256_mul_pd(h, y), _mm256_sub_pd(U0, _mm256_mul_pd(U1, h))));
+  y = _mm256_mul_pd(y, cvt2);
+  y2 = _mm256_mul_pd(y, y);
+  __m256d y2l = _mm256_fmsub_pd(y, y, y2);
+  __m256d y3 = _mm256_mul_pd(y2, y);
+  __m256d y3l = _mm256_add_pd(_mm256_fmsub_pd(y, y2, y3), _mm256_mul_pd(y, y2l));
+  h = _mm256_mul_pd(_mm256_add_pd(_mm256_sub_pd(y3, zz), y3l), rr);
+  __m256d dy = _mm256_mul_pd(h, _mm256_mul_pd(y, U0));
+  __m256d y1 = _mm256_sub_pd(y, dy);
+  dy = _mm256_sub_pd(_mm256_sub_pd(y, y1), dy);
+  __m256d ady = abs_pd(dy);
+  __m256d ady0 = abs_pd(_mm256_sub_pd(ady, _mm256_set1_pd(0x1p-53)));
+  __m256d ady1 = abs_pd(_mm256_sub_pd(ady, _mm256_set1_pd(0x1p-52 + 0x1p-53)));
+  const __m256d T = _mm256_set1_pd(0x1p-75 * CM_EPS_SCALE);
+  __m256d hard = _mm256_or_pd(_mm256_cmp_pd(ady0, T, _CMP_LT_OQ), _mm256_cmp_pd(ady1, T, _CMP_LT_OQ));
+  __m256i cvt3 = _mm256_add_epi64(_mm256_castpd_si256(y1), _mm256_slli_epi64(_mm256_sub_epi64(et, _mm256_set1_epi64x(342 + 1023)), 52));
+  __m256i m0 = _mm256_slli_epi64(cvt3, 30), m1 = _mm256_cmpgt_epi64(_mm256_setzero_si256(), m0);
+  __m256i nearexact = _mm256_cmpgt_epi64(_mm256_set1_epi64x((1LL << 30) + 1), _mm256_xor_si256(m0, m1));
+  __m256d bad = _mm256_or_pd(_mm256_or_pd(hard, _mm256_castsi256_pd(nearexact)), _mm256_castsi256_pd(_mm256_xor_si256(ok, _mm256_set1_epi64x(-1))));
+  *redo = bad;
+  return _mm256_castsi256_pd(cvt3);
+}
+
+/* atan: CORE-MATH's cr_atan fast path transcribed: a series below
+   0x1.b21c475e6362ap-8 (asymmetric bound 0x1.6p-50 f / 0x1.6p-51 f); in the
+   middle an integer-arithmetic index into atan values, a Moebius shift and a
+   short series (bound 0x3.fp-52 h); above 0x1.2ded8e34a9035p+7, pi/2 - atan(1/x).
+   Lanes below 2^-27, at or above 0x1.d02967c31cdb5p+53, or not finite, and
+   failed tests, go to cr_atan. */
+double cr_atan(double);
+#include "crmvec-atan-tab.h"
+
+AVX2I static inline __m256d atan_fast(__m256d x, __m256d *redo)
+{
+  const __m256i SIGNI = _mm256_set1_epi64x(1LL << 63);
+  __m256i xb = _mm256_castpd_si256(x), at = _mm256_andnot_si256(SIGNI, xb);
+  __m256i ok = _mm256_and_si256(_mm256_cmpgt_epi64(at, _mm256_set1_epi64x(0x3e3fffffffffffffLL)),     /* >= 2^-27 */
+                                _mm256_cmpgt_epi64(_mm256_set1_epi64x(0x434d02967c31cdb5LL), at));
+  xb = _mm256_blendv_epi8(_mm256_castpd_si256(_mm256_set1_pd(0.5)), xb, ok);
+  x = _mm256_castsi256_pd(xb); at = _mm256_andnot_si256(SIGNI, xb);
+  __m256d sg = _mm256_castsi256_pd(_mm256_and_si256(xb, SIGNI));
+  /* small */
+  __m256d x2 = _mm256_mul_pd(x, x), x3 = _mm256_mul_pd(x, x2), x4 = _mm256_mul_pd(x2, x2);
+  __m256d fs = _mm256_mul_pd(x3, _mm256_add_pd(
+      _mm256_add_pd(_mm256_set1_pd(-0x1.5555555555555p-2), _mm256_mul_pd(x2, _mm256_set1_pd(0x1.99999999998c1p-3))),
+      _mm256_mul_pd(x4, _mm256_add_pd(_mm256_set1_pd(-0x1.249249176aecp-3), _mm256_mul_pd(x2, _mm256_set1_pd(0x1.c711fd121ae8p-4))))));
+  __m256d epsp = _mm256_mul_pd(fs, _mm256_set1_pd(0x1.6p-50 * CM_EPS_SCALE)), epsm = _mm256_mul_pd(fs, _mm256_set1_pd(0x1.6p-51 * CM_EPS_SCALE));
+  __m256d ubs = _mm256_add_pd(_mm256_add_pd(fs, epsp), x), lbs = _mm256_add_pd(_mm256_sub_pd(fs, epsm), x);
+  /* middle */
+  __m256i i = _mm256_sub_epi64(_mm256_srli_epi64(at, 51), _mm256_set1_epi64x(2030));
+  i = _mm256_min_epi32(_mm256_max_epi32(i, _mm256_set1_epi64x(1)), _mm256_set1_epi64x(30));    /* other lanes: any valid row */
+  __m256i u = _mm256_and_si256(xb, _mm256_set1_epi64x((long long)(~0ULL >> 13)));
+  __m256i ut = _mm256_srli_epi64(u, 51 - 16);
+  __m256i ut2 = _mm256_srli_epi64(_mm256_mul_epu32(ut, ut), 16);
+  __m256i jj = _mm256_add_epi64(_mm256_slli_epi64(_mm256_i64gather_epi64(ATAN_C0, i, 8), 16), _mm256_mul_epu32(ut, _mm256_i64gather_epi64(ATAN_C1, i, 8)));
+  jj = _mm256_srli_epi64(_mm256_sub_epi64(jj, _mm256_mul_epu32(ut2, _mm256_i64gather_epi64(ATAN_C2, i, 8))), 16 + 9);
+  __m256i j2 = _mm256_slli_epi64(jj, 1);
+  __m256d ta = _mm256_xor_pd(_mm256_i64gather_pd(&ATAN_A[0][0], j2, 8), sg);
+  __m256d idv = _mm256_xor_pd(_mm256_sub_pd(_mm256_castsi256_pd(_mm256_add_epi64(jj, _mm256_castpd_si256(_mm256_set1_pd(0x1.8p52)))), _mm256_set1_pd(0x1.8p52)), sg);
+  __m256d alm = _mm256_add_pd(_mm256_xor_pd(_mm256_i64gather_pd(&ATAN_A[0][1], j2, 8), sg), _mm256_mul_pd(_mm256_set1_pd(0x1.8469898cc517p-55), idv));
+  __m256d hm = _mm256_div_pd(_mm256_sub_pd(x, ta), _mm256_fmadd_pd(x, ta, _mm256_set1_pd(1.0)));
+  __m256d ahm = _mm256_mul_pd(_mm256_set1_pd(0x1.921fb54442dp-7), idv);
+  /* large */
+  __m256d large = _mm256_castsi256_pd(_mm256_cmpgt_epi64(at, _mm256_set1_epi64x(0x4062ded8e34a9035LL)));
+  __m256d h = _mm256_blendv_pd(hm, _mm256_div_pd(_mm256_set1_pd(-1.0), x), large);
+  __m256d ah = _mm256_blendv_pd(ahm, _mm256_or_pd(_mm256_set1_pd(0x1.921fb54442d18p+0), sg), large);
+  __m256d al = _mm256_blendv_pd(alm, _mm256_or_pd(_mm256_set1_pd(0x1.1a62633145c07p-54), sg), large);
+  __m256d h2 = _mm256_mul_pd(h, h), h4 = _mm256_mul_pd(h2, h2);
+  __m256d f = _mm256_add_pd(_mm256_add_pd(_mm256_set1_pd(1.0), _mm256_mul_pd(h2, _mm256_set1_pd(-0x1.555555555552bp-2))),
+                            _mm256_mul_pd(h4, _mm256_add_pd(_mm256_set1_pd(0x1.9999999069c2p-3), _mm256_mul_pd(h2, _mm256_set1_pd(-0x1.248d2c8444ac6p-3)))));
+  al = _mm256_fmadd_pd(h, f, al);
+  __m256d e = _mm256_mul_pd(h, _mm256_set1_pd(0x3.fp-52 * CM_EPS_SCALE));
+  __m256d ub = _mm256_add_pd(_mm256_add_pd(al, e), ah), lb = _mm256_add_pd(_mm256_sub_pd(al, e), ah);
+  __m256d small = _mm256_castsi256_pd(_mm256_cmpgt_epi64(_mm256_set1_epi64x(0x3f7b21c475e6362aLL), at));
+  ub = _mm256_blendv_pd(ub, ubs, small); lb = _mm256_blendv_pd(lb, lbs, small);
+  *redo = _mm256_or_pd(_mm256_cmp_pd(ub, lb, _CMP_NEQ_UQ), _mm256_castsi256_pd(_mm256_xor_si256(ok, _mm256_set1_epi64x(-1))));
+  return ub;
+}
+
+/* asin: CORE-MATH's cr_asin fast path transcribed: for |x| <= 1/2 the table
+   polynomial in t = x^2 - j/128 (bound |z t| 0x1.77p-52); above, pi/2 - 2 asin
+   of sqrt((1 - |x|)/2), the root carried as a double-double (bound |z t|
+   0x1.99p-52). Lanes with |x| < 0x1.7137449123ef6p-26, |x| >= 1, or nan go
+   to cr_asin. */
+double cr_asin(double);
+#include "crmvec-asin-tab.h"
+
+AVX2I static inline __m256d asin_fast(__m256d x, __m256d *redo)
+{
+  __m256d ax = abs_pd(x);
+  __m256d ok = _mm256_and_pd(_mm256_cmp_pd(ax, _mm256_set1_pd(0x1.7137449123ef6p-26), _CMP_GE_OQ),
+                             _mm256_cmp_pd(ax, _mm256_set1_pd(1.0), _CMP_LT_OQ));
+  x = _mm256_blendv_pd(_mm256_set1_pd(0.25), x, ok);
+  ax = abs_pd(x);
+  __m256d big = _mm256_cmp_pd(ax, _mm256_set1_pd(0.5), _CMP_GT_OQ);
+  __m256d sg = _mm256_and_pd(x, _mm256_castsi256_pd(_mm256_set1_epi64x(1LL << 63)));
+  /* |x| > 1/2 */
+  __m256d tb = _mm256_sub_pd(_mm256_set1_pd(2.0), _mm256_add_pd(ax, ax));
+  __m256d jb = _mm256_round_pd(_mm256_mul_pd(tb, _mm256_set1_pd(0x1p5)), _MM_FROUND_TO_NEAREST_INT | _MM_FROUND_NO_EXC);
+  __m256d zb = _mm256_xor_pd(_mm256_sqrt_pd(tb), _mm256_xor_pd(sg, _mm256_castsi256_pd(_mm256_set1_epi64x(1LL << 63))));   /* copysign(., -x) */
+  __m256d zlb = _mm256_mul_pd(_mm256_fmsub_pd(zb, zb, tb), _mm256_mul_pd(_mm256_div_pd(_mm256_set1_pd(-0.5), tb), zb));
+  tb = _mm256_sub_pd(_mm256_mul_pd(_mm256_set1_pd(0.25), tb), _mm256_mul_pd(jb, _mm256_set1_pd(0x1p-7)));
+  __m256d epsb = _mm256_mul_pd(abs_pd(_mm256_mul_pd(zb, tb)), _mm256_set1_pd(0x1.99p-52 * CM_EPS_SCALE));
+  __m256d f0h = _mm256_blendv_pd(_mm256_set1_pd(ASIN_OFF[0][0]), _mm256_set1_pd(ASIN_OFF[1][0]), sg);
+  __m256d f0l = _mm256_blendv_pd(_mm256_set1_pd(ASIN_OFF[0][1]), _mm256_set1_pd(ASIN_OFF[1][1]), sg);
+  /* |x| <= 1/2 */
+  __m256d ts = _mm256_mul_pd(x, x);
+  __m256d js = _mm256_round_pd(_mm256_mul_pd(ts, _mm256_set1_pd(0x1p7)), _MM_FROUND_TO_NEAREST_INT | _MM_FROUND_NO_EXC);
+  ts = _mm256_fmadd_pd(x, x, _mm256_mul_pd(_mm256_set1_pd(-0x1p-7), js));
+  __m256d epss = _mm256_mul_pd(abs_pd(_mm256_mul_pd(x, ts)), _mm256_set1_pd(0x1.77p-52 * CM_EPS_SCALE));
+  __m256d t = _mm256_blendv_pd(ts, tb, big), jd = _mm256_blendv_pd(js, jb, big);
+  __m256d z = _mm256_blendv_pd(x, zb, big), zl = _mm256_and_pd(zlb, big), eps = _mm256_blendv_pd(epss, epsb, big);
+  f0h = _mm256_and_pd(f0h, big); f0l = _mm256_and_pd(f0l, big);
+  /* common */
+  __m256i row = _mm256_slli_epi64(_mm256_and_si256(_mm256_castpd_si256(_mm256_add_pd(jd, _mm256_set1_pd(0x1.8p52))), _mm256_set1_epi64x(63)), 3);
+  const double *C = &ASIN_CC[0][0];
+#define G_(k) _mm256_i64gather_pd(C + k, row, 8)
+  __m256d t2 = _mm256_mul_pd(t, t);
+  __m256d d = _mm256_mul_pd(t, _mm256_add_pd(_mm256_add_pd(G_(2), _mm256_mul_pd(t, G_(3))),
+               _mm256_mul_pd(t2, _mm256_add_pd(_mm256_add_pd(G_(4), _mm256_mul_pd(t, G_(5))), _mm256_mul_pd(t2, _mm256_add_pd(G_(6), _mm256_mul_pd(t, G_(7))))))));
+  __m256d ch = G_(0), cl = _mm256_add_pd(G_(1), d);
+#undef G_
+  __m256d fh = _mm256_mul_pd(ch, z);                                            /* muldd(z, zl, ch, cl) */
+  __m256d fl = _mm256_add_pd(_mm256_add_pd(_mm256_mul_pd(cl, z), _mm256_mul_pd(ch, zl)), _mm256_fmsub_pd(ch, z, fh));
+  __m256d sh = _mm256_add_pd(f0h, fh);                                          /* fastsum(f0h, f0l, fh, fl) */
+  __m256d sl = _mm256_add_pd(_mm256_add_pd(f0l, fl), _mm256_sub_pd(fh, _mm256_sub_pd(sh, f0h)));
+  __m256d lb = _mm256_add_pd(sh, _mm256_sub_pd(sl, eps)), ub = _mm256_add_pd(sh, _mm256_add_pd(sl, eps));
+  *redo = _mm256_or_pd(_mm256_cmp_pd(lb, ub, _CMP_NEQ_UQ), _mm256_xor_pd(ok, _mm256_castsi256_pd(_mm256_set1_epi64x(-1))));
+  return lb;
+}
+
+/* acos: CORE-MATH's cr_acos fast path transcribed (asin's table):
+   |x| < 2^-15, pi/2 - x plus a cubic term (bound 0x1.34p-79); up to 1/2,
+   pi/2 - asin x (bound z t 0x1.81p-52, negative for x > 0, which the test
+   allows); above, 2 asin of sqrt((1 - |x|)/2), plus pi for x < 0 (bound
+   |z t| 0x1.8cp-52 + 2^-105). |x| >= 1 and nan go to cr_acos. */
+double cr_acos(double);
+
+AVX2I static inline __m256d acos_fast(__m256d x, __m256d *redo)
+{
+  const __m256d SIGN = _mm256_castsi256_pd(_mm256_set1_epi64x(1LL << 63));
+  __m256d ok = _mm256_cmp_pd(abs_pd(x), _mm256_set1_pd(1.0), _CMP_LT_OQ);
+  x = _mm256_and_pd(x, ok);
+  __m256d ax = abs_pd(x), sg = _mm256_and_pd(x, SIGN);
+  __m256d big = _mm256_cmp_pd(ax, _mm256_set1_pd(0.5), _CMP_GT_OQ);
+  const __m256d PIO2H = _mm256_set1_pd(0x1.921fb54442d18p+0), PIO2L = _mm256_set1_pd(0x1.1a62633145c07p-54);
+  /* |x| < 2^-15 */
+  __m256d v = _mm256_mul_pd(_mm256_mul_pd(x, x), _mm256_mul_pd(_mm256_set1_pd(-0x1.5555555555555p-3), x));
+  v = _mm256_and_pd(v, _mm256_cmp_pd(ax, _mm256_set1_pd(0x1.cb3b3869747f4p-55), _CMP_GT_OQ));   /* bits 0x3c91967670d2e8fe8 */
+  __m256d nx = _mm256_xor_pd(x, SIGN);
+  __m256d th0 = _mm256_add_pd(PIO2H, nx);                                        /* fasttwosum(f0h, -x) */
+  __m256d tw = _mm256_sub_pd(nx, _mm256_sub_pd(th0, PIO2H));
+  __m256d tl0 = _mm256_add_pd(v, _mm256_add_pd(tw, PIO2L));
+  const __m256d E1 = _mm256_set1_pd(0x1.34p-79 * CM_EPS_SCALE);
+  __m256d lbt = _mm256_add_pd(th0, _mm256_sub_pd(tl0, E1)), ubt = _mm256_add_pd(th0, _mm256_add_pd(tl0, E1));
+  /* |x| > 1/2 */
+  __m256d tb = _mm256_sub_pd(_mm256_set1_pd(2.0), _mm256_add_pd(ax, ax));
+  __m256d jb = _mm256_round_pd(_mm256_mul_pd(tb, _mm256_set1_pd(0x1p5)), _MM_FROUND_TO_NEAREST_INT | _MM_FROUND_NO_EXC);
+  __m256d zb = _mm256_or_pd(_mm256_sqrt_pd(tb), sg);                              /* copysign(sqrt t, x) */
+  __m256d zlb = _mm256_mul_pd(_mm256_fmsub_pd(zb, zb, tb), _mm256_mul_pd(_mm256_div_pd(_mm256_set1_pd(-0.5), tb), zb));
+  tb = _mm256_sub_pd(_mm256_mul_pd(_mm256_set1_pd(0.25), tb), _mm256_mul_pd(jb, _mm256_set1_pd(0x1p-7)));
+  __m256d epsb = _mm256_add_pd(_mm256_mul_pd(abs_pd(_mm256_mul_pd(zb, tb)), _mm256_set1_pd(0x1.8cp-52 * CM_EPS_SCALE)), _mm256_set1_pd(0x1p-105 * CM_EPS_SCALE));
+  __m256d f0hb = _mm256_blendv_pd(_mm256_setzero_pd(), _mm256_set1_pd(0x1.921fb54442d18p+1), sg);   /* pi for x < 0 */
+  __m256d f0lb = _mm256_blendv_pd(_mm256_setzero_pd(), _mm256_set1_pd(0x1.1a62633145c07p-53), sg);
+  /* 2^-15 <= |x| <= 1/2 */
+  __m256d ts = _mm256_mul_pd(x, x);
+  __m256d js = _mm256_round_pd(_mm256_mul_pd(ts, _mm256_set1_pd(0x1p7)), _MM_FROUND_TO_NEAREST_INT | _MM_FROUND_NO_EXC);
+  ts = _mm256_fmadd_pd(x, x, _mm256_mul_pd(_mm256_set1_pd(-0x1p-7), js));
+  __m256d epss = _mm256_mul_pd(_mm256_mul_pd(nx, ts), _mm256_set1_pd(0x1.81p-52 * CM_EPS_SCALE));
+  __m256d t = _mm256_blendv_pd(ts, tb, big), jd = _mm256_blendv_pd(js, jb, big);
+  __m256d z = _mm256_blendv_pd(nx, zb, big), zl = _mm256_and_pd(zlb, big), eps = _mm256_blendv_pd(epss, epsb, big);
+  __m256d f0h = _mm256_blendv_pd(PIO2H, f0hb, big), f0l = _mm256_blendv_pd(PIO2L, f0lb, big);
+  __m256i row = _mm256_slli_epi64(_mm256_and_si256(_mm256_castpd_si256(_mm256_add_pd(jd, _mm256_set1_pd(0x1.8p52))), _mm256_set1_epi64x(63)), 3);
+  const double *C = &ASIN_CC[0][0];
+#define G_(k) _mm256_i64gather_pd(C + k, row, 8)
+  __m256d t2 = _mm256_mul_pd(t, t);
+  __m256d d = _mm256_mul_pd(t, _mm256_add_pd(_mm256_add_pd(G_(2), _mm256_mul_pd(t, G_(3))),
+               _mm256_mul_pd(t2, _mm256_add_pd(_mm256_add_pd(G_(4), _mm256_mul_pd(t, G_(5))), _mm256_mul_pd(t2, _mm256_add_pd(G_(6), _mm256_mul_pd(t, G_(7))))))));
+  __m256d ch = G_(0), cl = _mm256_add_pd(G_(1), d);
+#undef G_
+  __m256d fh = _mm256_mul_pd(ch, z);
+  __m256d fl = _mm256_add_pd(_mm256_add_pd(_mm256_mul_pd(cl, z), _mm256_mul_pd(ch, zl)), _mm256_fmsub_pd(ch, z, fh));
+  __m256d sh = _mm256_add_pd(f0h, fh);
+  __m256d sl = _mm256_add_pd(_mm256_add_pd(f0l, fl), _mm256_sub_pd(fh, _mm256_sub_pd(sh, f0h)));
+  __m256d lb = _mm256_add_pd(sh, _mm256_sub_pd(sl, eps)), ub = _mm256_add_pd(sh, _mm256_add_pd(sl, eps));
+  __m256d tiny = _mm256_cmp_pd(ax, _mm256_set1_pd(0x1p-15), _CMP_LE_OQ);   /* ax <= 0x7e00000000000000 in doubled bits */
+  lb = _mm256_blendv_pd(lb, lbt, tiny); ub = _mm256_blendv_pd(ub, ubt, tiny);
+  *redo = _mm256_or_pd(_mm256_cmp_pd(lb, ub, _CMP_NEQ_UQ), _mm256_xor_pd(ok, _mm256_castsi256_pd(_mm256_set1_epi64x(-1))));
+  return lb;
+}
+
+/* sinh and cosh: CORE-MATH's cr_sinh / cr_cosh fast paths transcribed, one
+   helper: a series near 0 (|x| < 1/4 for sinh, bound x^3 0x1.cp-53; |x| <
+   1/8 for cosh, bound x^2 0x1.84p-51); up to 5, e^|x| -+ e^-|x| from exp's
+   tables, both in extended precision (bound 0x1.c0ap-62 r); up to 36.74,
+   e^-|x| in double only (0x1.202p-63 r); up to 710.47, e^|x| alone (sinh
+   0x1.1b6p-63 th, cosh 0.12e-18 th). Tiny x, overflow and nan go to cr_sinh
+   / cr_cosh. */
+double cr_sinh(double), cr_cosh(double);
+
+AVX2I static inline __m256d sinhcosh_fast(__m256d x, int is_cosh, __m256d *redo)
+{
+  const __m256d ONE = _mm256_set1_pd(1.0), SIGN = _mm256_castsi256_pd(_mm256_set1_epi64x(1LL << 63));
+  const __m256i MANT = _mm256_set1_epi64x(0xfffffffffffffLL);
+  __m256d ax = abs_pd(x), sg = _mm256_and_pd(x, SIGN);
+  __m256d ok = _mm256_and_pd(_mm256_cmp_pd(ax, _mm256_set1_pd(is_cosh ? 0x1p-26 : 0x1.7137449123ef7p-26), _CMP_GE_OQ),
+                             _mm256_cmp_pd(ax, _mm256_set1_pd(0x1.633ce8fb9f87dp+9), _CMP_LE_OQ));
+  ax = _mm256_blendv_pd(ONE, ax, ok);
+  __m256d xs = _mm256_or_pd(ax, sg);                        /* x itself, sanitized */
+  /* series near 0 */
+  __m256d x2 = _mm256_mul_pd(xs, xs), x4 = _mm256_mul_pd(x2, x2);
+  __m256d lbs, ubs;
+  if (!is_cosh) {
+    __m256d x3 = _mm256_mul_pd(x2, xs);
+    __m256d p = _mm256_mul_pd(x3, _mm256_add_pd(
+        _mm256_add_pd(_mm256_set1_pd(0x1.5555555555555p-3), _mm256_mul_pd(x2, _mm256_set1_pd(0x1.111111111151ep-7))),
+        _mm256_mul_pd(x4, _mm256_add_pd(_mm256_add_pd(_mm256_set1_pd(0x1.a01a019d0c767p-13), _mm256_mul_pd(x2, _mm256_set1_pd(0x1.71de444a96e11p-19))),
+                                        _mm256_mul_pd(x4, _mm256_set1_pd(0x1.ae8465375242p-26))))));
+    __m256d e = _mm256_mul_pd(x3, _mm256_set1_pd(0x1.cp-53 * CM_EPS_SCALE));
+    lbs = _mm256_add_pd(xs, _mm256_sub_pd(p, e)); ubs = _mm256_add_pd(xs, _mm256_add_pd(p, e));
+  } else {
+    __m256d p = _mm256_mul_pd(x2, _mm256_add_pd(
+        _mm256_add_pd(_mm256_set1_pd(0x1p-1), _mm256_mul_pd(x2, _mm256_set1_pd(0x1.5555555555554p-5))),
+        _mm256_mul_pd(x4, _mm256_add_pd(_mm256_add_pd(_mm256_set1_pd(0x1.6c16c16c1d0cp-10), _mm256_mul_pd(x2, _mm256_set1_pd(0x1.a01a0075066b4p-16))),
+                                        _mm256_mul_pd(x4, _mm256_set1_pd(0x1.27faff8dcc1c8p-22))))));
+    __m256d e = _mm256_mul_pd(x2, _mm256_set1_pd(0x1.84p-51 * CM_EPS_SCALE));
+    lbs = _mm256_add_pd(ONE, _mm256_sub_pd(p, e)); ubs = _mm256_add_pd(ONE, _mm256_add_pd(p, e));
+  }
+  /* the exponential bands */
+  __m256d v0 = _mm256_fmadd_pd(ax, _mm256_set1_pd(0x1.71547652b82fep+12), _mm256_set1_pd(0x1.8000002p+26));
+  __m256i vb = _mm256_castpd_si256(v0);
+  __m256d t = _mm256_sub_pd(_mm256_castsi256_pd(_mm256_and_si256(vb, _mm256_set1_epi64x(~((1LL << 26) - 1)))), _mm256_set1_pd(0x1.8p26));
+  __m256i il = _mm256_srli_epi64(_mm256_slli_epi64(vb, 14), 40);
+  __m256i jl = _mm256_sub_epi64(_mm256_setzero_si256(), il);
+  __m256i ie = _mm256_srli_epi64(il, 12);
+  __m256i je = _mm256_sub_epi64(_mm256_srli_epi64(_mm256_add_epi64(jl, _mm256_set1_epi64x(1LL << 40)), 12), _mm256_set1_epi64x(1LL << 28));
+  __m256d sp = _mm256_castsi256_pd(_mm256_slli_epi64(_mm256_add_epi64(ie, _mm256_set1_epi64x(1022)), 52));
+  __m256d sm = _mm256_castsi256_pd(_mm256_slli_epi64(_mm256_add_epi64(je, _mm256_set1_epi64x(1022)), 52));
+  __m256d sp4 = _mm256_castsi256_pd(_mm256_slli_epi64(_mm256_add_epi64(ie, _mm256_set1_epi64x(1021)), 52));
+  __m256d tl, ql; __m256i dummy;
+  __m256d th = exp_tables(il, &tl, &dummy);                 /* il's low 12 bits index the tables */
+  __m256d qh = exp_tables(jl, &ql, &dummy);
+  __m256i j1 = _mm256_slli_epi64(_mm256_and_si256(jl, _mm256_set1_epi64x(0x3f)), 1);
+  __m256i j0 = _mm256_slli_epi64(_mm256_and_si256(_mm256_srli_epi64(jl, 6), _mm256_set1_epi64x(0x3f)), 1);
+  __m256d qh1 = _mm256_mul_pd(_mm256_i64gather_pd(&EXP_T0[0][1], j0, 8), _mm256_i64gather_pd(&EXP_T1[0][1], j1, 8));  /* q0h*q1h */
+  __m256d dx = _mm256_add_pd(_mm256_sub_pd(ax, _mm256_mul_pd(_mm256_set1_pd(0x1.62e42ffp-13), t)),
+                             _mm256_mul_pd(_mm256_set1_pd(0x1.718432a1b0e26p-47), t));
+  __m256d dx2 = _mm256_mul_pd(dx, dx), mx = _mm256_xor_pd(dx, SIGN);
+  const __m256d C1 = _mm256_set1_pd(0x1p-1), C2 = _mm256_set1_pd(0x1.5555555aaaaaep-3), C3 = _mm256_set1_pd(0x1.55555551c98cp-5);
+  __m256d pp = _mm256_mul_pd(dx, _mm256_add_pd(_mm256_add_pd(ONE, _mm256_mul_pd(dx, C1)), _mm256_mul_pd(dx2, _mm256_add_pd(C2, _mm256_mul_pd(dx, C3)))));
+  __m256d pm = _mm256_mul_pd(mx, _mm256_add_pd(_mm256_add_pd(ONE, _mm256_mul_pd(mx, C1)), _mm256_mul_pd(dx2, _mm256_add_pd(C2, _mm256_mul_pd(mx, C3)))));
+  __m256d ths = _mm256_mul_pd(th, sp), tls = _mm256_mul_pd(tl, sp);
+  /* up to 5 */
+  __m256d qhs = _mm256_mul_pd(qh, sm), qls = _mm256_mul_pd(ql, sm);
+  __m256d fpl = _mm256_add_pd(tls, _mm256_mul_pd(ths, pp)), fml = _mm256_add_pd(qls, _mm256_mul_pd(qhs, pm));
+  __m256d rh2, rl2;
+  if (!is_cosh) { rh2 = _mm256_sub_pd(ths, qhs); rl2 = _mm256_add_pd(_mm256_sub_pd(_mm256_sub_pd(_mm256_sub_pd(ths, rh2), qhs), fml), fpl); }
+  else          { rh2 = _mm256_add_pd(ths, qhs); rl2 = _mm256_add_pd(_mm256_add_pd(_mm256_add_pd(_mm256_sub_pd(ths, rh2), qhs), fml), fpl); }
+  /* up to 36.74 */
+  __m256d qh1s = _mm256_mul_pd(qh1, sm);
+  __m256d em = _mm256_add_pd(qh1s, _mm256_mul_pd(qh1s, pm));
+  __m256d rh3 = ths;
+  __m256d rl3 = _mm256_add_pd(is_cosh ? _mm256_add_pd(tls, em) : _mm256_sub_pd(tls, em), _mm256_mul_pd(ths, pp));
+  /* beyond */
+  __m256d rh4 = th, rl4 = _mm256_add_pd(tl, _mm256_mul_pd(th, pp));
+  if (!is_cosh) { rh2 = _mm256_xor_pd(rh2, sg); rl2 = _mm256_xor_pd(rl2, sg); rh3 = _mm256_xor_pd(rh3, sg); rl3 = _mm256_xor_pd(rl3, sg);
+                  rh4 = _mm256_xor_pd(rh4, sg); rl4 = _mm256_xor_pd(rl4, sg); }
+  __m256d e2 = _mm256_mul_pd(_mm256_set1_pd(0x1.c0ap-62 * CM_EPS_SCALE), rh2);
+  __m256d e3 = _mm256_mul_pd(_mm256_set1_pd(0x1.202p-63 * CM_EPS_SCALE), rh3);
+  __m256d e4 = _mm256_mul_pd(_mm256_set1_pd((is_cosh ? 0.12e-18 : 0x1.1b6p-63) * CM_EPS_SCALE), th);
+  __m256d lb2 = _mm256_add_pd(rh2, _mm256_sub_pd(rl2, e2)), ub2 = _mm256_add_pd(rh2, _mm256_add_pd(rl2, e2));
+  __m256d lb3 = _mm256_add_pd(rh3, _mm256_sub_pd(rl3, e3)), ub3 = _mm256_add_pd(rh3, _mm256_add_pd(rl3, e3));
+  __m256d lb4 = _mm256_add_pd(rh4, _mm256_sub_pd(rl4, e4)), ub4 = _mm256_add_pd(rh4, _mm256_add_pd(rl4, e4));
+  __m256d r4 = _mm256_mul_pd(_mm256_mul_pd(lb4, sp4), _mm256_set1_pd(2.0));
+  /* the band per lane */
+  __m256d gt5 = _mm256_cmp_pd(ax, _mm256_set1_pd(5.0), _CMP_GT_OQ);
+  __m256d gt36 = _mm256_cmp_pd(ax, _mm256_set1_pd(0x1.25e4f7b2737fap+5), _CMP_GT_OQ);     /* bits 0x40425e4f7b2737fa */
+  __m256d near0 = _mm256_cmp_pd(ax, _mm256_set1_pd(is_cosh ? 0.125 : 0.25), _CMP_LT_OQ);
+  __m256d lb = _mm256_blendv_pd(_mm256_blendv_pd(lb2, lb3, gt5), lb4, gt36), ub = _mm256_blendv_pd(_mm256_blendv_pd(ub2, ub3, gt5), ub4, gt36);
+  __m256d r = _mm256_blendv_pd(lb, r4, gt36);
+  lb = _mm256_blendv_pd(lb, lbs, near0); ub = _mm256_blendv_pd(ub, ubs, near0); r = _mm256_blendv_pd(r, lbs, near0);
+  *redo = _mm256_or_pd(_mm256_cmp_pd(lb, ub, _CMP_NEQ_UQ), _mm256_xor_pd(ok, _mm256_castsi256_pd(_mm256_set1_epi64x(-1))));
+  return r;
+}
+AVX2I static inline __m256d sinh_fast(__m256d x, __m256d *redo) { return sinhcosh_fast(x, 0, redo); }
+AVX2I static inline __m256d cosh_fast(__m256d x, __m256d *redo) { return sinhcosh_fast(x, 1, redo); }
+
+/* tanh: CORE-MATH's cr_tanh fast path transcribed: a series below 1/4
+   (bound x^3 0x1.c0p-52); up to 0x1.d76c8b4395810p+1, 1 - 2 e/(1 + e) with
+   e = exp(-2|x|) in double-double (bound 0x1.0dp-62 r); up to
+   0x1.30fc1931f09cap+4 the same in double (bound 0x1.1p-49 r); beyond,
+   +-1, which is what tanh rounds to there. Tiny x and nan go to cr_tanh. */
+double cr_tanh(double);
+
+AVX2I static inline __m256d tanh_fast(__m256d x, __m256d *redo)
+{
+  const __m256d ONE = _mm256_set1_pd(1.0), SIGN = _mm256_castsi256_pd(_mm256_set1_epi64x(1LL << 63));
+  __m256d ax = abs_pd(x), sg = _mm256_and_pd(x, SIGN);
+  __m256d ok = _mm256_cmp_pd(ax, _mm256_set1_pd(0x1.d12ed0af1a27fp-27), _CMP_GT_OQ);    /* false for nan */
+  __m256d sat = _mm256_cmp_pd(ax, _mm256_set1_pd(0x1.30fc1931f09cap+4), _CMP_GE_OQ);
+  ax = _mm256_blendv_pd(_mm256_set1_pd(0.5), ax, _mm256_andnot_pd(sat, ok));
+  __m256d xs = _mm256_or_pd(ax, sg);
+  /* series */
+  __m256d x2 = _mm256_mul_pd(xs, xs), x3 = _mm256_mul_pd(x2, xs), x4 = _mm256_mul_pd(x2, x2), x8 = _mm256_mul_pd(x4, x4);
+#define C_(k) _mm256_set1_pd(k)
+  __m256d p1 = _mm256_add_pd(_mm256_add_pd(C_(-0x1.226e17d1bc09bp-7), _mm256_mul_pd(x2, C_(0x1.d6c64dfba2565p-9))),
+                             _mm256_mul_pd(x4, _mm256_add_pd(C_(-0x1.7bdd094d327afp-10), _mm256_mul_pd(x2, C_(0x1.1535ad0c31d0ep-11)))));
+  __m256d p0 = _mm256_add_pd(_mm256_add_pd(C_(-0x1.5555555555555p-2), _mm256_mul_pd(x2, C_(0x1.1111111110f33p-3))),
+                             _mm256_mul_pd(x4, _mm256_add_pd(C_(-0x1.ba1ba1b9b8ea6p-5), _mm256_mul_pd(x2, C_(0x1.664f4838e0a43p-6)))));
+  p0 = _mm256_mul_pd(_mm256_add_pd(p0, _mm256_mul_pd(x8, p1)), x3);
+  __m256d rhs = _mm256_add_pd(xs, p0), rls = _mm256_sub_pd(p0, _mm256_sub_pd(rhs, xs));
+  __m256d es = _mm256_mul_pd(x3, C_(0x1.c0p-52 * CM_EPS_SCALE));
+  __m256d lbs = _mm256_add_pd(rhs, _mm256_sub_pd(rls, es)), ubs = _mm256_add_pd(rhs, _mm256_add_pd(rls, es));
+  /* the exponential */
+  __m256d v0 = _mm256_fmadd_pd(ax, C_(-0x1.71547652b82fep+13), C_(0x1.8000004p+25));
+  __m256i jt = _mm256_castpd_si256(v0);
+  __m256d t = _mm256_sub_pd(_mm256_castsi256_pd(_mm256_and_si256(jt, _mm256_set1_epi64x(~((1LL << 27) - 1)))), C_(0x1.8p25));
+  __m256i i1 = _mm256_slli_epi64(_mm256_and_si256(_mm256_srli_epi64(jt, 27), _mm256_set1_epi64x(0x3f)), 1);
+  __m256i i0 = _mm256_slli_epi64(_mm256_and_si256(_mm256_srli_epi64(jt, 33), _mm256_set1_epi64x(0x3f)), 1);
+  __m256i w = _mm256_srli_epi64(_mm256_slli_epi64(jt, 13), 52);                        /* 12 bits, signed */
+  __m256i ie = _mm256_sub_epi64(w, _mm256_slli_epi64(_mm256_srli_epi64(w, 11), 12));
+  __m256d sp = _mm256_castsi256_pd(_mm256_slli_epi64(_mm256_add_epi64(ie, _mm256_set1_epi64x(1023)), 52));
+  __m256d t0h = _mm256_i64gather_pd(&EXP_T0[0][1], i0, 8), t1h = _mm256_i64gather_pd(&EXP_T1[0][1], i1, 8);
+  __m256d t0l = _mm256_i64gather_pd(&EXP_T0[0][0], i0, 8), t1l = _mm256_i64gather_pd(&EXP_T1[0][0], i1, 8);
+  __m256d th = _mm256_mul_pd(t0h, t1h);
+  __m256d chp1 = C_(0x1.55555557e54ffp+0), chp2 = C_(0x1.55555553a12f4p-1), TWO = C_(2.0);
+  /* up to 3.68: double-double */
+  __m256d tl = _mm256_add_pd(_mm256_add_pd(_mm256_mul_pd(t0h, t1l), _mm256_mul_pd(t1h, t0l)), _mm256_fmsub_pd(t0h, t1h, th));
+  __m256d ths = _mm256_mul_pd(th, sp), tls = _mm256_mul_pd(tl, sp);
+  __m256d dx = _mm256_sub_pd(_mm256_sub_pd(_mm256_mul_pd(C_(-0x1.62e42ffp-14), t), ax), _mm256_mul_pd(C_(-0x1.718432a1b0e26p-48), t));
+  __m256d dx2 = _mm256_mul_pd(dx, dx);
+  __m256d p = _mm256_mul_pd(dx, _mm256_add_pd(_mm256_add_pd(TWO, _mm256_mul_pd(dx, TWO)), _mm256_mul_pd(dx2, _mm256_add_pd(chp1, _mm256_mul_pd(dx, chp2)))));
+  __m256d rh = ths, rl = _mm256_add_pd(tls, _mm256_mul_pd(rh, p));
+  __m256d s1 = _mm256_add_pd(rh, rl); rl = _mm256_sub_pd(rl, _mm256_sub_pd(s1, rh)); rh = s1;          /* fasttwosum */
+  __m256d qh = _mm256_add_pd(ONE, rh), qd = _mm256_sub_pd(rh, _mm256_sub_pd(qh, ONE));                /* fasttwosum(1, qh) */
+  __m256d ql = _mm256_add_pd(rl, qd);
+  __m256d rqh = _mm256_div_pd(ONE, qh);
+  __m256d rql = _mm256_mul_pd(_mm256_add_pd(_mm256_mul_pd(ql, rqh), _mm256_fmsub_pd(rqh, qh, ONE)), _mm256_xor_pd(rqh, SIGN));
+  __m256d plh = _mm256_mul_pd(rl, rqh), phl = _mm256_mul_pd(rh, rql), phh = _mm256_mul_pd(rh, rqh);      /* muldd_acc(rh, rl, rqh, rql) */
+  __m256d rest = _mm256_add_pd(_mm256_fmsub_pd(rh, rqh, phh), _mm256_add_pd(phl, plh));
+  __m256d ph = _mm256_add_pd(phh, rest), pl = _mm256_sub_pd(rest, _mm256_sub_pd(ph, phh));
+  __m256d e2 = _mm256_mul_pd(rh, C_(0x1.0dp-62 * CM_EPS_SCALE));
+  __m256d HALF = C_(0.5);
+  __m256d rh2 = _mm256_sub_pd(HALF, ph), rl2 = _mm256_sub_pd(_mm256_sub_pd(_mm256_sub_pd(HALF, rh2), ph), pl);   /* fasttwosub, then - pl */
+  __m256d two_s = _mm256_or_pd(TWO, sg);
+  rh2 = _mm256_mul_pd(rh2, two_s); rl2 = _mm256_mul_pd(rl2, two_s);
+  __m256d lb2 = _mm256_add_pd(rh2, _mm256_sub_pd(rl2, e2)), ub2 = _mm256_add_pd(rh2, _mm256_add_pd(rl2, e2));
+  /* up to 19.06: double */
+  __m256d dxb = _mm256_fmsub_pd(C_(-0x1.62e42fefa39efp-14), t, ax), dxb2 = _mm256_mul_pd(dxb, dxb);
+  __m256d pb = _mm256_mul_pd(dxb, _mm256_add_pd(_mm256_add_pd(TWO, _mm256_mul_pd(dxb, TWO)), _mm256_mul_pd(dxb2, _mm256_add_pd(chp1, _mm256_mul_pd(dxb, chp2)))));
+  __m256d rhb = _mm256_mul_pd(th, sp);
+  rhb = _mm256_add_pd(rhb, _mm256_mul_pd(_mm256_add_pd(pb, _mm256_mul_pd(C_(2 * 0x1.3p-55), ax)), rhb));
+  __m256d e3 = _mm256_mul_pd(rhb, C_(0x1.1p-49 * CM_EPS_SCALE));
+  rhb = _mm256_or_pd(_mm256_div_pd(_mm256_mul_pd(TWO, rhb), _mm256_add_pd(ONE, rhb)), sg);
+  __m256d one = _mm256_or_pd(ONE, sg);
+  __m256d lb3 = _mm256_sub_pd(one, _mm256_add_pd(rhb, e3)), ub3 = _mm256_sub_pd(one, _mm256_sub_pd(rhb, e3));
+#undef C_
+  __m256d mid = _mm256_cmp_pd(ax, _mm256_set1_pd(0x1.d76c8b4395810p+1), _CMP_LT_OQ);
+  __m256d near0 = _mm256_cmp_pd(ax, _mm256_set1_pd(0.25), _CMP_LT_OQ);
+  __m256d lb = _mm256_blendv_pd(_mm256_blendv_pd(lb3, lb2, mid), lbs, near0), ub = _mm256_blendv_pd(_mm256_blendv_pd(ub3, ub2, mid), ubs, near0);
+  lb = _mm256_blendv_pd(lb, one, sat); ub = _mm256_blendv_pd(ub, one, sat);
+  *redo = _mm256_or_pd(_mm256_cmp_pd(lb, ub, _CMP_NEQ_UQ), _mm256_xor_pd(ok, _mm256_castsi256_pd(_mm256_set1_epi64x(-1))));
+  return lb;
+}
+
+/* asinh and acosh: CORE-MATH's fast paths transcribed. They share one log
+   stage (index via log2's B table, their own r1, r2, l1, l2, degree-6
+   polynomial) and add its terms in different orders, kept here as written. */
+double cr_asinh(double), cr_acosh(double);
+#include "crmvec-asinh-tab.h"
+
+/* for t > 0 and the exponent offset off: ed, dx, f and the table rows */
+AVX2I static inline void asinh_log_core(__m256d tt, __m256i off, __m256d *ed, __m256d *dx, __m256d *f, __m256i *i1x, __m256i *i2x)
+{
+  const __m256i MANT = _mm256_set1_epi64x(0xfffffffffffffLL);
+  __m256i tu = _mm256_castpd_si256(tt);
+  __m256i e = _mm256_sub_epi64(_mm256_srli_epi64(tu, 52), off);
+  *ed = _mm256_sub_pd(_mm256_castsi256_pd(_mm256_add_epi64(e, _mm256_castpd_si256(_mm256_set1_pd(0x1.8p52)))), _mm256_set1_pd(0x1.8p52));
+  __m256i m = _mm256_and_si256(tu, MANT);
+  __m256i i = _mm256_srli_epi64(m, 52 - 5);
+  __m256i d = _mm256_and_si256(m, _mm256_set1_epi64x((long long)(~0ULL >> 17)));
+  __m256i j = _mm256_add_epi64(_mm256_add_epi64(m, _mm256_i64gather_epi64(LOG2_B0, i, 8)),
+                               _mm256_mul_epi32(_mm256_i64gather_epi64(LOG2_B1, i, 8), _mm256_srli_epi64(d, 16)));
+  j = _mm256_srli_epi64(j, 52 - 10);
+  __m256d t1 = _mm256_castsi256_pd(_mm256_or_si256(m, _mm256_set1_epi64x(0x3ffLL << 52)));
+  __m256i i1 = _mm256_srli_epi64(j, 5), i2 = _mm256_and_si256(j, _mm256_set1_epi64x(0x1f));
+  *i1x = _mm256_slli_epi64(i1, 1); *i2x = _mm256_slli_epi64(i2, 1);
+  __m256d r = _mm256_mul_pd(_mm256_i64gather_pd(ASINH_R1, i1, 8), _mm256_i64gather_pd(ASINH_R2, i2, 8));
+  __m256d x1 = _mm256_fmsub_pd(r, t1, _mm256_set1_pd(1.0)), x2 = _mm256_mul_pd(x1, x1);
+#define C_(k) _mm256_set1_pd(k)
+  *f = _mm256_mul_pd(x2, _mm256_add_pd(_mm256_add_pd(C_(-0x1p-1), _mm256_mul_pd(x1, C_(0x1.555555555553p-2))),
+         _mm256_mul_pd(x2, _mm256_add_pd(_mm256_add_pd(C_(-0x1.fffffffffffap-3), _mm256_mul_pd(x1, C_(0x1.99999e33a6366p-3))),
+                                         _mm256_mul_pd(x2, C_(-0x1.555559ef9525fp-3))))));
+#undef C_
+  *dx = x1;
+}
+
+AVX2I static inline __m256d asinh_fast(__m256d x, __m256d *redo)
+{
+  const __m256d ONE = _mm256_set1_pd(1.0), SIGN = _mm256_castsi256_pd(_mm256_set1_epi64x(1LL << 63));
+  __m256d ax = abs_pd(x), sg = _mm256_and_pd(x, SIGN);
+  __m256d ok = _mm256_and_pd(_mm256_cmp_pd(ax, _mm256_set1_pd(0x1.7137449123ef7p-26), _CMP_GE_OQ),
+                             _mm256_cmp_pd(ax, _mm256_set1_pd(__builtin_inf()), _CMP_LT_OQ));
+  ax = _mm256_blendv_pd(ONE, ax, ok);
+  x = _mm256_or_pd(ax, sg);
+#define C_(k) _mm256_set1_pd(k)
+  /* |x| < 0x1.bp-4: series, four widths */
+  __m256d x2h = _mm256_mul_pd(x, x), x3h = _mm256_mul_pd(x2h, x);
+  __m256d s1 = _mm256_mul_pd(x3h, C_(-0x1.5555555555555p-3));
+  __m256d s2 = _mm256_mul_pd(x3h, _mm256_add_pd(C_(-0x1.5555555555555p-3), _mm256_mul_pd(x2h, C_(0x1.3333327c57c6p-4))));
+  __m256d s3 = _mm256_mul_pd(x3h, _mm256_add_pd(C_(-0x1.5555555555555p-3), _mm256_mul_pd(x2h, _mm256_add_pd(C_(0x1.333333332f2ffp-4),
+                 _mm256_mul_pd(x2h, _mm256_add_pd(C_(-0x1.6db6d9a665159p-5), _mm256_mul_pd(x2h, C_(0x1.f186866d775fp-6))))))));
+  __m256d c1 = _mm256_add_pd(C_(0x1.333333333331p-4), _mm256_mul_pd(x2h, C_(-0x1.6db6db6da466cp-5)));
+  __m256d c3 = _mm256_add_pd(C_(0x1.f1c71c2ea7be4p-6), _mm256_mul_pd(x2h, C_(-0x1.6e8b651b09d72p-6)));
+  __m256d c5 = _mm256_add_pd(C_(0x1.1c309fc0e69c2p-6), _mm256_mul_pd(x2h, C_(-0x1.bab7833c1ep-7)));
+  __m256d x4 = _mm256_mul_pd(x2h, x2h);
+  __m256d s4 = _mm256_mul_pd(x3h, _mm256_add_pd(C_(-0x1.5555555555555p-3), _mm256_mul_pd(x2h, _mm256_add_pd(c1, _mm256_mul_pd(x4, _mm256_add_pd(c3, _mm256_mul_pd(x4, c5)))))));
+  __m256d sl = _mm256_blendv_pd(s4, s3, _mm256_cmp_pd(ax, C_(0x1.3p-6), _CMP_LT_OQ));
+  sl = _mm256_blendv_pd(sl, s2, _mm256_cmp_pd(ax, C_(0x1p-12), _CMP_LT_OQ));
+  sl = _mm256_blendv_pd(sl, s1, _mm256_cmp_pd(ax, C_(0x1.ap-26), _CMP_LT_OQ));
+  __m256d es = _mm256_mul_pd(C_(0x1.79p-53 * CM_EPS_SCALE), x3h);
+  __m256d lbs = _mm256_add_pd(x, _mm256_sub_pd(sl, es)), ubs = _mm256_add_pd(x, _mm256_add_pd(sl, es));
+  /* |x| >= 0x1.bp-4: log(|x| + sqrt(x^2 + 1)) */
+  __m256d xl2 = _mm256_fmsub_pd(x, x, x2h);
+  __m256d th = _mm256_add_pd(ONE, x2h);
+  __m256d lt1 = _mm256_cmp_pd(ax, ONE, _CMP_LT_OQ);
+  __m256d tl = _mm256_blendv_pd(_mm256_sub_pd(ONE, _mm256_sub_pd(th, x2h)), _mm256_sub_pd(x2h, _mm256_sub_pd(th, ONE)), lt1);
+  tl = _mm256_add_pd(tl, xl2);
+  __m256d ah = _mm256_sqrt_pd(th), rs = _mm256_div_pd(C_(0.5), th);
+  __m256d al = _mm256_mul_pd(_mm256_sub_pd(tl, _mm256_fmsub_pd(ah, ah, th)), _mm256_mul_pd(rs, ah));
+  __m256d ah2 = _mm256_add_pd(ah, ax); __m256d tl2 = _mm256_sub_pd(ax, _mm256_sub_pd(ah2, ah));      /* fasttwosum(ah, ax) */
+  ah = ah2; al = _mm256_add_pd(al, tl2);
+  __m256d b26 = _mm256_cmp_pd(ax, C_(0x1p26), _CMP_GE_OQ), b52 = _mm256_cmp_pd(ax, C_(0x1p52), _CMP_GE_OQ);
+  ah = _mm256_blendv_pd(ah, _mm256_add_pd(ax, ax), b26); al = _mm256_blendv_pd(al, _mm256_div_pd(C_(0.5), ax), b26);
+  ah = _mm256_blendv_pd(ah, ax, b52); al = _mm256_andnot_pd(b52, al);
+  __m256i off = _mm256_blendv_epi8(_mm256_set1_epi64x(0x3ff), _mm256_set1_epi64x(0x3fe), _mm256_castpd_si256(b52));
+  __m256d ed, dx, f; __m256i i1x, i2x;
+  asinh_log_core(ah, off, &ed, &dx, &f, &i1x, &i2x);
+  __m256d lh = _mm256_add_pd(_mm256_mul_pd(C_(0x1.62e42fefa38p-1), ed),
+                             _mm256_add_pd(_mm256_i64gather_pd(&ASINH_L1[0][1], i1x, 8), _mm256_i64gather_pd(&ASINH_L2[0][1], i2x, 8)));
+  __m256d ll = _mm256_add_pd(_mm256_add_pd(_mm256_add_pd(_mm256_add_pd(_mm256_mul_pd(C_(0x1.ef35793c7673p-45), ed),
+               _mm256_i64gather_pd(&ASINH_L1[0][0], i1x, 8)), _mm256_i64gather_pd(&ASINH_L2[0][0], i2x, 8)), _mm256_div_pd(al, ah)), f);
+  ll = _mm256_add_pd(ll, dx);
+  lh = _mm256_xor_pd(lh, sg); ll = _mm256_xor_pd(ll, sg);
+  __m256d e = C_(1.63e-19 * CM_EPS_SCALE);
+#undef C_
+  __m256d lb = _mm256_add_pd(lh, _mm256_sub_pd(ll, e)), ub = _mm256_add_pd(lh, _mm256_add_pd(ll, e));
+  __m256d small = _mm256_cmp_pd(ax, _mm256_set1_pd(0x1.bp-4), _CMP_LT_OQ);
+  lb = _mm256_blendv_pd(lb, lbs, small); ub = _mm256_blendv_pd(ub, ubs, small);
+  *redo = _mm256_or_pd(_mm256_cmp_pd(lb, ub, _CMP_NEQ_UQ), _mm256_xor_pd(ok, _mm256_castsi256_pd(_mm256_set1_epi64x(-1))));
+  return lb;
+}
+
+AVX2I static inline __m256d acosh_fast(__m256d x, __m256d *redo)
+{
+  const __m256d ONE = _mm256_set1_pd(1.0);
+  __m256d ok = _mm256_and_pd(_mm256_cmp_pd(x, ONE, _CMP_GT_OQ), _mm256_cmp_pd(x, _mm256_set1_pd(__builtin_inf()), _CMP_LT_OQ));
+  x = _mm256_blendv_pd(_mm256_set1_pd(2.0), x, ok);
+#define C_(k) _mm256_set1_pd(k)
+  /* 1 < x < 0x1.1e83e425aee63p+0: around 1 */
+  __m256d z = _mm256_sub_pd(x, ONE), iz = _mm256_div_pd(C_(-0.25), z), zt = _mm256_add_pd(z, z);
+  __m256d sh = _mm256_sqrt_pd(zt), sl = _mm256_mul_pd(_mm256_fmsub_pd(sh, sh, zt), _mm256_mul_pd(sh, iz));
+  __m256d z2 = _mm256_mul_pd(z, z), z4 = _mm256_mul_pd(z2, z2);
+#define P2_(a, b) _mm256_add_pd(C_(a), _mm256_mul_pd(z, C_(b)))
+  __m256d poly = _mm256_add_pd(C_(-0x1.5555555555555p-4), _mm256_mul_pd(z, _mm256_add_pd(
+      _mm256_add_pd(P2_(0x1.3333333332f95p-6, -0x1.6db6db6d5534cp-8), _mm256_mul_pd(z2, P2_(0x1.f1c71c1e04356p-10, -0x1.6e8b8e3e40d58p-11))),
+      _mm256_mul_pd(z4, _mm256_add_pd(P2_(0x1.1c4ba825ac4fep-12, -0x1.c9045534e6d9ep-14), _mm256_mul_pd(z2, P2_(0x1.71fedae26a76bp-15, -0x1.f1f4f8cc65342p-17)))))));
+#undef P2_
+  __m256d ds = _mm256_fmadd_pd(_mm256_mul_pd(sh, z), poly, sl);
+  __m256d e0 = _mm256_mul_pd(_mm256_sub_pd(_mm256_mul_pd(ds, C_(0x1.00p-50)), _mm256_mul_pd(C_(0x1p-104), sh)), C_(CM_EPS_SCALE));
+  __m256d lb0 = _mm256_add_pd(sh, _mm256_sub_pd(ds, e0)), ub0 = _mm256_add_pd(sh, _mm256_add_pd(ds, e0));
+  /* up to 0x1.bfp+6: log(x + sqrt(x^2 - 1)) in double-double */
+  __m256d x2h = _mm256_mul_pd(x, x), wh = _mm256_sub_pd(x2h, ONE), wl = _mm256_fmsub_pd(x, x, x2h);
+  __m256d sh1 = _mm256_sqrt_pd(wh), ish = _mm256_div_pd(C_(0.5), wh);
+  __m256d sl1 = _mm256_mul_pd(_mm256_sub_pd(wl, _mm256_fmsub_pd(sh1, sh1, wh)), _mm256_mul_pd(sh1, ish));
+  __m256d th = _mm256_add_pd(x, sh1), tl = _mm256_add_pd(_mm256_sub_pd(sh1, _mm256_sub_pd(th, x)), sl1);   /* fasttwosum(x, sh), + sl */
+  __m256d g1 = _mm256_div_pd(tl, th);
+  /* larger: log 2x plus a series in 1/x^2 */
+  __m256d zz = _mm256_div_pd(ONE, x2h);
+  __m256d g2 = _mm256_add_pd(C_(0x1.5c4b6148816e2p-66), _mm256_mul_pd(zz, _mm256_add_pd(C_(-0x1.000000000005cp-2), _mm256_mul_pd(zz, _mm256_add_pd(C_(-0x1.7fffffebf3e6cp-4), _mm256_mul_pd(zz, C_(-0x1.aab6691f2bae7p-5)))))));
+  __m256d g3 = _mm256_add_pd(C_(-0x1.7f77c8429c6c6p-67), _mm256_mul_pd(zz, _mm256_add_pd(C_(-0x1.ffffffffff214p-3), _mm256_mul_pd(zz, C_(-0x1.8000268641bfep-4)))));
+  __m256d g4 = _mm256_add_pd(C_(0x1.7a0ed2effdd1p-67), _mm256_mul_pd(zz, C_(-0x1.000000017d048p-2)));
+  __m256d b1 = _mm256_cmp_pd(x, C_(0x1.bfp+6), _CMP_LT_OQ), b2 = _mm256_cmp_pd(x, C_(0x1.71p+9), _CMP_LT_OQ);
+  __m256d b3 = _mm256_cmp_pd(x, C_(0x1.01p+15), _CMP_LT_OQ), b4 = _mm256_cmp_pd(x, C_(0x1.ap+31), _CMP_LT_OQ);
+  __m256d g = _mm256_blendv_pd(_mm256_setzero_pd(), g4, b4); g = _mm256_blendv_pd(g, g3, b3); g = _mm256_blendv_pd(g, g2, b2); g = _mm256_blendv_pd(g, g1, b1);
+  __m256d eps = _mm256_blendv_pd(C_(0x1.b2p-63), C_(0x1.99p-63), b4); eps = _mm256_blendv_pd(eps, C_(0x1.9ap-63), b3);
+  eps = _mm256_blendv_pd(eps, C_(0x1.c3p-63), b2); eps = _mm256_blendv_pd(eps, C_(0x1.81p-63), b1);
+  eps = _mm256_mul_pd(eps, C_(CM_EPS_SCALE));
+  __m256d tt = _mm256_blendv_pd(x, th, b1);
+  __m256i off = _mm256_blendv_epi8(_mm256_set1_epi64x(0x3fe), _mm256_set1_epi64x(0x3ff), _mm256_castpd_si256(b1));
+  __m256d ed, dx, f; __m256i i1x, i2x;
+  asinh_log_core(tt, off, &ed, &dx, &f, &i1x, &i2x);
+  __m256d lh = _mm256_add_pd(_mm256_add_pd(_mm256_i64gather_pd(&ASINH_L1[0][1], i1x, 8), _mm256_i64gather_pd(&ASINH_L2[0][1], i2x, 8)),
+                             _mm256_mul_pd(C_(0x1.62e42fefa38p-1), ed));
+  __m256d t1 = _mm256_add_pd(_mm256_mul_pd(C_(0x1.ef35793c7673p-45), ed),
+                             _mm256_add_pd(_mm256_i64gather_pd(&ASINH_L1[0][0], i1x, 8), _mm256_i64gather_pd(&ASINH_L2[0][0], i2x, 8)));
+  __m256d ll = _mm256_add_pd(dx, _mm256_add_pd(g, _mm256_add_pd(f, t1)));
+#undef C_
+  __m256d lb = _mm256_add_pd(lh, _mm256_sub_pd(ll, eps)), ub = _mm256_add_pd(lh, _mm256_add_pd(ll, eps));
+  __m256d near1 = _mm256_cmp_pd(x, _mm256_set1_pd(0x1.1e83e425aee63p+0), _CMP_LT_OQ);
+  lb = _mm256_blendv_pd(lb, lb0, near1); ub = _mm256_blendv_pd(ub, ub0, near1);
+  *redo = _mm256_or_pd(_mm256_cmp_pd(lb, ub, _CMP_NEQ_UQ), _mm256_xor_pd(ok, _mm256_castsi256_pd(_mm256_set1_epi64x(-1))));
+  return lb;
+}
+
+/* atanh: CORE-MATH's cr_atanh fast path transcribed: a double-double series
+   below 1/4 (bound x (x^4 0x1.dp-53 + 2^-103)); above, (1/2) log of
+   (1 + |x|)/(1 - |x|) formed as a double-double, with its own log tables
+   (bound 38e-24 + dx^2 2^-49). |x| >= 1, nan and tiny x go to cr_atanh. */
+double cr_atanh(double);
+#include "crmvec-atanh-tab.h"
+
+AVX2I static inline __m256d atanh_fast(__m256d x, __m256d *redo)
+{
+  const __m256d ONE = _mm256_set1_pd(1.0), SIGN = _mm256_castsi256_pd(_mm256_set1_epi64x(1LL << 63));
+  const __m256i MANT = _mm256_set1_epi64x(0xfffffffffffffLL);
+  __m256d ax = abs_pd(x), sg = _mm256_and_pd(x, SIGN);
+  __m256d ok = _mm256_and_pd(_mm256_cmp_pd(ax, _mm256_set1_pd(0x1.d12ed0af1a27fp-27), _CMP_GE_OQ), _mm256_cmp_pd(ax, ONE, _CMP_LT_OQ));
+  ax = _mm256_blendv_pd(_mm256_set1_pd(0.5), ax, ok);
+  x = _mm256_or_pd(ax, sg);
+#define C_(k) _mm256_set1_pd(k)
+  /* |x| < 1/4 */
+  __m256d x2 = _mm256_mul_pd(x, x), dx2 = _mm256_fmsub_pd(x, x, x2);
+  __m256d x4 = _mm256_mul_pd(x2, x2), x3 = _mm256_mul_pd(x2, x), x8 = _mm256_mul_pd(x4, x4);
+  __m256d dx3 = _mm256_add_pd(_mm256_fmsub_pd(x2, x, x3), _mm256_mul_pd(dx2, x));
+#define P2_(a, b) _mm256_add_pd(C_(a), _mm256_mul_pd(x2, C_(b)))
+  __m256d pp = _mm256_add_pd(_mm256_add_pd(P2_(0x1.999999999999ap-3, 0x1.2492492492244p-3), _mm256_mul_pd(x4, P2_(0x1.c71c71c79715fp-4, 0x1.745d16f777723p-4))),
+      _mm256_mul_pd(x8, _mm256_add_pd(_mm256_add_pd(P2_(0x1.3b13ca4174634p-4, 0x1.110c9724989bdp-4), _mm256_mul_pd(x4, P2_(0x1.e2d17608a5b2ep-5, 0x1.a0b56308cba0bp-5))),
+                                      _mm256_mul_pd(x8, C_(0x1.fb6341208ad2ep-5)))));
+#undef P2_
+  __m256d t = _mm256_fmadd_pd(x2, pp, C_(0x1.5555555555555p-56));
+  __m256d ph = _mm256_add_pd(C_(0x1.5555555555555p-2), t), pl = _mm256_sub_pd(t, _mm256_sub_pd(ph, C_(0x1.5555555555555p-2)));
+  __m256d mh = _mm256_mul_pd(x3, ph);                                            /* muldd(ph, pl, x3, dx3) */
+  __m256d ml = _mm256_add_pd(_mm256_fmsub_pd(x3, ph, mh), _mm256_add_pd(_mm256_mul_pd(dx3, ph), _mm256_mul_pd(x3, pl)));
+  __m256d sh = _mm256_add_pd(x, mh), tl0 = _mm256_sub_pd(mh, _mm256_sub_pd(sh, x));
+  ml = _mm256_add_pd(ml, tl0);
+  __m256d es = _mm256_mul_pd(x, _mm256_fmadd_pd(x4, C_(0x1.dp-53), C_(0x1p-103)));
+  es = _mm256_mul_pd(es, C_(CM_EPS_SCALE));
+  __m256d lbs = _mm256_add_pd(sh, _mm256_sub_pd(ml, es)), ubs = _mm256_add_pd(sh, _mm256_add_pd(ml, es));
+  /* |x| >= 1/4: (1/2) log((1 + |x|)/(1 - |x|)) */
+  __m256d qp = _mm256_add_pd(ONE, ax), qpl = _mm256_sub_pd(ax, _mm256_sub_pd(qp, ONE));   /* fasttwosum(1, ax) */
+  __m256d qh = _mm256_sub_pd(ONE, ax), ql = _mm256_sub_pd(_mm256_sub_pd(ONE, qh), ax);    /* fasttwosub(1, ax) */
+  __m256d iqh = _mm256_div_pd(ONE, qh), th = _mm256_mul_pd(qp, iqh);
+  __m256d tl = _mm256_add_pd(_mm256_fmsub_pd(qp, iqh, th),
+      _mm256_mul_pd(_mm256_add_pd(qpl, _mm256_mul_pd(qp, _mm256_sub_pd(_mm256_fnmadd_pd(qh, iqh, ONE), _mm256_mul_pd(ql, iqh)))), iqh));
+  __m256i tu = _mm256_castpd_si256(th);
+  __m256i e = _mm256_sub_epi64(_mm256_srli_epi64(tu, 52), _mm256_set1_epi64x(0x3ff));
+  __m256d ed = _mm256_sub_pd(_mm256_castsi256_pd(_mm256_add_epi64(e, _mm256_castpd_si256(C_(0x1.8p52)))), C_(0x1.8p52));
+  __m256i m = _mm256_and_si256(tu, MANT);
+  __m256i i = _mm256_srli_epi64(m, 52 - 5), d = _mm256_and_si256(m, _mm256_set1_epi64x((long long)(~0ULL >> 17)));
+  __m256i j = _mm256_srli_epi64(_mm256_add_epi64(_mm256_add_epi64(m, _mm256_i64gather_epi64(LOG2_B0, i, 8)),
+                                                 _mm256_mul_epi32(_mm256_i64gather_epi64(LOG2_B1, i, 8), _mm256_srli_epi64(d, 16))), 52 - 10);
+  __m256d tf = _mm256_castsi256_pd(_mm256_or_si256(m, _mm256_set1_epi64x(0x3ffLL << 52)));
+  __m256i i1 = _mm256_srli_epi64(j, 5), i2 = _mm256_and_si256(j, _mm256_set1_epi64x(0x1f));
+  __m256i i1x = _mm256_slli_epi64(i1, 1), i2x = _mm256_slli_epi64(i2, 1);
+  __m256d r = _mm256_mul_pd(_mm256_mul_pd(C_(0.5), _mm256_i64gather_pd(ATANH_R1, i1, 8)), _mm256_i64gather_pd(ATANH_R2, i2, 8));
+  __m256d dx = _mm256_fmsub_pd(r, tf, C_(0.5)), ddx2 = _mm256_mul_pd(dx, dx);
+  __m256d rx = _mm256_mul_pd(r, tf), dxl = _mm256_fmsub_pd(r, tf, rx);
+  __m256d f = _mm256_mul_pd(ddx2, _mm256_add_pd(_mm256_add_pd(C_(-0x1p+0), _mm256_mul_pd(dx, C_(0x1.555555555553p+0))),
+                _mm256_mul_pd(ddx2, _mm256_add_pd(_mm256_add_pd(C_(-0x1.fffffffffffap+0), _mm256_mul_pd(dx, C_(0x1.99999e33a6366p+1))),
+                                                  _mm256_mul_pd(ddx2, C_(-0x1.555559ef9525fp+2))))));
+  __m256d lh = _mm256_add_pd(_mm256_add_pd(_mm256_i64gather_pd(&ATANH_L1[0][1], i1x, 8), _mm256_i64gather_pd(&ATANH_L2[0][1], i2x, 8)),
+                             _mm256_mul_pd(C_(0x1.62e42fefa3ap-2), ed));
+  __m256d rxm = _mm256_sub_pd(rx, C_(0.5));
+  __m256d lh2 = _mm256_add_pd(lh, rxm), ll = _mm256_sub_pd(rxm, _mm256_sub_pd(lh2, lh));   /* fasttwosum(lh, rx - 0.5) */
+  __m256d add = _mm256_add_pd(_mm256_add_pd(_mm256_add_pd(_mm256_mul_pd(C_(-0x1.0ca86c3898dp-50), ed),
+                   _mm256_add_pd(_mm256_i64gather_pd(&ATANH_L1[0][0], i1x, 8), _mm256_i64gather_pd(&ATANH_L2[0][0], i2x, 8))), dxl),
+                   _mm256_div_pd(_mm256_mul_pd(C_(0.5), tl), th));
+  ll = _mm256_add_pd(_mm256_add_pd(ll, add), f);
+  lh2 = _mm256_xor_pd(lh2, sg); ll = _mm256_xor_pd(ll, sg);
+  __m256d eb = _mm256_mul_pd(_mm256_add_pd(C_(38e-24), _mm256_mul_pd(ddx2, C_(0x1p-49))), C_(CM_EPS_SCALE));
+#undef C_
+  __m256d lb = _mm256_add_pd(lh2, _mm256_sub_pd(ll, eb)), ub = _mm256_add_pd(lh2, _mm256_add_pd(ll, eb));
+  __m256d small = _mm256_cmp_pd(ax, _mm256_set1_pd(0.25), _CMP_LT_OQ);
+  lb = _mm256_blendv_pd(lb, lbs, small); ub = _mm256_blendv_pd(ub, ubs, small);
+  *redo = _mm256_or_pd(_mm256_cmp_pd(lb, ub, _CMP_NEQ_UQ), _mm256_xor_pd(ok, _mm256_castsi256_pd(_mm256_set1_epi64x(-1))));
+  return lb;
+}
+
+/* atan2: CORE-MATH's cr_atan2 first stage transcribed: z = (y - t x)/(x + t y)
+   around t = j/64 from a table of atan(j/64), a cubic series, the quadrant
+   offset, and its test. Unlike every other function here, CORE-MATH's bound
+   for this stage (|z| 0x1.051p-51 + 2^-90) is empirical: by its own comment,
+   measured on 1.1e10 random pairs in the round-up mode and increased by 2.5%.
+   Lanes it cannot decide go to cr_atan2 (its second stage and accurate
+   path), as do zeros, infinities, nans and arguments 2^53 or more apart.
+   So this path computes bit for bit what cr_atan2 computes; its correct
+   rounding rests on that measured bound. */
+double cr_atan2(double, double);
+#include "crmvec-atan2-tab.h"
+
+AVX2I static inline __m256d atan2_fast(__m256d y0, __m256d x0, __m256d *redo)
+{
+  const __m256i MASK = _mm256_set1_epi64x(0x7fffffffffffffffLL), SIGNI = _mm256_set1_epi64x(1LL << 63);
+  __m256i iy = _mm256_castpd_si256(y0), ix = _mm256_castpd_si256(x0);
+  __m256i aiy = _mm256_and_si256(iy, MASK), aix = _mm256_and_si256(ix, MASK);
+  const __m256i EXP = _mm256_set1_epi64x(0x7ffLL << 52);
+  __m256i ok = _mm256_and_si256(_mm256_and_si256(_mm256_cmpgt_epi64(aiy, _mm256_setzero_si256()), _mm256_cmpgt_epi64(EXP, aiy)),
+                                _mm256_and_si256(_mm256_cmpgt_epi64(aix, _mm256_setzero_si256()), _mm256_cmpgt_epi64(EXP, aix)));
+  __m256i gt = _mm256_cmpgt_epi64(aiy, aix);                                    /* GT = aix < aiy: -1 or 0 */
+  __m256i dxy = _mm256_xor_si256(_mm256_sub_epi64(aix, aiy), gt);             /* (aix - aiy) ^ -GT */
+  ok = _mm256_andnot_si256(_mm256_cmpgt_epi64(dxy, _mm256_set1_epi64x((53LL << 52) - 1)), ok);   /* dxy is below 2^63 when ok */
+  iy = _mm256_blendv_epi8(_mm256_castpd_si256(_mm256_set1_pd(0.5)), iy, ok); ix = _mm256_blendv_epi8(_mm256_castpd_si256(_mm256_set1_pd(1.0)), ix, ok);
+  aiy = _mm256_and_si256(iy, MASK); aix = _mm256_and_si256(ix, MASK);
+  gt = _mm256_cmpgt_epi64(aiy, aix);
+  __m256d ax = _mm256_castsi256_pd(aix), ay = _mm256_castsi256_pd(aiy);
+  __m256d x = _mm256_max_pd(ax, ay), y = _mm256_min_pd(ax, ay);
+  __m256i sy = _mm256_srli_epi64(iy, 63), sx = _mm256_srli_epi64(ix, 63), g1 = _mm256_srli_epi64(gt, 63);
+  __m256d sgn = _mm256_castsi256_pd(_mm256_slli_epi64(_mm256_xor_si256(_mm256_xor_si256(g1, sx), sy), 63));   /* the sign of asgn[GT^sx^sy] */
+  __m256i kw = _mm256_or_si256(_mm256_or_si256(_mm256_slli_epi64(sx, 2), _mm256_slli_epi64(sy, 1)), g1);
+  __m256d jj = _mm256_add_pd(_mm256_div_pd(y, x), _mm256_set1_pd(2 + 1 / 128.));
+  __m256i jt = _mm256_and_si256(_mm256_srli_epi64(_mm256_castpd_si256(jj), 52 - 7), _mm256_set1_epi64x(127));
+  __m256i jt2 = _mm256_slli_epi64(jt, 1), kw2 = _mm256_slli_epi64(kw, 1);
+  __m256d fh = _mm256_xor_pd(_mm256_i64gather_pd(&ATAN2_F2[0][1], jt2, 8), sgn);
+  __m256d fl = _mm256_xor_pd(_mm256_i64gather_pd(&ATAN2_F2[0][0], jt2, 8), sgn);
+  fh = _mm256_add_pd(fh, _mm256_i64gather_pd(&ATAN2_O[0][0], kw2, 8));
+  fl = _mm256_add_pd(fl, _mm256_i64gather_pd(&ATAN2_O[0][1], kw2, 8));
+  __m256d tiny = _mm256_cmp_pd(x, _mm256_set1_pd(0x1p-920), _CMP_LT_OQ);
+  x = _mm256_blendv_pd(x, _mm256_mul_pd(x, _mm256_set1_pd(0x1p920)), tiny); y = _mm256_blendv_pd(y, _mm256_mul_pd(y, _mm256_set1_pd(0x1p920)), tiny);
+  __m256d huge = _mm256_and_pd(_mm256_cmp_pd(x, _mm256_set1_pd(0x1p1022), _CMP_GT_OQ),
+                               _mm256_castsi256_pd(_mm256_xor_si256(_mm256_cmpeq_epi64(jt, _mm256_setzero_si256()), _mm256_set1_epi64x(-1))));
+  x = _mm256_blendv_pd(x, _mm256_mul_pd(x, _mm256_set1_pd(0x1p-1)), huge); y = _mm256_blendv_pd(y, _mm256_mul_pd(y, _mm256_set1_pd(0x1p-1)), huge);
+  __m256d t0 = _mm256_mul_pd(_mm256_sub_pd(_mm256_castsi256_pd(_mm256_add_epi64(jt, _mm256_castpd_si256(_mm256_set1_pd(0x1.8p52)))), _mm256_set1_pd(0x1.8p52)),
+                             _mm256_set1_pd(0x1p-6));                             /* T2[jt] = jt/64 */
+  __m256d zn = _mm256_fnmadd_pd(t0, x, y), zd = _mm256_fmadd_pd(t0, y, x);
+  __m256d z = _mm256_div_pd(zn, zd), z2 = _mm256_mul_pd(z, z);
+  z = _mm256_xor_pd(z, sgn);
+  __m256d dz = _mm256_mul_pd(_mm256_mul_pd(z, z2), _mm256_add_pd(_mm256_set1_pd(-0x1.55555555554d2p-2),
+                 _mm256_mul_pd(z2, _mm256_add_pd(_mm256_set1_pd(0x1.999999860e1cap-3), _mm256_mul_pd(z2, _mm256_set1_pd(-0x1.248ad469844a1p-3))))));
+  __m256d eps = _mm256_mul_pd(_mm256_add_pd(_mm256_mul_pd(abs_pd(z), _mm256_set1_pd(0x1.051p-51)), _mm256_set1_pd(0x1p-90)), _mm256_set1_pd(CM_EPS_SCALE));
+  __m256d rh = _mm256_add_pd(fh, z), zlow = _mm256_sub_pd(z, _mm256_sub_pd(rh, fh));   /* fasttwosum(fh, z) */
+  __m256d rl = _mm256_add_pd(_mm256_add_pd(fl, dz), zlow);
+  __m256d lb = _mm256_add_pd(rh, _mm256_sub_pd(rl, eps)), ub = _mm256_add_pd(rh, _mm256_add_pd(rl, eps));
+  *redo = _mm256_or_pd(_mm256_cmp_pd(lb, ub, _CMP_NEQ_UQ), _mm256_castsi256_pd(_mm256_xor_si256(ok, _mm256_set1_epi64x(-1))));
+  return lb;
+}
+
+AVX2 __m256d _ZGVdN4vv_atan2(__m256d y, __m256d x)
+{
+  __m256d redo, r = atan2_fast(y, x, &redo);
+  int m = _mm256_movemask_pd(redo);
+  if (!m) return r;
+  double ys[4], xs[4], rs[4]; _mm256_storeu_pd(ys, y); _mm256_storeu_pd(xs, x); _mm256_storeu_pd(rs, r);
+  for (int i = 0; i < 4; i++) if (m >> i & 1) rs[i] = cr_atan2(ys[i], xs[i]);
+  return _mm256_loadu_pd(rs);
+}
+
+/* hypot: CORE-MATH's cr_hypot fast path transcribed: both arguments scaled so
+   the larger is in [1, 2), x^2 + y^2 and its root in double-double, and its
+   integer test that the low part keeps the result away from a rounding
+   midpoint. When one argument is below 2^-27 of the other, fma(2^-27, v, u)
+   as cr_hypot returns. Inf, nan, zero or subnormal arguments, failed tests
+   and overflow go to cr_hypot. */
+double cr_hypot(double, double);
+
+AVX2I static inline __m256i ucmpgt_epi64(__m256i a, __m256i b)   /* unsigned a > b */
+{ const __m256i F = _mm256_set1_epi64x(1LL << 63); return _mm256_cmpgt_epi64(_mm256_xor_si256(a, F), _mm256_xor_si256(b, F)); }
+
+AVX2I static inline __m256d hypot_fast(__m256d x, __m256d y, __m256d *redo)
+{
+  const __m256i EMSK = _mm256_set1_epi64x(0x7ffLL << 52);
+  x = abs_pd(x); y = abs_pd(y);
+  __m256d u = _mm256_max_pd(x, y), v = _mm256_min_pd(x, y);
+  __m256i ub = _mm256_castpd_si256(u), vb = _mm256_castpd_si256(v);
+  __m256d fin = _mm256_and_pd(_mm256_cmp_pd(x, _mm256_set1_pd(__builtin_inf()), _CMP_LT_OQ),       /* both finite, before */
+                              _mm256_cmp_pd(y, _mm256_set1_pd(__builtin_inf()), _CMP_LT_OQ));      /* max/min drop a nan */
+  __m256i ok = _mm256_and_si256(_mm256_cmpgt_epi64(vb, _mm256_set1_epi64x(0x000fffffffffffffLL)),    /* v normal (so nonzero) */
+                                _mm256_castpd_si256(fin));
+  ub = _mm256_blendv_epi8(_mm256_castpd_si256(_mm256_set1_pd(1.0)), ub, ok);
+  vb = _mm256_blendv_epi8(_mm256_castpd_si256(_mm256_set1_pd(0.5)), vb, ok);
+  u = _mm256_castsi256_pd(ub); v = _mm256_castsi256_pd(vb);
+  __m256i far = _mm256_cmpgt_epi64(_mm256_sub_epi64(ub, vb), _mm256_set1_epi64x(27LL << 52));
+  __m256d rfar = _mm256_fmadd_pd(_mm256_set1_pd(0x1p-27), v, u);
+  __m256i off = _mm256_sub_epi64(_mm256_set1_epi64x(0x3ffLL << 52), _mm256_and_si256(ub, EMSK));
+  __m256d xs = _mm256_castsi256_pd(_mm256_add_epi64(ub, off)), ys = _mm256_castsi256_pd(_mm256_add_epi64(vb, off));
+  __m256d x2 = _mm256_mul_pd(xs, xs), dx2 = _mm256_fmsub_pd(xs, xs, x2);
+  __m256d y2 = _mm256_mul_pd(ys, ys), dy2 = _mm256_fmsub_pd(ys, ys, y2);
+  __m256d r2 = _mm256_add_pd(x2, y2), ir2 = _mm256_div_pd(_mm256_set1_pd(0.5), r2);
+  __m256d dr2 = _mm256_add_pd(_mm256_add_pd(_mm256_sub_pd(x2, r2), y2), _mm256_add_pd(dx2, dy2));
+  __m256d th = _mm256_sqrt_pd(r2), rsq = _mm256_mul_pd(th, ir2);
+  __m256d dz = _mm256_sub_pd(dr2, _mm256_fmsub_pd(th, th, r2)), tl = _mm256_mul_pd(rsq, dz);
+  __m256d th2 = _mm256_add_pd(th, tl); tl = _mm256_sub_pd(tl, _mm256_sub_pd(th2, th)); th = th2;   /* fasttwosum */
+  __m256i ex = _mm256_and_si256(_mm256_castpd_si256(th), EMSK), ey = _mm256_castpd_si256(abs_pd(tl));
+  __m256i aidr = _mm256_sub_epi64(_mm256_add_epi64(ey, _mm256_set1_epi64x(0x3feLL << 52)), ex);
+  __m256i mid = _mm256_srli_epi64(_mm256_add_epi64(_mm256_sub_epi64(aidr, _mm256_set1_epi64x(0x3c90000000000000LL)), _mm256_set1_epi64x(16)), 5);
+  __m256i midm = _mm256_srli_epi64(_mm256_add_epi64(_mm256_sub_epi64(aidr, _mm256_set1_epi64x(0x3c80000000000000LL)), _mm256_set1_epi64x(16)), 5);
+  __m256i hard = _mm256_or_si256(_mm256_or_si256(_mm256_cmpeq_epi64(mid, _mm256_setzero_si256()), _mm256_cmpeq_epi64(midm, _mm256_setzero_si256())),
+                                 _mm256_or_si256(ucmpgt_epi64(_mm256_set1_epi64x(0x39b0000000000000LL), aidr),
+                                                 ucmpgt_epi64(aidr, _mm256_set1_epi64x((long long)0x3c9fffffffffff80ULL))));
+  __m256i rb = _mm256_sub_epi64(_mm256_castpd_si256(th), off);
+  __m256i ovf = _mm256_cmpgt_epi64(rb, _mm256_set1_epi64x((0x7ffLL << 52) - 1));   /* rb is positive or above 2^63 on no input here */
+#ifdef HYPOT_NO_TEST   /* crtest's control: the midpoint test switched off */
+  hard = _mm256_setzero_si256();
+#endif
+  hard = _mm256_andnot_si256(far, _mm256_or_si256(hard, ovf));
+  __m256d r = _mm256_blendv_pd(_mm256_castsi256_pd(rb), rfar, _mm256_castsi256_pd(far));
+  __m256i bad = _mm256_or_si256(hard, _mm256_xor_si256(ok, _mm256_set1_epi64x(-1)));
+  *redo = _mm256_castsi256_pd(bad);
+  return r;
+}
+
+AVX2 __m256d _ZGVdN4vv_hypot(__m256d x, __m256d y)
+{
+  __m256d redo, r = hypot_fast(x, y, &redo);
+  int m = _mm256_movemask_pd(redo);
+  if (!m) return r;
+  double xs[4], ys[4], rs[4]; _mm256_storeu_pd(xs, x); _mm256_storeu_pd(ys, y); _mm256_storeu_pd(rs, r);
+  for (int i = 0; i < 4; i++) if (m >> i & 1) rs[i] = cr_hypot(xs[i], ys[i]);
+  return _mm256_loadu_pd(rs);
+}
+
+/* erf: CORE-MATH's cr_erf_fast transcribed: below 1/16 a degree-11 series
+   (relative bound 0x1.78p-69), up to 0x1.7afb48dc96626p+2 the table of
+   degree-12 polynomials in double-double (0x1.11p-69); beyond, +-1, which is
+   what erf rounds to there. |x| < 2^-61 and nan go to cr_erf. */
+double cr_erf(double);
+#include "crmvec-erf-tab.h"
+
+/* cr_erf_fast for 0 < z <= 0x1.7afb48dc96626p+2: h + l ~ erf z, relative
+   error below *err (erfc.c's copy of it is the same code and table) */
+AVX2I static inline void erf_core(__m256d z, __m256d *ho, __m256d *lo, __m256d *erro)
+{
+#define C_(k) _mm256_set1_pd(k)
+  /* z < 1/16 */
+  __m256d z2h = _mm256_mul_pd(z, z), z2l = _mm256_fmsub_pd(z, z, z2h), z4 = _mm256_mul_pd(z2h, z2h);
+  __m256d c9 = _mm256_fmadd_pd(C_(-0x1.bf9f8d2c202e4p-11), z2h, C_(0x1.565bbf8a0fe0bp-8));
+  __m256d c5 = _mm256_fmadd_pd(C_(-0x1.b82ce31189904p-6), z2h, C_(0x1.ce2f21a042b7fp-4));
+  c5 = _mm256_fmadd_pd(c9, z4, c5);
+  __m256d th = _mm256_mul_pd(z2h, c5), tl = _mm256_fmsub_pd(z2h, c5, th);
+  __m256d h = _mm256_add_pd(C_(-0x1.812746b0379e7p-2), th), l = _mm256_sub_pd(th, _mm256_sub_pd(h, C_(-0x1.812746b0379e7p-2)));
+  l = _mm256_add_pd(l, _mm256_add_pd(tl, C_(0x1.f1a64d72722a2p-57)));
+  __m256d hc = h;
+  th = _mm256_mul_pd(z2h, h); tl = _mm256_fmsub_pd(z2h, h, th);
+  tl = _mm256_add_pd(tl, _mm256_fmadd_pd(z2h, l, C_(0x1.1ae3a7862d9c4p-56)));
+  h = _mm256_add_pd(C_(0x1.20dd750429b6dp+0), th); l = _mm256_sub_pd(th, _mm256_sub_pd(h, C_(0x1.20dd750429b6dp+0)));
+  l = _mm256_add_pd(l, _mm256_fmadd_pd(z2l, hc, tl));
+  __m256d h0 = _mm256_mul_pd(h, z); tl = _mm256_fmsub_pd(h, z, h0);
+  __m256d l0 = _mm256_fmadd_pd(l, z, tl);
+  /* 1/16 <= z: the table */
+  __m256d v = _mm256_floor_pd(_mm256_mul_pd(C_(16.0), z));
+  __m256d vi = _mm256_min_pd(_mm256_max_pd(_mm256_sub_pd(v, C_(1.0)), _mm256_setzero_pd()), C_(93.0));
+  __m256i row = _mm256_and_si256(_mm256_castpd_si256(_mm256_add_pd(vi, C_(0x1.8p52))), _mm256_set1_epi64x(127));
+  __m256d w = _mm256_sub_pd(_mm256_sub_pd(z, C_(0.03125)), _mm256_mul_pd(C_(0.0625), v));
+  const double *CT = &ERF_C[0][0];
+#define G_(k) gather_row(CT, row, k, 13)
+  __m256d w2 = _mm256_mul_pd(w, w), w4 = _mm256_mul_pd(w2, w2);
+  __m256d d9 = _mm256_fmadd_pd(G_(12), w, G_(11)), d7 = _mm256_fmadd_pd(G_(10), w, G_(9)), d5 = _mm256_fmadd_pd(G_(8), w, G_(7));
+  __m256d wc6 = _mm256_mul_pd(w, G_(6));
+  __m256d c3h = _mm256_add_pd(G_(5), wc6), c3l = _mm256_sub_pd(wc6, _mm256_sub_pd(c3h, G_(5)));
+  d7 = _mm256_fmadd_pd(d9, w2, d7);
+  __m256d a5 = _mm256_mul_pd(d5, w2), n1 = _mm256_add_pd(c3h, a5);
+  c3l = _mm256_add_pd(c3l, _mm256_sub_pd(a5, _mm256_sub_pd(n1, c3h))); c3h = n1;
+  __m256d a7 = _mm256_mul_pd(d7, w4), n2 = _mm256_add_pd(c3h, a7);
+  c3l = _mm256_add_pd(c3l, _mm256_sub_pd(a7, _mm256_sub_pd(n2, c3h))); c3h = n2;
+  th = _mm256_mul_pd(w, c3h); tl = _mm256_fmsub_pd(w, c3h, th);
+  __m256d c2h = _mm256_add_pd(G_(4), th), c2l = _mm256_sub_pd(th, _mm256_sub_pd(c2h, G_(4)));
+  c2l = _mm256_add_pd(c2l, _mm256_fmadd_pd(w, c3l, tl));
+  th = _mm256_mul_pd(w, c2h); tl = _mm256_fmsub_pd(w, c2h, th);
+  __m256d h1 = _mm256_add_pd(G_(2), th), l1 = _mm256_sub_pd(th, _mm256_sub_pd(h1, G_(2)));
+  l1 = _mm256_add_pd(l1, _mm256_add_pd(tl, _mm256_fmadd_pd(w, c2l, G_(3))));
+  th = _mm256_mul_pd(w, h1); tl = _mm256_fmsub_pd(w, h1, th);
+  tl = _mm256_fmadd_pd(w, l1, tl);
+  __m256d h2 = _mm256_add_pd(G_(0), th), l2 = _mm256_sub_pd(th, _mm256_sub_pd(h2, G_(0)));
+  l2 = _mm256_add_pd(l2, _mm256_add_pd(tl, G_(1)));
+#undef G_
+  __m256d small = _mm256_cmp_pd(z, C_(0.0625), _CMP_LT_OQ);
+  *ho = _mm256_blendv_pd(h2, h0, small); *lo = _mm256_blendv_pd(l2, l0, small);
+  *erro = _mm256_mul_pd(_mm256_blendv_pd(C_(0x1.11p-69), C_(0x1.78p-69), small), C_(CM_EPS_SCALE));
+#undef C_
+}
+
+AVX2I static inline __m256d erf_fast(__m256d x, __m256d *redo)
+{
+  const __m256d SIGN = _mm256_castsi256_pd(_mm256_set1_epi64x(1LL << 63));
+  __m256d z = abs_pd(x), sg = _mm256_and_pd(x, SIGN);
+  __m256d ok = _mm256_cmp_pd(z, _mm256_set1_pd(0x1p-61), _CMP_GE_OQ);              /* false for nan */
+  __m256d sat = _mm256_cmp_pd(z, _mm256_set1_pd(0x1.7afb48dc96626p+2), _CMP_GT_OQ);
+  z = _mm256_blendv_pd(_mm256_set1_pd(0.5), z, _mm256_andnot_pd(sat, ok));
+  __m256d h, l, err;
+  erf_core(z, &h, &l, &err);
+  __m256d uh = _mm256_xor_pd(h, sg), ul = _mm256_xor_pd(l, sg);
+  __m256d left = _mm256_add_pd(uh, _mm256_fmadd_pd(err, _mm256_xor_pd(uh, SIGN), ul)), right = _mm256_add_pd(uh, _mm256_fmadd_pd(err, uh, ul));
+  __m256d one = _mm256_or_pd(_mm256_set1_pd(1.0), sg);
+  left = _mm256_blendv_pd(left, one, sat); right = _mm256_blendv_pd(right, one, sat);
+  *redo = _mm256_or_pd(_mm256_cmp_pd(left, right, _CMP_NEQ_UQ), _mm256_xor_pd(ok, _mm256_castsi256_pd(_mm256_set1_epi64x(-1))));
+  return left;
+}
+
+/* erfc: CORE-MATH's cr_erfc_fast transcribed: 1 + erf(-x) for x < 0,
+   1 - erf x up to 0x1.713786d9c7c09p+1 (erf_core, errors made absolute), then
+   the asymptotic expansion exp(-x^2) P(1/x) with erfc.c's exp_1 in
+   double-double (relative bound 0x1.d9p-68). The ranges where erfc rounds to
+   2, 1 or 0 are returned as cr_erfc returns them; beyond 0x1.9db1bb14e15cap+4,
+   nan and inf go to cr_erfc. */
+double cr_erfc(double);
+#include "crmvec-erfc-tab.h"
+static const double POW_T1[64][2], POW_T2[64][2];   /* defined with pow, below */
+
+AVX2I static inline __m256d erfc_fast(__m256d x, __m256d *redo)
+{
+  const __m256d ONE = _mm256_set1_pd(1.0), SIGN = _mm256_castsi256_pd(_mm256_set1_epi64x(1LL << 63));
+  const __m256d MAGIC = _mm256_set1_pd(0x1.8p52);
+#define C_(k) _mm256_set1_pd(k)
+  __m256d to2 = _mm256_cmp_pd(x, C_(-0x1.7744f8f74e94bp+2), _CMP_LE_OQ);
+  __m256d to0 = _mm256_cmp_pd(x, C_(0x1.b39dc41e48bfdp+4), _CMP_GE_OQ);
+  __m256d to1 = _mm256_and_pd(_mm256_cmp_pd(x, C_(-0x1.c5bf891b4ef6ap-54), _CMP_GE_OQ), _mm256_cmp_pd(x, C_(0x1.c5bf891b4ef6ap-55), _CMP_LE_OQ));
+  __m256d ok = _mm256_and_pd(_mm256_cmp_pd(x, x, _CMP_ORD_Q), _mm256_cmp_pd(x, C_(0x1.9db1bb14e15cap+4), _CMP_LT_OQ));
+  ok = _mm256_or_pd(ok, to0);
+  ok = _mm256_andnot_pd(_mm256_cmp_pd(abs_pd(x), C_(__builtin_inf()), _CMP_EQ_OQ), ok);        /* +-inf: cr_erfc */
+  __m256d special = _mm256_or_pd(_mm256_or_pd(to2, to0), to1);
+  __m256d xv = _mm256_blendv_pd(x, C_(1.0), _mm256_or_pd(special, _mm256_xor_pd(ok, _mm256_castsi256_pd(_mm256_set1_epi64x(-1)))));
+  __m256d neg = _mm256_cmp_pd(xv, _mm256_setzero_pd(), _CMP_LT_OQ);
+  /* 1 -+ erf(|x|) */
+  __m256d z = abs_pd(xv);
+  __m256d zc = _mm256_min_pd(z, C_(0x1.7afb48dc96626p+2));
+  __m256d eh, el, er;
+  erf_core(zc, &eh, &el, &er);
+  __m256d ea = _mm256_mul_pd(er, eh);                                          /* absolute */
+  __m256d ehs = _mm256_xor_pd(eh, _mm256_andnot_pd(neg, SIGN));                /* +h for x < 0, -h otherwise */
+  __m256d h1 = _mm256_add_pd(ONE, ehs), t1 = _mm256_sub_pd(ehs, _mm256_sub_pd(h1, ONE));   /* fast_two_sum(1, +-h) */
+  __m256d l1 = _mm256_blendv_pd(_mm256_sub_pd(t1, el), _mm256_add_pd(t1, el), neg);
+  __m256d e1 = _mm256_blendv_pd(_mm256_blendv_pd(_mm256_add_pd(ea, C_(0x1.4p-104 * CM_EPS_SCALE)), ea,
+                                                 _mm256_cmp_pd(xv, C_(0x1.e861fbb24c00ap-2), _CMP_GE_OQ)),
+                                _mm256_add_pd(ea, C_(0x1.4p-102 * CM_EPS_SCALE)), neg);
+  /* asymptotic, x > 0x1.713786d9c7c09p+1 */
+  __m256d xa = _mm256_max_pd(xv, C_(0x1.713786d9c7c09p+1));        /* other lanes: the band's lower end */
+  __m256d uh = _mm256_mul_pd(xa, xa), ul = _mm256_fmsub_pd(xa, xa, uh);
+  __m256d xh = _mm256_xor_pd(uh, SIGN), xl = _mm256_xor_pd(ul, SIGN);          /* exp_1(-uh, -ul) */
+  __m256d k = _mm256_round_pd(_mm256_mul_pd(xh, C_(0x1.71547652b82fep+12)), _MM_FROUND_TO_NEAREST_INT | _MM_FROUND_NO_EXC);
+  __m256d kh = _mm256_mul_pd(k, C_(0x1.62e42fefa39efp-13));
+  __m256d kl = _mm256_fmadd_pd(k, C_(0x1.abc9e3b39803fp-68), _mm256_fmsub_pd(k, C_(0x1.62e42fefa39efp-13), kh));
+  __m256d a = _mm256_sub_pd(xh, kh);
+  __m256d yh = _mm256_add_pd(a, xl), yl = _mm256_sub_pd(xl, _mm256_sub_pd(yh, a));
+  yl = _mm256_sub_pd(yl, kl);
+  __m256i kb = _mm256_and_si256(_mm256_castpd_si256(_mm256_add_pd(k, MAGIC)), _mm256_set1_epi64x(0xfffffffffffffLL));
+  __m256i ti1 = _mm256_slli_epi64(_mm256_and_si256(kb, _mm256_set1_epi64x(0x3f)), 1);
+  __m256i ti2 = _mm256_slli_epi64(_mm256_and_si256(_mm256_srli_epi64(kb, 6), _mm256_set1_epi64x(0x3f)), 1);
+  __m256d t1h = _mm256_i64gather_pd(&POW_T1[0][0], ti2, 8), t1l = _mm256_i64gather_pd(&POW_T1[0][1], ti2, 8);
+  __m256d t2h = _mm256_i64gather_pd(&POW_T2[0][0], ti1, 8), t2l = _mm256_i64gather_pd(&POW_T2[0][1], ti1, 8);
+#define DMUL(H, L, AH, AL, BH, BL) do { H = _mm256_mul_pd(AH, BH); L = _mm256_fmsub_pd(AH, BH, H); \
+    L = _mm256_fmadd_pd(AH, BL, L); L = _mm256_fmadd_pd(AL, BH, L); } while (0)
+  __m256d hi, lo; DMUL(hi, lo, t2h, t2l, t1h, t1l);
+  __m256d zq = _mm256_add_pd(yh, yl);                                          /* q_1(yh, yl) */
+  __m256d q = _mm256_fmadd_pd(C_(ERFC_Q1[4]), yh, C_(ERFC_Q1[3]));
+  q = _mm256_fmadd_pd(q, zq, C_(ERFC_Q1[2]));
+  __m256d qz = _mm256_mul_pd(q, zq);
+  __m256d qh = _mm256_add_pd(C_(ERFC_Q1[1]), qz), ql = _mm256_sub_pd(qz, _mm256_sub_pd(qh, C_(ERFC_Q1[1])));
+  __m256d dh, dl; DMUL(dh, dl, yh, yl, qh, ql);
+  qh = _mm256_add_pd(C_(ERFC_Q1[0]), dh); ql = _mm256_add_pd(_mm256_sub_pd(dh, _mm256_sub_pd(qh, C_(ERFC_Q1[0]))), dl);
+  __m256d xeh, xel; DMUL(xeh, xel, hi, lo, qh, ql);
+  __m256d M = _mm256_castsi256_pd(_mm256_slli_epi64(_mm256_add_epi64(_mm256_srli_epi64(kb, 12), _mm256_set1_epi64x(0x3ff)), 52));
+  xeh = _mm256_mul_pd(xeh, M); xel = _mm256_mul_pd(xel, M);
+  __m256d ryh = _mm256_div_pd(ONE, xa);
+  __m256d ryl = _mm256_mul_pd(ryh, _mm256_fnmadd_pd(xa, ryh, ONE));
+  __m256d thr[6] = {C_(0x1.d5p-4), C_(0x1.59da6ca291ba6p-3), C_(0x1.bcp-3), C_(0x1.0cp-2), C_(0x1.38p-2), C_(0x1.63p-2)};
+  __m256i ri = _mm256_setzero_si256();
+  for (int t = 0; t < 6; t++) ri = _mm256_sub_epi64(ri, _mm256_castpd_si256(_mm256_cmp_pd(ryh, thr[t], _CMP_GT_OQ)));
+  ri = _mm256_min_epi32(ri, _mm256_set1_epi64x(5));
+  const double *PT = &ERFC_T[0][0];
+#define P_(k) gather_row(PT, ri, k, 13)
+  __m256d vh = _mm256_mul_pd(ryh, ryh), vl = _mm256_fmsub_pd(ryh, ryh, vh);
+  vl = _mm256_fmadd_pd(_mm256_add_pd(ryh, ryh), ryl, vl);
+  __m256d zh = P_(12);
+  zh = _mm256_fmadd_pd(zh, vh, P_(11));
+  zh = _mm256_fmadd_pd(zh, vh, P_(10));
+  __m256d sh = _mm256_mul_pd(zh, vh), sl = _mm256_fmadd_pd(zh, vl, _mm256_fmsub_pd(zh, vh, sh));   /* s_mul */
+  __m256d zl;
+  { __m256d c = P_(9); zh = _mm256_add_pd(c, sh); zl = _mm256_add_pd(_mm256_sub_pd(sh, _mm256_sub_pd(zh, c)), sl); }
+  for (int j = 15; j >= 3; j -= 2) {
+    __m256d h_, l_; DMUL(h_, l_, zh, zl, vh, vl);
+    __m256d c = P_((j + 1) / 2);
+    zh = _mm256_add_pd(c, h_); zl = _mm256_add_pd(_mm256_sub_pd(h_, _mm256_sub_pd(zh, c)), l_);
+  }
+  { __m256d h_, l_; DMUL(h_, l_, zh, zl, vh, vl);
+    __m256d c = P_(0); zh = _mm256_add_pd(c, h_);
+    zl = _mm256_add_pd(_mm256_sub_pd(h_, _mm256_sub_pd(zh, c)), _mm256_add_pd(l_, P_(1))); }
+#undef P_
+  __m256d ph, pl; DMUL(ph, pl, zh, zl, ryh, ryl);
+  __m256d h3, l3; DMUL(h3, l3, ph, pl, xeh, xel);
+#undef DMUL
+  __m256d e3 = _mm256_blendv_pd(C_(0x1p-1022), _mm256_mul_pd(C_(0x1.d9p-68 * CM_EPS_SCALE), h3), _mm256_cmp_pd(h3, C_(0x1.151b9a3fdd5c9p-955), _CMP_GE_OQ));
+  /* pick */
+  __m256d asym = _mm256_cmp_pd(xv, C_(0x1.713786d9c7c09p+1), _CMP_GT_OQ);
+  __m256d H = _mm256_blendv_pd(h1, h3, asym), L = _mm256_blendv_pd(l1, l3, asym), E = _mm256_blendv_pd(e1, e3, asym);
+  __m256d left = _mm256_add_pd(H, _mm256_sub_pd(L, E)), right = _mm256_add_pd(H, _mm256_add_pd(L, E));
+  __m256d y1 = _mm256_fmadd_pd(_mm256_xor_pd(x, SIGN), C_(0x1p-54), ONE);
+  left = _mm256_blendv_pd(left, y1, to1); right = _mm256_blendv_pd(right, y1, to1);
+  left = _mm256_blendv_pd(left, C_(2.0), to2); right = _mm256_blendv_pd(right, C_(2.0), to2);
+  left = _mm256_blendv_pd(left, _mm256_setzero_pd(), to0); right = _mm256_blendv_pd(right, _mm256_setzero_pd(), to0);
+#undef C_
+  *redo = _mm256_or_pd(_mm256_cmp_pd(left, right, _CMP_NEQ_UQ), _mm256_xor_pd(ok, _mm256_castsi256_pd(_mm256_set1_epi64x(-1))));
+  return left;
+}
+
+#define DOUBLE_FAST(NAME, FAST, CR)                                                   \
+  AVX2 __m256d _ZGVdN4v_##NAME(__m256d x)                                             \
+  {                                                                                   \
+    __m256d redo, y = FAST(x, &redo);                                                 \
+    int m = _mm256_movemask_pd(redo);                                                 \
+    if (!m) return y;                                                                 \
+    double xs[4], ys[4]; _mm256_storeu_pd(xs, x); _mm256_storeu_pd(ys, y);            \
+    for (int i = 0; i < 4; i++) if (m >> i & 1) ys[i] = CR(xs[i]);                    \
+    return _mm256_loadu_pd(ys);                                                       \
+  }
+DOUBLE_FAST(exp2, exp2_fast, cr_exp2)
+DOUBLE_FAST(exp10, exp10_fast, cr_exp10)
+DOUBLE_FAST(log2, log2_fast, cr_log2)
+DOUBLE_FAST(log10, log10_fast, cr_log10)
+#if !CR_LOOP_EXPM1
+DOUBLE_FAST(expm1, expm1_fast, cr_expm1)
+#endif
+DOUBLE_FAST(log1p, log1p_fast, cr_log1p)
+DOUBLE_FAST(cbrt, cbrt_fast, cr_cbrt)
+#if !CR_LOOP_ATAN
+DOUBLE_FAST(atan, atan_fast, cr_atan)
+#endif
+DOUBLE_FAST(asin, asin_fast, cr_asin)
+DOUBLE_FAST(acos, acos_fast, cr_acos)
+#if !CR_LOOP_SINH
+DOUBLE_FAST(sinh, sinh_fast, cr_sinh)
+#endif
+#if !CR_LOOP_COSH
+DOUBLE_FAST(cosh, cosh_fast, cr_cosh)
+#endif
+DOUBLE_FAST(tanh, tanh_fast, cr_tanh)
+DOUBLE_FAST(asinh, asinh_fast, cr_asinh)
+DOUBLE_FAST(acosh, acosh_fast, cr_acosh)
+DOUBLE_FAST(atanh, atanh_fast, cr_atanh)
+DOUBLE_FAST(erf, erf_fast, cr_erf)
+DOUBLE_FAST(erfc, erfc_fast, cr_erfc)
 
 AVX2 __m256d _ZGVdN4v_exp(__m256d x)
 {
@@ -1007,6 +2976,26 @@ SCALAR4(sinf, cr_sinf)   SCALAR4(cosf, cr_cosf)
   { double a[N], b[N]; memcpy(a, &x, sizeof x); memcpy(b, &y, sizeof y);               \
     for (int i = 0; i < N; i++) a[i] = CR(a[i], b[i]); memcpy(&x, a, sizeof x); return x; }
 #define NOATTR
+/* AVX2 entry points that loop over CORE-MATH instead of running their vector
+   path. Measured 2026-09-26 (quiet machine, all proven): the loop is faster
+   for double atan (-5%), sinh (-4%) and cosh (-7%), so those loop by
+   default; for erff it is a tie and for expm1 20% slower, so those stay
+   vector. The vector paths are kept for when their speed work lands. */
+#if CR_LOOP_ERFF
+LOOP_F1(_ZGVdN8v_erff,  cr_erff,  __m256,  8, AVX2)
+#endif
+#if CR_LOOP_EXPM1
+LOOP_D1(_ZGVdN4v_expm1, cr_expm1, __m256d, 4, AVX2)
+#endif
+#if CR_LOOP_ATAN
+LOOP_D1(_ZGVdN4v_atan,  cr_atan,  __m256d, 4, AVX2)
+#endif
+#if CR_LOOP_SINH
+LOOP_D1(_ZGVdN4v_sinh,  cr_sinh,  __m256d, 4, AVX2)
+#endif
+#if CR_LOOP_COSH
+LOOP_D1(_ZGVdN4v_cosh,  cr_cosh,  __m256d, 4, AVX2)
+#endif
 
                                                       LOOP_F1(_ZGVbN4v_tanf,   cr_tanf, __m128,  4, NOATTR)
                                                       LOOP_F2(_ZGVbN4vv_powf,  cr_powf, __m128,  4, NOATTR)
@@ -1015,6 +3004,82 @@ SCALAR4(sinf, cr_sinf)   SCALAR4(cosf, cr_cosf)
                                                       LOOP_D1(_ZGVbN2v_tan,    cr_tan,  __m128d, 2, NOATTR)
                                                       LOOP_D1(_ZGVbN2v_log,    cr_log,  __m128d, 2, NOATTR)
                                                       LOOP_D2(_ZGVbN2vv_pow,   cr_pow,  __m128d, 2, NOATTR)
+
+/* LLVM main and llvm#223817 (read from libLLVM-24git.so, 2026-09-26): 72 more
+   symbols, 36 functions across both precisions, looping over scalar CORE-MATH
+   until each gains a vector path. */
+float cr_acosf(float);
+float cr_acoshf(float);
+float cr_asinf(float);
+float cr_asinhf(float);
+float cr_atan2f(float, float);
+float cr_atanf(float);
+float cr_atanhf(float);
+float cr_cbrtf(float);
+float cr_coshf(float);
+float cr_erfcf(float);
+float cr_erff(float);
+float cr_expm1f(float);
+float cr_hypotf(float, float);
+float cr_log1pf(float);
+float cr_sinhf(float);
+float cr_tanhf(float);
+double cr_acos(double);
+double cr_acosh(double);
+double cr_asin(double);
+double cr_asinh(double);
+double cr_atan(double);
+double cr_atan2(double, double);
+double cr_atanh(double);
+double cr_cbrt(double);
+double cr_cosh(double);
+double cr_erf(double);
+double cr_erfc(double);
+double cr_exp10(double);
+double cr_exp2(double);
+double cr_expm1(double);
+double cr_hypot(double, double);
+double cr_log10(double);
+double cr_log1p(double);
+double cr_log2(double);
+double cr_sinh(double);
+double cr_tanh(double);
+LOOP_D1(_ZGVbN2v_acos, cr_acos, __m128d, 2, NOATTR)
+LOOP_D1(_ZGVbN2v_acosh, cr_acosh, __m128d, 2, NOATTR)
+LOOP_D1(_ZGVbN2v_asin, cr_asin, __m128d, 2, NOATTR)
+LOOP_D1(_ZGVbN2v_asinh, cr_asinh, __m128d, 2, NOATTR)
+LOOP_D1(_ZGVbN2v_atan, cr_atan, __m128d, 2, NOATTR)
+LOOP_D1(_ZGVbN2v_atanh, cr_atanh, __m128d, 2, NOATTR)
+LOOP_D1(_ZGVbN2v_cbrt, cr_cbrt, __m128d, 2, NOATTR)
+LOOP_D1(_ZGVbN2v_cosh, cr_cosh, __m128d, 2, NOATTR)
+LOOP_D1(_ZGVbN2v_erf, cr_erf, __m128d, 2, NOATTR)
+LOOP_D1(_ZGVbN2v_erfc, cr_erfc, __m128d, 2, NOATTR)
+LOOP_D1(_ZGVbN2v_exp10, cr_exp10, __m128d, 2, NOATTR)
+LOOP_D1(_ZGVbN2v_exp2, cr_exp2, __m128d, 2, NOATTR)
+LOOP_D1(_ZGVbN2v_expm1, cr_expm1, __m128d, 2, NOATTR)
+LOOP_D1(_ZGVbN2v_log10, cr_log10, __m128d, 2, NOATTR)
+LOOP_D1(_ZGVbN2v_log1p, cr_log1p, __m128d, 2, NOATTR)
+LOOP_D1(_ZGVbN2v_log2, cr_log2, __m128d, 2, NOATTR)
+LOOP_D1(_ZGVbN2v_sinh, cr_sinh, __m128d, 2, NOATTR)
+LOOP_D1(_ZGVbN2v_tanh, cr_tanh, __m128d, 2, NOATTR)
+LOOP_D2(_ZGVbN2vv_atan2, cr_atan2, __m128d, 2, NOATTR)
+LOOP_D2(_ZGVbN2vv_hypot, cr_hypot, __m128d, 2, NOATTR)
+LOOP_F1(_ZGVbN4v_acosf, cr_acosf, __m128, 4, NOATTR)
+LOOP_F1(_ZGVbN4v_acoshf, cr_acoshf, __m128, 4, NOATTR)
+LOOP_F1(_ZGVbN4v_asinf, cr_asinf, __m128, 4, NOATTR)
+LOOP_F1(_ZGVbN4v_asinhf, cr_asinhf, __m128, 4, NOATTR)
+LOOP_F1(_ZGVbN4v_atanf, cr_atanf, __m128, 4, NOATTR)
+LOOP_F1(_ZGVbN4v_atanhf, cr_atanhf, __m128, 4, NOATTR)
+LOOP_F1(_ZGVbN4v_cbrtf, cr_cbrtf, __m128, 4, NOATTR)
+LOOP_F1(_ZGVbN4v_coshf, cr_coshf, __m128, 4, NOATTR)
+LOOP_F1(_ZGVbN4v_erfcf, cr_erfcf, __m128, 4, NOATTR)
+LOOP_F1(_ZGVbN4v_erff, cr_erff, __m128, 4, NOATTR)
+LOOP_F1(_ZGVbN4v_expm1f, cr_expm1f, __m128, 4, NOATTR)
+LOOP_F1(_ZGVbN4v_log1pf, cr_log1pf, __m128, 4, NOATTR)
+LOOP_F1(_ZGVbN4v_sinhf, cr_sinhf, __m128, 4, NOATTR)
+LOOP_F1(_ZGVbN4v_tanhf, cr_tanhf, __m128, 4, NOATTR)
+LOOP_F2(_ZGVbN4vv_atan2f, cr_atan2f, __m128, 4, NOATTR)
+LOOP_F2(_ZGVbN4vv_hypotf, cr_hypotf, __m128, 4, NOATTR)
 
 /* glibc's __*_finite entry points (for code built with -ffinite-math-only
    headers): the same functions under a second name. */

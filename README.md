@@ -14,20 +14,29 @@ reproducible across libraries.
 
 ## What it covers
 
-| | float | double |
-|---|---|---|
-| vector code (AVX2: `_ZGVdN8v_*`, `_ZGVdN4v_*`) | `sin` `cos` `tan` `exp` `log` `pow`, and `exp2` `exp10` `log2` `log10` | `sin` `cos` `tan` `exp` `log` `pow` |
-| SSE2 entry points (`_ZGVbN4v_*`, `_ZGVbN2v_*`) | loops over scalar CORE-MATH | loops over scalar CORE-MATH |
+26 functions, each in float and double:
 
-That is every function LLVM 22's x86 vectorizer can call through `libmvec`,
-plus glibc's `__*_finite` names for `exp`, `log` and `pow`. A program that
-needs another `libmvec` symbol fails to link against this library, loudly,
-rather than falling back silently.
+`sin` `cos` `tan` `asin` `acos` `atan` `atan2` `sinh` `cosh` `tanh` `asinh`
+`acosh` `atanh` `exp` `exp2` `exp10` `expm1` `log` `log2` `log10` `log1p`
+`pow` `cbrt` `hypot` `erf` `erfc`
+
+| entry points | what runs |
+|---|---|
+| AVX2 (`_ZGVdN8v_*`, `_ZGVdN4v_*`) | vector code, with scalar CORE-MATH for the lanes it can't decide (double `atan`, `sinh`, `cosh`: a loop over scalar CORE-MATH, which measured faster than their vector code) |
+| SSE2 (`_ZGVbN4v_*`, `_ZGVbN2v_*`) | loops over scalar CORE-MATH |
+
+With glibc's `__*_finite` names for `exp`, `log` and `pow`, that is 116
+symbols: every one LLVM's x86 vectorizer can call through `libmvec` in LLVM
+22 (36 of them) or on LLVM's main branch (68), and the 48 more that the open pull request
+[llvm/llvm-project#223817](https://github.com/llvm/llvm-project/pull/223817)
+first proposed (its current version adds only their SSE2 forms). A program
+that needs another `libmvec` symbol fails to link against this library,
+loudly, rather than falling back silently.
 
 ## Using it
 
 ```
-make                      # libmvec.so.1, crtest, libcrref.so (gcc, x86-64)
+make                      # libmvec.so.1 and the checks (gcc, or CC=clang with libomp)
 LD_LIBRARY_PATH=$PWD your-program
 ```
 
@@ -35,24 +44,40 @@ LD_LIBRARY_PATH=$PWD your-program
 `ENABLE_HOST_CPU_VECTORIZE_LIBMVEC=ON` loads `libmvec.so.1` by its SONAME
 when it compiles a kernel, so with this directory first on
 `LD_LIBRARY_PATH`, plain `sin(x)` or `pow(x, y)` kernels get these functions
-with no PoCL change and no rebuild. Programs vectorized by gcc or clang
-against `libmvec` pick them up the same way, for the symbols above.
+with no PoCL change and no rebuild. That holds for the 16 functions PoCL
+hands to the vectorizer: `sin` `cos` `tan` `exp` `log` `pow` `exp2` `exp10`
+`log2` `log10` `asin` `acos` `atan` `sinh` `cosh` `tanh` (the last six need an
+LLVM with the rows of #223817). PoCL computes the other ten itself and never
+calls `libmvec` for them. Programs vectorized by gcc or clang against
+`libmvec` pick up the library the same way.
 
 ## How each function is made correct
 
-- **Float `sin`, `cos`, `tan` and the exp and log families**: vector code in
-  double precision, proven by checking all 2^32 inputs against CORE-MATH.
-  `sinf`, `cosf` and `tanf` follow CORE-MATH's own schemes, with arguments
-  above 2^26 reduced by a table form of Payne-Hanek (`gen-pio2-table.py`).
-- **Double `exp`, `log`, `sin`, `pow`, and `powf`**: CORE-MATH's fast paths,
-  transcribed operation for operation into AVX2. Each lane is decided by
-  CORE-MATH's own proven rounding test; lanes it can't decide, and special
-  inputs, go to CORE-MATH's scalar function.
-- **Double `cos`**: `sin`'s fast path with the table index moved a quarter
-  turn (cos x = sin(|x| + pi/2)), which CORE-MATH's bound for `sin` covers.
-- **Double `tan`**: the `sin` and `cos` results divided in double-double.
-  Its error bound is derived here, above `tan_fast` in `crmvec.c`; it is the
-  one argument in the library that is not CORE-MATH's.
+- **One-argument float functions**: vector code in double precision. A lane's
+  result is rounded to float only if its error bound shows it cannot round
+  the other way; otherwise CORE-MATH's scalar function computes that lane.
+  `asinf`, `cbrtf`, `erff` and `erfcf` skip that test, and `tanf` has none:
+  for them the exhaustive check shows the vector result is always the
+  correctly rounded one. Each is proven by checking all 2^32 inputs against
+  CORE-MATH. `sinf`,
+  `cosf` and `tanf` follow CORE-MATH's own schemes, with arguments above 2^26
+  reduced by a table form of Payne-Hanek (`gen-pio2-table.py`); `erff` and
+  `erfcf` transcribe CORE-MATH's; the rest are built here on shared exp, log
+  and atan cores.
+- **`powf`, and every double function**: CORE-MATH's fast paths, transcribed
+  operation for operation into AVX2. Each lane is decided by CORE-MATH's own
+  proven rounding test; lanes it can't decide, and special inputs, go to
+  CORE-MATH's scalar function. Three rest on something else:
+  - **double `cos`**: `sin`'s fast path with the table index moved a quarter
+    turn (cos x = sin(|x| + pi/2)), which CORE-MATH's bound for `sin` covers.
+  - **double `tan`**: the `sin` and `cos` results divided in double-double,
+    with an error bound derived here, above `tan_fast` in `crmvec.c`.
+  - **double `atan2`**: CORE-MATH's first-stage bound is, by its own comment,
+    measured (on 1.1e10 random pairs, then increased by 2.5%) rather than
+    proven. This library computes what `cr_atan2` computes, so it inherits
+    that.
+- **`atan2f` and `hypotf`**: two-argument, so not checkable exhaustively.
+  Their error bounds are derived in `crmvec.c`, beside the code.
 
 The vector code assumes round-to-nearest, the default everywhere and
 OpenCL's only mode. Like `libmvec`, it sets no `errno`.
@@ -60,51 +85,80 @@ OpenCL's only mode. Like `libmvec`, it sets no `errno`.
 ## Checking it
 
 ```
-./crtest verify      # float: all 2^32 inputs of each function
-./crtest verify64    # double: 2^31 random inputs each, CORE-MATH's hard cases, edge values
-./crtest verify2     # powf, pow: 2^30 random pairs each, every pair of 40 special values
+./crtest verify      # one-argument floats: all 2^32 inputs each
+./crtest verify64    # doubles: 2^31 random inputs each, CORE-MATH's hard cases, edge values
+./crtest verify2     # the six two-argument functions: 2^30 random pairs each, 1,600 special pairs
+./bcheck             # every SSE2 entry point of libmvec.so.1 against CORE-MATH
+./emu-check.sh       # the same on an emulated Core 2 (qemu-x86_64 -cpu Conroe: no AVX)
+./hypot-midpoints    # double hypot on inputs whose result is exactly halfway between two doubles
 ./crtest time        # speed against glibc's libmvec and scalar CORE-MATH
 LD_LIBRARY_PATH=$PWD python3 check-pocl.py   # through PoCL (needs pyopencl)
 python3 check-pocl.py                        # the control, with glibc's libmvec
 ```
 
-On the development machine (gcc 13.3, 2026-09-26), every check reports 0
-differences from CORE-MATH, natively and through PoCL. The control run
-differs on every function: 870 million inputs in all. Each vector path was
-also rebuilt with its error bound set to zero, and each of those builds
-failed its check, so the checks do see wrong answers when there are some.
+On the development machine (2026-09-26), built with gcc 13.3 and again with
+clang 22, every check reports 0 differences from CORE-MATH. The SSE2 entry
+points give the same answers on the emulated Core 2, after a control shows
+that an AVX2 instruction does fault there, so nothing on that path needs
+AVX. Through PoCL, all 16 functions it hands to `libmvec` give
+CORE-MATH's results in both precisions. With glibc's `libmvec` in its place,
+the same kernels differ on 1.86 billion inputs.
+
+The checks do see wrong answers when there are some. Each vector path was
+rebuilt with its rounding test disabled, and then failed its check: every
+double function except `hypot`, and `powf`, `atan2f` and 18 of the 23
+one-argument floats. Four floats (`asinf`, `cbrtf`, `erff`, `erfcf`) turned
+out not to need the test at all: they are still correct on all 2^32 inputs
+without it. `tanf` has no such test; its exhaustive check is its only
+proof. For `hypot` and `hypotf`, random inputs never
+reach the cases their tests exist for. `hypot-midpoints` builds those cases
+for `hypot` from Pythagorean triples, and without the test 2,624 of its
+400,000 inputs come out wrong. `hypotf` has no such control yet.
 
 Double precision can't be checked exhaustively. There, correctness rests on
-CORE-MATH's proofs, on the transcription (tested on billions of inputs), and
-for double `tan` on the bound in `crmvec.c`.
+CORE-MATH's proofs (and, for `atan2`, its measurement), on the transcription
+(tested on billions of inputs), and for double `tan` on the bound in
+`crmvec.c`.
 
 ## Speed
 
 Correct rounding costs speed. On one AMD Ryzen 5 PRO 5650U (Zen 3), one
-core, memory-bound, in ns per element:
+core, memory-bound, built with gcc 13.3, in ns per element:
 
 | | crmvec | glibc `libmvec` | scalar CORE-MATH |
 |---|---|---|---|
-| `sinf` / `cosf` / `tanf` | 2.1 / 2.0 / 1.5 | 0.5 / 0.6 / 0.6 | 3.9 / 4.3 / 4.5 |
-| `powf` | 6.0 | 2.7 | 12.8 |
-| `exp` / `log` (double) | 3.2 / 2.9 | 1.2 / 1.5 | 4.1 / 5.9 |
-| `sin` / `cos` (double) | 6.3 / 6.0 | 1.4 / 1.4 | 7.5 / 25.3 |
-| `tan` (double) | 12.4 | 1.2 | 30.0 |
-| `pow` (double) | 9.1 | 5.2 | 19.2 |
+| `sinf` / `cosf` / `tanf` | 2.2 / 2.1 / 1.6 | 0.6 / 0.7 / 0.6 | 4.1 / 4.4 / 4.5 |
+| `expf` / `logf` | 1.5 / 2.0 | 0.7 / 0.7 | 2.6 / 2.8 |
+| `powf` | 6.2 | 2.7 | 13.1 |
+| `atanf` / `asinf` | 2.4 / 3.4 | 0.5 / 0.5 | 4.8 / 5.2 |
+| `erff` / `erfcf` | 5.9 / 4.5 | 0.6 / 0.7 | 5.3 / 8.2 |
+| `hypotf` | 1.1 | 0.7 | 7.0 |
+| `exp` / `log` | 3.3 / 3.0 | 1.2 / 1.4 | 5.1 / 6.0 |
+| `sin` / `cos` | 6.4 / 6.1 | 1.4 / 1.4 | 7.6 / 25.5 |
+| `tan` | 12.6 | 1.2 | 30.2 |
+| `pow` | 9.3 | 5.2 | 19.4 |
+| `atan` / `atan2` | 6.8 / 6.1 | 1.3 / 2.4 | 5.5 / 13.9 |
+| `sinh` / `cosh` | 8.5 / 7.9 | 1.4 / 1.5 | 7.9 / 7.4 |
+| `erf` / `erfc` | 8.7 / 24.6 | 1.4 / 1.7 | 10.6 / 34.8 |
+| `hypot` | 3.7 | 1.6 | 11.7 |
 
-Every function is faster than scalar CORE-MATH and slower than glibc: from
-1.7x (`pow`) to 10x (double `tan`, which runs the `sin` code twice so that it
-can reuse CORE-MATH's bound). glibc computes in single precision on 8 lanes
-and makes no correct-rounding promise; correct rounding needs double
-precision, on 4 lanes.
+`./crtest time` prints all 52. Every function is slower than glibc, from
+1.5x (`hypotf`) to 15x (double `erfc`); the median is 3.5x. glibc computes
+in single precision on 8 lanes and makes no correct-rounding promise;
+correct rounding needs double precision, on 4 lanes. Most functions are
+faster than scalar CORE-MATH, but four are not yet: `erff`, and double
+`atan`, `sinh` and `cosh`, by up to 1.2x. The last three already loop over
+CORE-MATH; the remaining gap is the cost of entering a vector function and
+moving its values in and out, up to about 1 ns per element. Built with clang 22,
+the median function is 7% faster than with gcc.
 
 ## Limits
 
 - x86-64 only. The vector paths need AVX2 and FMA, which is what the `d`
   entry points are called on; the SSE2 ones are scalar.
-- Measured on one CPU with one compiler (gcc 13.3).
-- No AVX-512 (`_ZGVe`) entry points: LLVM 22 does not emit them for these
-  functions.
+- Timed on one CPU. Checked with two compilers (gcc 13.3, clang 22).
+- No AVX (`_ZGVc`) or AVX-512 (`_ZGVe`) entry points: no LLVM version above
+  emits them for these functions.
 
 ## Credits and license
 

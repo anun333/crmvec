@@ -40,7 +40,21 @@ KERNELS = {  # name: (OpenCL type, expression, reference symbol, arity)
     "sind": ("double", "sin(a[i])", "ref_sin", 1), "cosd": ("double", "cos(a[i])", "ref_cos", 1),
     "tand": ("double", "tan(a[i])", "ref_tan", 1), "powd": ("double", "pow(a[i], b[i])", "ref_pow", 2),
 }
-MAIN = {"expd": (-746.0, 710.0), "logd": None, "sind": (-100.0, 100.0), "cosd": (-100.0, 100.0), "tand": (-100.0, 100.0)}
+# the functions LLVM main and llvm#223817 add (2026-09-26); upstream PoCL routes
+# only those it already swaps to libm calls, so a kernel here may never reach
+# the library: then both the test and the control differ, and the result says so
+for f in "acos acosh asin asinh atan atanh cbrt cosh erf erfc expm1 log1p sinh tanh exp2 exp10 log2 log10".split():
+    KERNELS[f + "f"] = ("float", "%s(a[i])" % f, "ref_%sf" % f, 1)
+    KERNELS[f + "d"] = ("double", "%s(a[i])" % f, "ref_%s" % f, 1)
+for f in ("atan2", "hypot"):
+    KERNELS[f + "f"] = ("float", "%s(a[i], b[i])" % f, "ref_%sf" % f, 2)
+    KERNELS[f + "d"] = ("double", "%s(a[i], b[i])" % f, "ref_%s" % f, 2)
+FUNCS_LLVM24 = [k for k in KERNELS if k not in ("sin", "cos", "tan", "pow", "expd", "logd", "sind", "cosd", "tand", "powd")]
+MAIN = {"expd": (-746.0, 710.0), "logd": None, "sind": (-100.0, 100.0), "cosd": (-100.0, 100.0), "tand": (-100.0, 100.0),
+        "acosd": (-1.0, 1.0), "asind": (-1.0, 1.0), "atand": (-1e3, 1e3), "acoshd": (1.0, 1e3), "asinhd": (-1e3, 1e3),
+        "atanhd": (-1.0, 1.0), "cbrtd": (-1e6, 1e6), "coshd": (-711.0, 711.0), "sinhd": (-711.0, 711.0), "tanhd": (-20.0, 20.0),
+        "erfd": (-6.0, 6.0), "erfcd": (-6.0, 27.3), "exp2d": (-1075.0, 1024.0), "exp10d": (-324.0, 309.0),
+        "expm1d": (-40.0, 710.0), "log2d": None, "log10d": None, "log1pd": (-1.0, 1e3)}
 HARD = {"expd": "EXP_HARD", "cosd": "COS_HARD", "tand": "TAN_HARD"}
 
 
@@ -169,6 +183,7 @@ def main():
     import numpy as np, pyopencl as cl
     mode = os.environ.get("CTW_MODE", "verify")
     names = [n for n in os.environ.get("CTW_FUNCS", ",".join(KERNELS)).split(",") if n]
+    if names == ["llvm24"]: names = FUNCS_LLVM24
     dev = next(d for p in cl.get_platforms() for d in p.get_devices())
     print("device:", dev.name, "| variant:", os.environ.get("POCL_KERNELLIB_NAME", "auto"), "| mode:", mode,
           "| LD_LIBRARY_PATH:", os.environ.get("LD_LIBRARY_PATH", "") or "-", "| functions:", ",".join(names))

@@ -4,6 +4,11 @@
 float cr_sinf(float), cr_cosf(float), cr_tanf(float), cr_powf(float, float);
 double cr_exp(double), cr_log(double), cr_sin(double), cr_cos(double), cr_tan(double), cr_pow(double, double);
 
+float cr_acosf(float), cr_acoshf(float), cr_asinf(float), cr_asinhf(float), cr_atanf(float), cr_atanhf(float), cr_cbrtf(float), cr_coshf(float), cr_erff(float), cr_erfcf(float), cr_expm1f(float), cr_log1pf(float), cr_sinhf(float), cr_tanhf(float), cr_exp2f(float), cr_exp10f(float), cr_log2f(float), cr_log10f(float);
+double cr_acos(double), cr_acosh(double), cr_asin(double), cr_asinh(double), cr_atan(double), cr_atanh(double), cr_cbrt(double), cr_cosh(double), cr_erf(double), cr_erfc(double), cr_expm1(double), cr_log1p(double), cr_sinh(double), cr_tanh(double), cr_exp2(double), cr_exp10(double), cr_log2(double), cr_log10(double);
+float cr_atan2f(float, float), cr_hypotf(float, float);
+double cr_atan2(double, double), cr_hypot(double, double);
+
 #define LOOP(NAME, T, F)                                   \
   void NAME(const T *x, T *y, long n)                      \
   {                                                        \
@@ -27,3 +32,43 @@ LOOP(ref_sin, double, cr_sin)
 LOOP(ref_cos, double, cr_cos)
 LOOP(ref_tan, double, cr_tan)
 LOOP2(ref_pow, double, cr_pow)
+LOOP(ref_acosf, float, cr_acosf)
+LOOP(ref_acoshf, float, cr_acoshf)
+LOOP(ref_asinf, float, cr_asinf)
+LOOP(ref_asinhf, float, cr_asinhf)
+LOOP(ref_atanf, float, cr_atanf)
+LOOP(ref_atanhf, float, cr_atanhf)
+LOOP(ref_cbrtf, float, cr_cbrtf)
+LOOP(ref_coshf, float, cr_coshf)
+LOOP(ref_erff, float, cr_erff)
+LOOP(ref_erfcf, float, cr_erfcf)
+LOOP(ref_expm1f, float, cr_expm1f)
+LOOP(ref_log1pf, float, cr_log1pf)
+LOOP(ref_sinhf, float, cr_sinhf)
+LOOP(ref_tanhf, float, cr_tanhf)
+LOOP(ref_exp2f, float, cr_exp2f)
+LOOP(ref_exp10f, float, cr_exp10f)
+LOOP(ref_log2f, float, cr_log2f)
+LOOP(ref_log10f, float, cr_log10f)
+LOOP(ref_acos, double, cr_acos)
+LOOP(ref_acosh, double, cr_acosh)
+LOOP(ref_asin, double, cr_asin)
+LOOP(ref_asinh, double, cr_asinh)
+LOOP(ref_atan, double, cr_atan)
+LOOP(ref_atanh, double, cr_atanh)
+LOOP(ref_cbrt, double, cr_cbrt)
+LOOP(ref_cosh, double, cr_cosh)
+LOOP(ref_erf, double, cr_erf)
+LOOP(ref_erfc, double, cr_erfc)
+LOOP(ref_expm1, double, cr_expm1)
+LOOP(ref_log1p, double, cr_log1p)
+LOOP(ref_sinh, double, cr_sinh)
+LOOP(ref_tanh, double, cr_tanh)
+LOOP(ref_exp2, double, cr_exp2)
+LOOP(ref_exp10, double, cr_exp10)
+LOOP(ref_log2, double, cr_log2)
+LOOP(ref_log10, double, cr_log10)
+LOOP2(ref_atan2f, float, cr_atan2f)
+LOOP2(ref_hypotf, float, cr_hypotf)
+LOOP2(ref_atan2, double, cr_atan2)
+LOOP2(ref_hypot, double, cr_hypot)
