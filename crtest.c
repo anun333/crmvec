@@ -1,0 +1,389 @@
+/* crtest: native checks for crmvec, outside PoCL, bit for bit against scalar
+   CORE-MATH (NaN == NaN). A symbol still in crmvec.c's "completeness"
+   section loops over CORE-MATH, so its check only tests the plumbing.
+
+     crtest verify [f...]    float, one argument: every one of the 2^32
+                             inputs through _ZGVdN8v_<f>
+     crtest verify64 [f...]  double, one argument (_ZGVdN4v_<f>): 2^31 random
+                             inputs (half over the function's main range,
+                             half with a random exponent over all doubles,
+                             both signs), CORE-MATH's own hard cases +-1000
+                             ulps, and edge values +-64 ulps
+     crtest verify2 [f...]   two arguments (powf, pow): 2^30 random pairs
+                             (main range, integer exponents, x near 1, raw
+                             bit patterns), plus every pair of ~40 specials
+     crtest time             one core, min of 7 passes after a warm-up: crmvec
+                             vs glibc's libmvec (dlopen by absolute path) vs
+                             scalar CORE-MATH, twice: 16M inputs (memory-
+                             bound; a multiply gives the floor) and 4096
+                             inputs repeated (in L1, the compute cost).
+                             Inputs stay in glibc's fast-path range.
+   CRTEST_LIST=1 prints every difference. Built by build.sh. */
+#define _GNU_SOURCE
+#include <dlfcn.h>
+#include <immintrin.h>
+#include <math.h>
+#include <stdint.h>
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+#include <time.h>
+
+typedef __m256 (*v8)(__m256);
+typedef __m256 (*v8v)(__m256, __m256);
+typedef __m256d (*v4)(__m256d);
+typedef __m256d (*v4v)(__m256d, __m256d);
+__m256 _ZGVdN8v_expf(__m256), _ZGVdN8v_exp2f(__m256), _ZGVdN8v_exp10f(__m256);
+__m256 _ZGVdN8v_logf(__m256), _ZGVdN8v_log2f(__m256), _ZGVdN8v_log10f(__m256);
+__m256 _ZGVdN8v_sinf(__m256), _ZGVdN8v_cosf(__m256), _ZGVdN8v_tanf(__m256), _ZGVdN8vv_powf(__m256, __m256);
+__m256d _ZGVdN4v_exp(__m256d), _ZGVdN4v_log(__m256d), _ZGVdN4v_sin(__m256d), _ZGVdN4v_cos(__m256d);
+__m256d _ZGVdN4v_tan(__m256d), _ZGVdN4vv_pow(__m256d, __m256d);
+float cr_expf(float), cr_exp2f(float), cr_exp10f(float), cr_logf(float), cr_log2f(float), cr_log10f(float);
+float cr_sinf(float), cr_cosf(float), cr_tanf(float), cr_powf(float, float);
+double cr_exp(double), cr_log(double), cr_sin(double), cr_cos(double), cr_tan(double), cr_pow(double, double);
+#include "crtest-hard.h"   /* EXP_HARD, COS_HARD, TAN_HARD */
+
+/* lo < hi: uniform timing range; lo == hi == 0: log-uniform positive */
+static const struct { const char *name; v8 vec; float (*cr)(float); float lo, hi; } F[] = {
+  /* timing ranges keep every input on glibc's fast path: until 2026-09-26
+     they reached overflow/underflow ([-104, 89] for expf), which sends a
+     whole glibc vector to its scalar slow path and made glibc look ~4x
+     slower than it is */
+  {"expf",   _ZGVdN8v_expf,   cr_expf,   -87.f,  87.f},
+  {"exp2f",  _ZGVdN8v_exp2f,  cr_exp2f,  -125.f, 125.f},
+  {"exp10f", _ZGVdN8v_exp10f, cr_exp10f, -37.f,  38.f},
+  {"logf",   _ZGVdN8v_logf,   cr_logf,   0, 0},
+  {"log2f",  _ZGVdN8v_log2f,  cr_log2f,  0, 0},
+  {"log10f", _ZGVdN8v_log10f, cr_log10f, 0, 0},
+  {"sinf",   _ZGVdN8v_sinf,   cr_sinf,   -100.f, 100.f},
+  {"cosf",   _ZGVdN8v_cosf,   cr_cosf,   -100.f, 100.f},
+  {"tanf",   _ZGVdN8v_tanf,   cr_tanf,   -100.f, 100.f},
+};
+#define NF (sizeof F / sizeof F[0])
+
+static const struct { const char *name; v4 vec; double (*cr)(double); double lo, hi; const double *hard; int nhard; } D[] = {
+  {"exp", _ZGVdN4v_exp, cr_exp, -746.0, 710.0, EXP_HARD, sizeof EXP_HARD / sizeof EXP_HARD[0]},
+  {"log", _ZGVdN4v_log, cr_log, 0, 0, 0, 0},
+  {"sin", _ZGVdN4v_sin, cr_sin, -100.0, 100.0, 0, 0},
+  {"cos", _ZGVdN4v_cos, cr_cos, -100.0, 100.0, COS_HARD, sizeof COS_HARD / sizeof COS_HARD[0]},
+  {"tan", _ZGVdN4v_tan, cr_tan, -100.0, 100.0, TAN_HARD, sizeof TAN_HARD / sizeof TAN_HARD[0]},
+};
+#define ND (sizeof D / sizeof D[0])
+
+static int wanted(const char *name, int argc, char **argv)
+{
+  if (argc <= 2) return 1;
+  for (int a = 2; a < argc; a++) if (!strcmp(argv[a], name)) return 1;
+  return 0;
+}
+
+static uint64_t splitmix(uint64_t *s) { uint64_t z = (*s += 0x9e3779b97f4a7c15ULL); z = (z ^ (z >> 30)) * 0xbf58476d1ce4e5b9ULL; z = (z ^ (z >> 27)) * 0x94d049bb133111ebULL; return z ^ (z >> 31); }
+static double d_of(uint64_t u) { double d; memcpy(&d, &u, 8); return d; }
+static uint64_t u_of(double d) { uint64_t u; memcpy(&u, &d, 8); return u; }
+static float f_of(uint32_t u) { float f; memcpy(&f, &u, 4); return f; }
+static uint32_t v_of(float f) { uint32_t u; memcpy(&u, &f, 4); return u; }
+static int same_d(double a, double b) { return (isnan(a) && isnan(b)) || u_of(a) == u_of(b); }
+static int same_f(float a, float b) { return (isnan(a) && isnan(b)) || v_of(a) == v_of(b); }
+static double unit(uint64_t r) { return (r >> 11) * 0x1p-53; }
+
+/* ---- float, one argument: exhaustive ---------------------------------- */
+
+static int verify(int argc, char **argv)
+{
+  int bad_total = 0;
+  for (unsigned f = 0; f < NF; f++) {
+    if (!wanted(F[f].name, argc, argv)) continue;
+    unsigned long long bad = 0, first = 0; int have = 0;
+#pragma omp parallel for reduction(+ : bad) schedule(static)
+    for (long long blk = 0; blk < (1LL << 29); blk++) {           /* 2^29 blocks of 8 = 2^32 */
+      float xs[8], ys[8];
+      for (int i = 0; i < 8; i++) xs[i] = f_of((uint32_t)(blk * 8 + i));
+      _mm256_storeu_ps(ys, F[f].vec(_mm256_loadu_ps(xs)));
+      for (int i = 0; i < 8; i++) {
+        float r = F[f].cr(xs[i]);
+        if (!same_f(r, ys[i])) {
+          bad++;
+          if (getenv("CRTEST_LIST")) {
+#pragma omp critical
+            printf("  %s differs at 0x%08x (%a): got %a, want %a\n", F[f].name, (uint32_t)(blk * 8 + i), xs[i], ys[i], r);
+          }
+#pragma omp critical
+          if (!have) { have = 1; first = (unsigned long long)(blk * 8 + i); }
+        }
+      }
+    }
+    printf("%-7s all 2^32 inputs: %llu differ from CORE-MATH%s", F[f].name, bad, bad ? "" : "\n");
+    if (bad) printf(" (first at 0x%08llx)\n", first);
+    bad_total += bad != 0;
+  }
+  printf("VERDICT: %s\n", bad_total ? "NOT correctly rounded" : "CORRECTLY ROUNDED on every input, every function");
+  return bad_total;
+}
+
+/* ---- double, one argument: sampled ------------------------------------ */
+
+/* checks 4 inputs of D[f]; returns how many differ, recording the first */
+static int check4(unsigned f, const double *xs, uint64_t *first)
+{
+  double ys[4]; _mm256_storeu_pd(ys, D[f].vec(_mm256_loadu_pd(xs)));
+  int bad = 0;
+  for (int i = 0; i < 4; i++) {
+    double r = D[f].cr(xs[i]);
+    if (!same_d(r, ys[i])) {
+      bad++; if (!*first) *first = u_of(xs[i]) | 1;   /* |1: never 0, even for x = +0 */
+      if (getenv("CRTEST_LIST")) {
+#pragma omp critical
+        printf("  %s differs at %a: got %a, want %a\n", D[f].name, xs[i], ys[i], r);
+      }
+    }
+  }
+  return bad;
+}
+
+static double main_input(unsigned f, uint64_t r)
+{
+  if (D[f].hi > D[f].lo) return D[f].lo + unit(r) * (D[f].hi - D[f].lo);
+  return exp2(unit(r) * 2044.0 - 1022.0);                       /* log: log-uniform positive */
+}
+
+static double wide_input(uint64_t r)   /* any double: random exponent (incl. subnormal, inf/nan), sign, significand */
+{
+  return d_of(((r >> 52) % 2048) << 52 | (r & 0xfffffffffffffULL) | (r & (1ULL << 63)));
+}
+
+static int verify64(int argc, char **argv)
+{
+  static const double edge[] = {0.0, -0.0, INFINITY, -INFINITY, NAN, 0x1p-1074, -0x1p-1074, 0x1p-1022, -0x1p-1022,
+                                0x1.fffffffffffffp+1023, -0x1.fffffffffffffp+1023, 1.0, -1.0, 0.5, 2.0,
+                                0x1p-54, -0x1p-54, 0x1p-26, -0x1p-26, 0x1.921fb54442d18p+0, 0x1.921fb54442d18p+1,
+                                0x1p31, -0x1p31, 0x1p52, 0x1.62e42fefa39fp+9, -0x1.6232bdd7abcd2p+9,
+                                -0x1.74910d52d3052p+9, -745.2, 709.5, -708.0};
+  int bad_fns = 0;
+  for (unsigned f = 0; f < ND; f++) {
+    if (!wanted(D[f].name, argc, argv)) continue;
+    unsigned long long bad = 0, n = 0; uint64_t first = 0;
+#pragma omp parallel for reduction(+ : bad, n) schedule(static)
+    for (long long blk = 0; blk < (1LL << 29); blk++) {            /* 2^29 blocks of 4 = 2^31 */
+      uint64_t s = (uint64_t)blk * 0x1000193ULL + 20260926 + f, fst = 0; double xs[4];
+      for (int i = 0; i < 4; i++) { uint64_t r = splitmix(&s); xs[i] = (blk & 1) ? main_input(f, r) : wide_input(r); }
+      int b = check4(f, xs, &fst); bad += b; n += 4;
+      if (b) {
+#pragma omp critical
+        if (!first) first = fst;
+      }
+    }
+    unsigned long long hb = 0, hn = 0; uint64_t hf = 0;
+    for (int c = 0; c < D[f].nhard; c++)
+      for (int d = -1000; d < 1000; d += 4) {
+        double xs[4]; for (int i = 0; i < 4; i++) xs[i] = d_of(u_of(D[f].hard[c]) + d + i);
+        hb += check4(f, xs, &hf); hn += 4;
+      }
+    unsigned long long eb = 0, en = 0; uint64_t ef = 0;
+    for (unsigned c = 0; c < sizeof edge / sizeof edge[0]; c++)
+      for (int d = -64; d < 64; d += 4) {
+        double xs[4];
+        for (int i = 0; i < 4; i++) xs[i] = isnan(edge[c]) || isinf(edge[c]) ? edge[c] : d_of(u_of(edge[c]) + d + i);
+        eb += check4(f, xs, &ef); en += 4;
+      }
+    printf("%-4s random %llu: %llu differ | hard %llu: %llu | edges %llu: %llu", D[f].name, n, bad, hn, hb, en, eb);
+    uint64_t fst = first ? first : hf ? hf : ef;
+    if (fst) printf(" (first near %a)", d_of(fst & ~1ULL));
+    printf("\n");
+    bad_fns += (bad || hb || eb);
+  }
+  printf("VERDICT: %s\n", bad_fns ? "DIFFERS from CORE-MATH" : "IDENTICAL to CORE-MATH on every input tried");
+  return bad_fns;
+}
+
+/* ---- two arguments: sampled ------------------------------------------- */
+
+static void pair_input(uint64_t *s, int set, double *x, double *y, int is_float)
+{
+  uint64_t r1 = splitmix(s), r2 = splitmix(s);
+  switch (set) {
+  case 0:                                                  /* main: x log-uniform > 0, y moderate */
+    if (is_float) { *x = exp2(unit(r1) * 16.0 - 8.0); *y = unit(r2) * 30.0 - 15.0; }       /* |y log2 x| < 120 */
+    else { *x = exp2(unit(r1) * 60.0 - 30.0); *y = unit(r2) * 60.0 - 30.0; }               /* < 900 */
+    break;
+  case 1:                                                  /* integer y, any sign of x */
+    *x = (unit(r1) * 8.0 - 4.0); *y = (double)((int64_t)(r2 % 129) - 64);
+    break;
+  case 2:                                                  /* x near 1, large y */
+    *x = 1.0 + (unit(r1) - 0.5) * 0x1p-10; *y = (unit(r2) - 0.5) * 0x1p20;
+    break;
+  default:                                                 /* raw bit patterns */
+    if (is_float) { *x = f_of((uint32_t)r1); *y = f_of((uint32_t)r2); }
+    else { *x = d_of(r1); *y = d_of(r2); }
+  }
+}
+
+static int verify2(int argc, char **argv)
+{
+  static const double sp[] = {0.0, -0.0, INFINITY, -INFINITY, NAN, 1.0, -1.0, 0.5, -0.5, 2.0, -2.0, 3.0, -3.0,
+                              0x1p-149, -0x1p-149, 0x1p-126, 0x1p-1074, 0x1p-1022, 0x1.fffffep+127, 0x1.fffffffffffffp+1023,
+                              1.5, 0.25, 10.0, 0.1, -0.1, 1e30, -1e30, 1e-30, 0x1.000002p0, 0x1.fffffep-1,
+                              0x1.0000000000001p0, 0x1.fffffffffffffp-1, 127.0, 128.0, -149.0, 1023.0, 1024.0, -1075.0, 0.75, 7.0};
+  const int nsp = sizeof sp / sizeof sp[0];
+  int bad_fns = 0;
+  for (int fl = 1; fl >= 0; fl--) {                        /* powf first, then pow */
+    const char *name = fl ? "powf" : "pow";
+    if (!wanted(name, argc, argv)) continue;
+    unsigned long long bad[4] = {0}, n = 0; char firstmsg[160] = "";
+#pragma omp parallel for reduction(+ : n) schedule(static)
+    for (long long blk = 0; blk < (1LL << 27); blk++) {    /* 2^27 blocks of 8 pairs = 2^30 */
+      uint64_t s = (uint64_t)blk * 0x9e3779b1ULL + 7 + fl; int set = blk & 3;
+      double x[8], y[8]; for (int i = 0; i < 8; i++) pair_input(&s, set, &x[i], &y[i], fl);
+      int b = 0;
+      if (fl) {
+        float xf[8], yf[8], r[8];
+        for (int i = 0; i < 8; i++) { xf[i] = (float)x[i]; yf[i] = (float)y[i]; }
+        _mm256_storeu_ps(r, _ZGVdN8vv_powf(_mm256_loadu_ps(xf), _mm256_loadu_ps(yf)));
+        for (int i = 0; i < 8; i++) if (!same_f(r[i], cr_powf(xf[i], yf[i]))) {
+          b++;
+#pragma omp critical
+          if (!firstmsg[0]) snprintf(firstmsg, sizeof firstmsg, " (first: powf(%a, %a) = %a, want %a)", xf[i], yf[i], r[i], cr_powf(xf[i], yf[i]));
+        }
+      } else {
+        double r[8];
+        for (int h = 0; h < 8; h += 4)
+          _mm256_storeu_pd(r + h, _ZGVdN4vv_pow(_mm256_loadu_pd(x + h), _mm256_loadu_pd(y + h)));
+        for (int i = 0; i < 8; i++) if (!same_d(r[i], cr_pow(x[i], y[i]))) {
+          b++;
+#pragma omp critical
+          if (!firstmsg[0]) snprintf(firstmsg, sizeof firstmsg, " (first: pow(%a, %a) = %a, want %a)", x[i], y[i], r[i], cr_pow(x[i], y[i]));
+        }
+      }
+      if (b) {
+#pragma omp atomic
+        bad[set] += b;
+      }
+      n += 8;
+    }
+    unsigned long long sb = 0, sn = 0;                      /* every pair of specials, both orders */
+    for (int i = 0; i < nsp; i++)
+      for (int j = 0; j < nsp; j += 4) {
+        double x[4], y[4], r[4];
+        for (int k = 0; k < 4; k++) { x[k] = sp[i]; y[k] = sp[(j + k) % nsp]; }
+        if (fl) {
+          float xf[8] = {0}, yf[8] = {0}, rf[8];
+          for (int k = 0; k < 4; k++) { xf[k] = (float)x[k]; yf[k] = (float)y[k]; }
+          _mm256_storeu_ps(rf, _ZGVdN8vv_powf(_mm256_loadu_ps(xf), _mm256_loadu_ps(yf)));
+          for (int k = 0; k < 4; k++) { sn++; if (!same_f(rf[k], cr_powf(xf[k], yf[k]))) sb++; }
+        } else {
+          _mm256_storeu_pd(r, _ZGVdN4vv_pow(_mm256_loadu_pd(x), _mm256_loadu_pd(y)));
+          for (int k = 0; k < 4; k++) { sn++; if (!same_d(r[k], cr_pow(x[k], y[k]))) sb++; }
+        }
+      }
+    printf("%-4s random %llu pairs: %llu differ (main %llu, integer y %llu, x near 1 %llu, raw bits %llu) | specials %llu: %llu%s\n",
+           name, n, bad[0] + bad[1] + bad[2] + bad[3], bad[0], bad[1], bad[2], bad[3], sn, sb, firstmsg);
+    bad_fns += (bad[0] + bad[1] + bad[2] + bad[3] + sb) != 0;
+  }
+  printf("VERDICT: %s\n", bad_fns ? "DIFFERS from CORE-MATH" : "IDENTICAL to CORE-MATH on every pair tried");
+  return bad_fns;
+}
+
+/* ---- timing ------------------------------------------------------------- */
+
+static double now(void) { struct timespec t; clock_gettime(CLOCK_MONOTONIC, &t); return t.tv_sec + 1e-9 * t.tv_nsec; }
+
+#define BEST(dst, body) do { double t0_ = now(); body; double t_ = now() - t0_; if (pass && t_ < dst) dst = t_; } while (0)
+
+static void report(const char *name, const double *m, const double *h, double nm, double nh, double nhs)
+{
+  printf("%-7s %10.3f %10.3f %10.3f %7.2fx   | %8.3f %8.3f %8.3f %7.2fx\n", name, m[0] * 1e9 / nm, m[1] * 1e9 / nm,
+         m[2] * 1e9 / nm, m[0] / m[1], h[0] * 1e9 / nh, h[1] * 1e9 / nh, h[2] * 1e9 / nhs, h[0] / h[1]);
+}
+
+static int timing(int argc, char **argv)
+{
+  const long N = 1L << 24, H = 4096, R = 1024, RS = 128;
+  float *x = aligned_alloc(32, N * 4), *x2 = aligned_alloc(32, N * 4), *y = aligned_alloc(32, N * 4);
+  double *xd = aligned_alloc(32, N * 8), *xd2 = aligned_alloc(32, N * 8), *yd = aligned_alloc(32, N * 8);
+  void *g = dlopen("/usr/lib/x86_64-linux-gnu/libmvec.so.1", RTLD_NOW | RTLD_LOCAL);
+  if (!g) { printf("VOID: glibc libmvec not loadable\n"); return 1; }
+  double la[3]; getloadavg(la, 3);
+  srand(20260924);
+  printf("ns/elem, one core   16M inputs (memory-bound)                  | 4096 inputs (in L1)\n");
+  printf("%-7s %10s %10s %10s %8s   | %8s %8s %8s %8s\n", "fn", "crmvec", "glibc", "CORE-MATH", "vs glibc", "crmvec", "glibc", "CORE-MATH", "vs glibc");
+  double floor_ns = 1e9;
+  for (int pass = 0; pass < 8; pass++)                              /* memory floor: y = 3x */
+    BEST(floor_ns, for (long i = 0; i < N; i += 8) _mm256_storeu_ps(y + i, _mm256_mul_ps(_mm256_loadu_ps(x + i), _mm256_set1_ps(3.f))));
+  for (unsigned f = 0; f < NF; f++) {
+    if (!wanted(F[f].name, argc, argv)) continue;
+    for (long i = 0; i < N; i++) {
+      double u = rand() / (RAND_MAX + 1.0);
+      x[i] = F[f].hi > F[f].lo ? (float)(F[f].lo + u * (F[f].hi - F[f].lo)) : (float)exp(u * 160 - 80);
+    }
+    char sym[40]; snprintf(sym, sizeof sym, "_ZGVdN8v_%s", F[f].name);
+    v8 gv = (v8)dlsym(g, sym), cv = F[f].vec; float (*cr)(float) = F[f].cr;
+    double m[3] = {1e9, 1e9, 1e9}, h[3] = {1e9, 1e9, 1e9};
+    for (int pass = 0; pass < 8; pass++) {
+      BEST(m[0], for (long i = 0; i < N; i += 8) _mm256_storeu_ps(y + i, cv(_mm256_loadu_ps(x + i))));
+      BEST(m[1], for (long i = 0; i < N; i += 8) _mm256_storeu_ps(y + i, gv(_mm256_loadu_ps(x + i))));
+      BEST(m[2], for (long i = 0; i < N; i++) y[i] = cr(x[i]));
+      BEST(h[0], for (long r = 0; r < R; r++) for (long i = 0; i < H; i += 8) _mm256_storeu_ps(y + i, cv(_mm256_loadu_ps(x + i))));
+      BEST(h[1], for (long r = 0; r < R; r++) for (long i = 0; i < H; i += 8) _mm256_storeu_ps(y + i, gv(_mm256_loadu_ps(x + i))));
+      BEST(h[2], for (long r = 0; r < RS; r++) for (long i = 0; i < H; i++) y[i] = cr(x[i]));
+    }
+    report(F[f].name, m, h, N, H * R, H * RS);
+  }
+  if (wanted("powf", argc, argv)) {
+    for (long i = 0; i < N; i++) { x[i] = (float)exp2(rand() / (RAND_MAX + 1.0) * 20 - 10); x2[i] = (float)(rand() / (RAND_MAX + 1.0) * 20 - 10); }
+    v8v gv = (v8v)dlsym(g, "_ZGVdN8vv_powf");
+    double m[3] = {1e9, 1e9, 1e9}, h[3] = {1e9, 1e9, 1e9};
+    for (int pass = 0; pass < 8; pass++) {
+      BEST(m[0], for (long i = 0; i < N; i += 8) _mm256_storeu_ps(y + i, _ZGVdN8vv_powf(_mm256_loadu_ps(x + i), _mm256_loadu_ps(x2 + i))));
+      BEST(m[1], for (long i = 0; i < N; i += 8) _mm256_storeu_ps(y + i, gv(_mm256_loadu_ps(x + i), _mm256_loadu_ps(x2 + i))));
+      BEST(m[2], for (long i = 0; i < N; i++) y[i] = cr_powf(x[i], x2[i]));
+      BEST(h[0], for (long r = 0; r < R; r++) for (long i = 0; i < H; i += 8) _mm256_storeu_ps(y + i, _ZGVdN8vv_powf(_mm256_loadu_ps(x + i), _mm256_loadu_ps(x2 + i))));
+      BEST(h[1], for (long r = 0; r < R; r++) for (long i = 0; i < H; i += 8) _mm256_storeu_ps(y + i, gv(_mm256_loadu_ps(x + i), _mm256_loadu_ps(x2 + i))));
+      BEST(h[2], for (long r = 0; r < RS; r++) for (long i = 0; i < H; i++) y[i] = cr_powf(x[i], x2[i]));
+    }
+    report("powf", m, h, N, H * R, H * RS);
+  }
+  for (unsigned f = 0; f < ND; f++) {
+    if (!wanted(D[f].name, argc, argv)) continue;
+    for (long i = 0; i < N; i++) {
+      double u = rand() / (RAND_MAX + 1.0);
+      xd[i] = D[f].name[0] == 'e' ? -700.0 + 1400.0 * u : D[f].hi > D[f].lo ? D[f].lo + u * (D[f].hi - D[f].lo) : exp(u * 1400 - 700);
+    }
+    char sym[40]; snprintf(sym, sizeof sym, "_ZGVdN4v_%s", D[f].name);
+    v4 gv = (v4)dlsym(g, sym), cv = D[f].vec; double (*cr)(double) = D[f].cr;
+    double m[3] = {1e9, 1e9, 1e9}, h[3] = {1e9, 1e9, 1e9};
+    for (int pass = 0; pass < 8; pass++) {
+      BEST(m[0], for (long i = 0; i < N; i += 4) _mm256_storeu_pd(yd + i, cv(_mm256_loadu_pd(xd + i))));
+      BEST(m[1], for (long i = 0; i < N; i += 4) _mm256_storeu_pd(yd + i, gv(_mm256_loadu_pd(xd + i))));
+      BEST(m[2], for (long i = 0; i < N; i++) yd[i] = cr(xd[i]));
+      BEST(h[0], for (long r = 0; r < R; r++) for (long i = 0; i < H; i += 4) _mm256_storeu_pd(yd + i, cv(_mm256_loadu_pd(xd + i))));
+      BEST(h[1], for (long r = 0; r < R; r++) for (long i = 0; i < H; i += 4) _mm256_storeu_pd(yd + i, gv(_mm256_loadu_pd(xd + i))));
+      BEST(h[2], for (long r = 0; r < RS; r++) for (long i = 0; i < H; i++) yd[i] = cr(xd[i]));
+    }
+    report(D[f].name, m, h, N, H * R, H * RS);
+  }
+  if (wanted("pow", argc, argv)) {
+    for (long i = 0; i < N; i++) { xd[i] = exp2(rand() / (RAND_MAX + 1.0) * 40 - 20); xd2[i] = rand() / (RAND_MAX + 1.0) * 40 - 20; }
+    v4v gv = (v4v)dlsym(g, "_ZGVdN4vv_pow");
+    double m[3] = {1e9, 1e9, 1e9}, h[3] = {1e9, 1e9, 1e9};
+    for (int pass = 0; pass < 8; pass++) {
+      BEST(m[0], for (long i = 0; i < N; i += 4) _mm256_storeu_pd(yd + i, _ZGVdN4vv_pow(_mm256_loadu_pd(xd + i), _mm256_loadu_pd(xd2 + i))));
+      BEST(m[1], for (long i = 0; i < N; i += 4) _mm256_storeu_pd(yd + i, gv(_mm256_loadu_pd(xd + i), _mm256_loadu_pd(xd2 + i))));
+      BEST(m[2], for (long i = 0; i < N; i++) yd[i] = cr_pow(xd[i], xd2[i]));
+      BEST(h[0], for (long r = 0; r < R; r++) for (long i = 0; i < H; i += 4) _mm256_storeu_pd(yd + i, _ZGVdN4vv_pow(_mm256_loadu_pd(xd + i), _mm256_loadu_pd(xd2 + i))));
+      BEST(h[1], for (long r = 0; r < R; r++) for (long i = 0; i < H; i += 4) _mm256_storeu_pd(yd + i, gv(_mm256_loadu_pd(xd + i), _mm256_loadu_pd(xd2 + i))));
+      BEST(h[2], for (long r = 0; r < RS; r++) for (long i = 0; i < H; i++) yd[i] = cr_pow(xd[i], xd2[i]));
+    }
+    report("pow", m, h, N, H * R, H * RS);
+  }
+  double lb[3]; getloadavg(lb, 3);
+  printf("memory floor (y = 3x): %.3f ns/elem; load average before %.2f, after %.2f\n", floor_ns * 1e9 / N, la[0], lb[0]);
+  if (floor_ns * 1e9 / N < 0.02) { printf("FOLDED\n"); return 1; }
+  return 0;
+}
+
+int main(int argc, char **argv)
+{
+  if (argc > 1 && !strcmp(argv[1], "time")) return timing(argc, argv);
+  if (argc > 1 && !strcmp(argv[1], "verify64")) return verify64(argc, argv);
+  if (argc > 1 && !strcmp(argv[1], "verify2")) return verify2(argc, argv);
+  return verify(argc, argv);
+}
