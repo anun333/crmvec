@@ -18,6 +18,13 @@
                              bound; a multiply gives the floor) and 4096
                              inputs repeated (in L1, the compute cost).
                              Inputs stay in glibc's fast-path range.
+                             CRTEST_SMOOTH=1: the same ranges, but inputs
+                             that vary smoothly along the array (a cosine
+                             sweep over 65,536 elements), as neighbouring
+                             elements of real data mostly do, in place of
+                             independent uniform draws; the worst case for
+                             code that branches on the lanes of a vector is
+                             the uniform one.
    CRTEST_LIST=1 prints every difference. Built by build.sh. */
 #define _GNU_SOURCE
 #include <dlfcn.h>
@@ -73,7 +80,7 @@ static const struct { const char *name; v4 vec; double (*cr)(double); double lo,
   DE(sin, -100.0, 100.0, -100.0, 100.0, NOHARD),
   DE(cos, -100.0, 100.0, -100.0, 100.0, HARDOF(COS_HARD)),
   DE(tan, -100.0, 100.0, -100.0, 100.0, HARDOF(TAN_HARD)),
-  DE(acos, -1.0, 1.0, -1.0, 1.0, NOHARD), DE(asin, -1.0, 1.0, -1.0, 1.0, NOHARD),
+  DE(acos, -1.0, 1.0, -1.0, 1.0, NOHARD), DE(asin, -1.0, 1.0, -1.0, 1.0, HARDOF(ASIN_HARD)),
   DE(atan, -1000.0, 1000.0, -1000.0, 1000.0, HARDOF(ATAN_HARD)), DE(acosh, 1.0, 1000.0, 1.0, 1000.0, NOHARD),
   DE(asinh, -1000.0, 1000.0, -1000.0, 1000.0, NOHARD), DE(atanh, -1.0, 1.0, -1.0, 1.0, NOHARD),
   DE(cbrt, -1e6, 1e6, -1e6, 1e6, NOHARD), DE(cosh, -711.0, 711.0, -700.0, 700.0, NOHARD),
@@ -330,8 +337,18 @@ static void report(const char *name, const double *m, const double *h, double nm
          m[2] * 1e9 / nm, m[0] / m[1], h[0] * 1e9 / nh, h[1] * 1e9 / nh, h[2] * 1e9 / nhs, h[0] / h[1]);
 }
 
+/* where input i sits in [0, 1): an independent draw, or (CRTEST_SMOOTH) a
+   point on a slow cosine sweep; period differs per argument */
+static int smooth_inputs;
+static double pick(long i, double period)
+{
+  if (!smooth_inputs) return rand() / (RAND_MAX + 1.0);
+  return 0.5 - 0.5 * cos(2 * M_PI * (double)i / period);
+}
+
 static int timing(int argc, char **argv)
 {
+  smooth_inputs = getenv("CRTEST_SMOOTH") && atoi(getenv("CRTEST_SMOOTH"));
   const long N = 1L << 24, H = 4096, R = 1024, RS = 128;
   float *x = aligned_alloc(32, N * 4), *x2 = aligned_alloc(32, N * 4), *y = aligned_alloc(32, N * 4);
   double *xd = aligned_alloc(32, N * 8), *xd2 = aligned_alloc(32, N * 8), *yd = aligned_alloc(32, N * 8);
@@ -343,6 +360,7 @@ static int timing(int argc, char **argv)
   if (!g) { printf("VOID: glibc libmvec not loadable\n"); return 1; }
   double la[3]; getloadavg(la, 3);
   srand(20260924);
+  if (smooth_inputs) printf("inputs: smooth (CRTEST_SMOOTH): a cosine sweep over each range, period 65,536\n");
   printf("ns/elem, one core   16M inputs (memory-bound)                  | 4096 inputs (in L1)\n");
   printf("%-7s %10s %10s %10s %8s   | %8s %8s %8s %8s\n", "fn", "crmvec", "glibc", "CORE-MATH", "vs glibc", "crmvec", "glibc", "CORE-MATH", "vs glibc");
   double floor_ns = 1e9;
@@ -351,7 +369,7 @@ static int timing(int argc, char **argv)
   for (unsigned f = 0; f < NF; f++) {
     if (!wanted(F[f].name, argc, argv)) continue;
     for (long i = 0; i < N; i++) {
-      double u = rand() / (RAND_MAX + 1.0);
+      double u = pick(i, 65536);
       x[i] = F[f].hi > F[f].lo ? (float)(F[f].lo + u * (F[f].hi - F[f].lo)) : (float)exp(u * 160 - 80);
     }
     char sym[40]; snprintf(sym, sizeof sym, "_ZGVdN8v_%s", F[f].name);
@@ -371,7 +389,7 @@ static int timing(int argc, char **argv)
   for (unsigned f = 0; f < ND; f++) {
     if (!wanted(D[f].name, argc, argv)) continue;
     for (long i = 0; i < N; i++) {
-      double u = rand() / (RAND_MAX + 1.0);
+      double u = pick(i, 65536);
       xd[i] = D[f].thi > D[f].tlo ? D[f].tlo + u * (D[f].thi - D[f].tlo) : exp(u * 1400 - 700);
     }
     char sym[40]; snprintf(sym, sizeof sym, "_ZGVdN4v_%s", D[f].name);
@@ -391,7 +409,7 @@ static int timing(int argc, char **argv)
   for (unsigned f = 0; f < NP2; f++) {                          /* two arguments */
     if (!wanted(P2[f].name, argc, argv)) continue;
     for (long i = 0; i < N; i++) {
-      double u = rand() / (RAND_MAX + 1.0), v = rand() / (RAND_MAX + 1.0);
+      double u = pick(i, 65536), v = pick(i, 40503);
       double a0 = P2[f].kind ? u * 200 - 100 : exp2(u * 20 - 10), b0 = v * 20 - 10;
       if (P2[f].is_float) { x[i] = (float)a0; x2[i] = (float)b0; } else { xd[i] = a0; xd2[i] = b0; }
     }

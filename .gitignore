@@ -4,3 +4,7 @@ libcrref.so
 __pycache__/
 bcheck
 hypot-midpoints
+tan-poles
+bbench
+build-aarch64/
+build-port/

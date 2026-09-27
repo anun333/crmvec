@@ -1,8 +1,9 @@
 # crmvec
 
-Correctly rounded vector math for x86-64: a drop-in replacement for glibc's
-`libmvec.so.1` whose results are the correctly rounded ones, bit for bit the
-same as [CORE-MATH](https://core-math.gitlabpages.inria.fr/)'s.
+Correctly rounded vector math for x86-64 (and, built and checked under
+emulation, aarch64): a drop-in replacement for glibc's `libmvec.so.1` whose
+results are the correctly rounded ones, bit for bit the same as
+[CORE-MATH](https://core-math.gitlabpages.inria.fr/)'s.
 
 glibc's vector functions are accurate to a few ulps, and different libraries
 and versions give different answers. A correctly rounded function has exactly
@@ -23,7 +24,7 @@ reproducible across libraries.
 | entry points | what runs |
 |---|---|
 | AVX2 (`_ZGVdN8v_*`, `_ZGVdN4v_*`) | vector code, with scalar CORE-MATH for the lanes it can't decide |
-| SSE2 (`_ZGVbN4v_*`, `_ZGVbN2v_*`) | loops over scalar CORE-MATH |
+| SSE2 (`_ZGVbN4v_*`, `_ZGVbN2v_*`) | on a CPU with AVX2 and FMA, 36 of the 52 run the AVX2 code on their lanes (where that measured faster with half its lanes idle); the others, and every one on older CPUs, loop over scalar CORE-MATH |
 
 With glibc's `__*_finite` names for `exp`, `log` and `pow`, that is 116
 symbols: every one LLVM's x86 vectorizer can call through `libmvec` in LLVM
@@ -98,6 +99,8 @@ OpenCL's only mode. Like `libmvec`, it sets no `errno`.
 ./tan-poles          # double tan near its poles, where its error bound is tightest
 python3 sincos-tables.py crmvec-sin-tab.h   # the sin/cos table error, for every index (needs mpmath)
 python3 gen-row-tables.py | cmp - crmvec-rows-tab.h   # the row tables hold CORE-MATH's entries, bit for bit
+CRTEST_SMOOTH=1 ./crtest time   # the same, on inputs that vary smoothly along the array
+./bbench ./libmvec.so.1 /usr/lib/x86_64-linux-gnu/libmvec.so.1   # the SSE2 entry points' speed
 ./crtest time        # speed against glibc's libmvec and scalar CORE-MATH
 LD_LIBRARY_PATH=$PWD python3 check-pocl.py   # through PoCL (needs pyopencl)
 python3 check-pocl.py                        # the control, with glibc's libmvec
@@ -136,43 +139,88 @@ index is uniformly tiny for all 16,384 indices, so `sin`'s bound covers it.
 ## Speed
 
 Correct rounding costs speed. On one AMD Ryzen 5 PRO 5650U (Zen 3), one
-core, memory-bound, built with gcc 13.3, in ns per element (each figure the
-fastest of four runs, 2026-09-27):
+core, memory-bound, built with gcc 13.3, in ns per element, AVX2 entry
+points (each figure the fastest of two runs, 2026-09-27):
 
 | | crmvec | glibc `libmvec` | scalar CORE-MATH |
 |---|---|---|---|
 | `sinf` / `cosf` / `tanf` | 1.7 / 1.6 / 1.5 | 0.5 / 0.6 / 0.6 | 4.0 / 4.2 / 4.4 |
-| `expf` / `logf` | 1.4 / 1.9 | 0.7 / 0.7 | 2.5 / 2.7 |
+| `expf` / `logf` | 1.4 / 1.9 | 0.6 / 0.7 | 2.5 / 2.7 |
 | `powf` | 5.9 | 2.7 | 12.7 |
-| `atanf` / `asinf` | 2.6 / 3.3 | 0.5 / 0.5 | 4.7 / 5.1 |
+| `atanf` / `asinf` | 2.6 / 3.3 | 0.5 / 0.5 | 4.7 / 5.0 |
 | `erff` / `erfcf` | 3.1 / 4.4 | 0.6 / 0.7 | 5.1 / 8.0 |
 | `hypotf` | 1.0 | 0.7 | 6.7 |
-| `exp` / `log` | 2.4 / 2.5 | 1.1 / 1.4 | 4.1 / 5.8 |
-| `expm1` / `log1p` | 3.4 / 3.5 | 1.2 / 1.6 | 5.7 / 6.2 |
-| `sin` / `cos` | 3.8 / 3.7 | 1.4 / 1.4 | 7.4 / 24.8 |
-| `tan` | 7.2 | 1.2 | 29.7 |
-| `pow` | 8.0 | 5.1 | 18.9 |
-| `atan` / `atan2` | 4.9 / 5.7 | 1.3 / 2.3 | 5.4 / 13.7 |
-| `sinh` / `cosh` | 6.1 / 5.9 | 1.4 / 1.5 | 6.8 / 6.5 |
-| `asinh` / `acosh` | 6.0 / 6.5 | 4.3 / 4.0 | 9.3 / 9.2 |
-| `erf` / `erfc` | 5.5 / 15.8 | 1.3 / 1.6 | 10.4 / 30.1 |
-| `hypot` | 3.7 | 1.6 | 11.4 |
+| `exp` / `log` | 2.5 / 2.5 | 1.2 / 1.4 | 4.1 / 5.8 |
+| `expm1` / `log1p` | 3.4 / 3.5 | 1.2 / 1.6 | 5.6 / 6.2 |
+| `sin` / `cos` | 3.8 / 3.7 | 1.4 / 1.4 | 7.4 / 24.9 |
+| `tan` | 7.1 | 1.2 | 29.5 |
+| `pow` | 7.9 | 5.1 | 18.8 |
+| `atan` / `atan2` | 4.8 / 5.9 | 1.3 / 2.3 | 5.4 / 13.6 |
+| `sinh` / `cosh` | 6.1 / 5.9 | 1.4 / 1.5 | 7.0 / 6.5 |
+| `asinh` / `acosh` | 6.0 / 6.5 | 4.2 / 4.0 | 9.2 / 9.2 |
+| `erf` / `erfc` | 5.6 / 15.8 | 1.3 / 1.6 | 10.3 / 30.4 |
+| `hypot` | 3.9 | 1.6 | 11.4 |
 
 `./crtest time` prints all 52. Every function is slower than glibc, from
-1.4x (double `asinh`) to 10x (double `erfc`); the median is 2.8x. glibc
+1.4x (double `asinh`) to 10x (double `erfc`); the median is 2.9x. glibc
 computes in single precision on 8 lanes and makes no correct-rounding
 promise; correct rounding needs double precision, on 4 lanes. Every function
 is faster than scalar CORE-MATH. The tables are read a row per lane with
 ordinary loads rather than a column at a time with gathers, which on this
 CPU made the table-heavy functions up to twice as fast; functions made of
 several regimes compute a regime only when some lane of the vector is in
-it. Built with clang 22, the same code is 6% faster at the median than with
-gcc.
+it. On inputs that vary smoothly along the array (`CRTEST_SMOOTH=1`), as
+real data mostly does, the median is also 2.9x, and `atan` takes 2.8 ns
+instead of the 4.8 above. Built with clang 22, the code is 6%
+faster at the median than with gcc.
+
+The SSE2 entry points, which programs built for baseline x86-64 call, are
+3.3x slower than glibc's at the median (1.3x to 8.3x; `./bbench`). On this
+CPU 36 of them run the AVX2 code: double `cos` takes 7.9 ns per element
+there against 49.6 looping over CORE-MATH built without `-mfma`.
+
+## Other CPUs: aarch64
+
+`make aarch64` (needs `gcc-aarch64-linux-gnu` and `libsimde-dev`) builds
+`build-aarch64/libmvec.so.1` from the same `crmvec.c`, with
+[SIMDe](https://github.com/simd-everywhere/simde) supplying the x86
+intrinsics (`crmvec-simde.h`). It exports glibc's aarch64 names for all 26
+functions: AdvSIMD (`_ZGVnN2v_`, `_ZGVnN4v_`, with the vector calling
+convention glibc declares them with; `crmvec-aarch64.c`) and SVE
+(`_ZGVsMxv_`, masked, any vector length; `crmvec-sve.c`), 130 symbols in all,
+covering the 75 in glibc 2.39's aarch64 `libmvec`.
+
+Two things had to be fixed in SIMDe's intrinsics for this, and both are in
+`crmvec-simde.h`. SIMDe computes its 256-bit fused multiply-adds as a
+multiply and a separate add on aarch64 and riscv64 (still so in its master
+branch for some of them). This library's exact products need the fused
+result, so they are replaced by C's `fma` per lane. The version Ubuntu 24.04
+ships (0.7.2) also has a `_mm_testz_si128` that is wrong on riscv64, fixed
+in SIMDe 0.8.2.
+
+Checked under `qemu-aarch64` (it times nothing, so there are no speed
+figures for aarch64):
+```
+make aarch64
+qemu-aarch64 -cpu max,sve-default-vector-length=64 build-aarch64/aarch64-check sample   # every entry point, three input sets
+qemu-aarch64 -cpu max build-aarch64/aarch64-check floats   # all 2^32 inputs of the 23 floats (hours)
+port/port-build.sh    # the core on x86, aarch64 and riscv64: one output hash
+```
+Every entry point matches CORE-MATH built for aarch64 at SVE lengths of
+128, 256, 512 and 2048 bits. Loops calling `sin`, `log`, `expf` and
+`atan2f`, vectorized by gcc against glibc's headers and linked against
+glibc's `libmvec`, give CORE-MATH's results with this library first on the
+library path (0 of 400,000 differ); with glibc's own, 33,871 differ. The
+dynamic linker prints "no version information available", because this
+library's symbols are unversioned; it binds them anyway. On riscv64 the
+same core gives the same bits (`port/port-build.sh`), but glibc has no
+riscv64 `libmvec` to stand in for.
 
 ## Limits
 
-- x86-64 only. The vector paths need AVX2 and FMA, which is what the `d`
-  entry points are called on; the SSE2 ones are scalar.
+- Built and timed for x86-64; aarch64 built and checked only under
+  emulation. The x86 vector paths need AVX2 and FMA; without them, the SSE2
+  entry points loop over scalar CORE-MATH.
 - Timed on one CPU. Checked with two compilers (gcc 13.3, clang 22).
 - No AVX (`_ZGVc`) or AVX-512 (`_ZGVe`) entry points: no LLVM version above
   emits them for these functions.
