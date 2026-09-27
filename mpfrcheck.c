@@ -1,22 +1,27 @@
-/* mpfrcheck: the L group of crmvec-lanes.h on x86 (sinpi ... pown), through
+/* mpfrcheck: every x86 function (the 26 with vector code, and the L group
+   of crmvec-lanes.h, sinpi ... pown; the 26 added 2026-09-27), through
    both entry points of each (_ZGVd, AVX2, and _ZGVb, SSE2), against MPFR
    rounded to nearest with subnormals emulated, bit for bit (NaN == NaN).
    An oracle independent of CORE-MATH, and the only one for what
    crmvec-scalar.c builds on it (powr, pown, pownf); three special cases are
    IEEE's, not MPFR's (see mp). Added 2026-09-27.
 
-     mpfrcheck [N]          2^N inputs per function and precision (default
-                            20), in five sets: a uniform range where the
+     mpfrcheck [N [mode [f]]]  2^N inputs per function and precision
+                            (default 20), in the rounding mode given
+                            (nearest, up, down, zero, all; default nearest),
+                            optionally one function only; in five sets: a uniform range where the
                             function varies, every exponent, raw bits,
                             quarter-integers and special values, and for
                             pown x near 1 with |n| > 2^24
-     mpfrcheck controls     the same inputs through three deliberately wrong
-                            versions, which must differ: powr as plain pow,
-                            pownf with n rounded to a float, and pownf
-                            without its exception table on the table's cases
+     mpfrcheck controls     four deliberately wrong versions, which must
+                            differ: powr as plain pow, pownf with n rounded
+                            to a float, pownf without its exception table on
+                            the table's cases, and sin run upward but judged
+                            against MPFR to nearest
    Both modes also run pownf on the 35 inputs of crmvec-pownf-tab.h (and
    their negatives), whose double result is a float midpoint.
    Needs libmpfr-dev (4.2: sinpi, powr, pown). */
+#include <fenv.h>
 #include <immintrin.h>
 #include <math.h>
 #include <stdint.h>
@@ -35,12 +40,21 @@ __m128d _ZGVbN2vv_atan2pi(__m128d, __m128d), _ZGVbN2vv_powr(__m128d, __m128d), _
 __m256 _ZGVdN8vv_atan2pif(__m256, __m256), _ZGVdN8vv_powrf(__m256, __m256), _ZGVdN8vv_pownf(__m256, __m256i);
 __m128 _ZGVbN4vv_atan2pif(__m128, __m128), _ZGVbN4vv_powrf(__m128, __m128), _ZGVbN4vv_pownf(__m128, __m128i);
 double cr_pow(double, double); float cr_powf(float, float);
+/* the 26 functions with vector code (crmvec-functions.h), added 2026-09-27 */
+D1(exp) D1(exp2) D1(exp10) D1(log) D1(log2) D1(log10) D1(sin) D1(cos) D1(tan) D1(acos) D1(acosh) D1(asin)
+D1(asinh) D1(atan) D1(atanh) D1(cbrt) D1(cosh) D1(erf) D1(erfc) D1(expm1) D1(log1p) D1(sinh) D1(tanh)
+F1(expf) F1(exp2f) F1(exp10f) F1(logf) F1(log2f) F1(log10f) F1(sinf) F1(cosf) F1(tanf) F1(acosf) F1(acoshf) F1(asinf)
+F1(asinhf) F1(atanf) F1(atanhf) F1(cbrtf) F1(coshf) F1(erff) F1(erfcf) F1(expm1f) F1(log1pf) F1(sinhf) F1(tanhf)
+__m256d _ZGVdN4vv_pow(__m256d, __m256d), _ZGVdN4vv_atan2(__m256d, __m256d), _ZGVdN4vv_hypot(__m256d, __m256d);
+__m128d _ZGVbN2vv_pow(__m128d, __m128d), _ZGVbN2vv_atan2(__m128d, __m128d), _ZGVbN2vv_hypot(__m128d, __m128d);
+__m256 _ZGVdN8vv_powf(__m256, __m256), _ZGVdN8vv_atan2f(__m256, __m256), _ZGVdN8vv_hypotf(__m256, __m256);
+__m128 _ZGVbN4vv_powf(__m128, __m128), _ZGVbN4vv_atan2f(__m128, __m128), _ZGVbN4vv_hypotf(__m128, __m128);
 
 /* MPFR, correctly rounded to double (fl = 0) or float (fl = 1) */
 typedef int (*m1)(mpfr_ptr, mpfr_srcptr, mpfr_rnd_t);
 typedef int (*m2)(mpfr_ptr, mpfr_srcptr, mpfr_srcptr, mpfr_rnd_t);
 static int m_lgamma(mpfr_ptr r, mpfr_srcptr a, mpfr_rnd_t d) { int s; return mpfr_lgamma(r, &s, a, d); }
-static double mp(int fl, int kind, void *f, double x, double y, int n)
+static double mp(int fl, int kind, void *f, double x, double y, int n, mpfr_rnd_t rnd)
 {
   /* two special cases where MPFR follows its own documented convention
      rather than IEEE 754-2019 9.2.1, which C23 and OpenCL C follow:
@@ -58,9 +72,9 @@ static double mp(int fl, int kind, void *f, double x, double y, int n)
   mpfr_set_emin(fl ? -148 : -1073); mpfr_set_emax(fl ? 128 : 1024);
   mpfr_t a, b, r; mpfr_init2(a, 53); mpfr_init2(b, 53); mpfr_init2(r, fl ? 24 : 53);
   mpfr_set_d(a, x, MPFR_RNDN); mpfr_set_d(b, y, MPFR_RNDN);
-  int t = kind == 1 ? ((m1)f)(r, a, MPFR_RNDN) : kind == 2 ? ((m2)f)(r, a, b, MPFR_RNDN) : mpfr_pown(r, a, n, MPFR_RNDN);
-  t = mpfr_subnormalize(r, t, MPFR_RNDN);
-  double v = mpfr_get_d(r, MPFR_RNDN);
+  int t = kind == 1 ? ((m1)f)(r, a, rnd) : kind == 2 ? ((m2)f)(r, a, b, rnd) : mpfr_pown(r, a, n, rnd);
+  t = mpfr_subnormalize(r, t, rnd);
+  double v = mpfr_get_d(r, rnd);
   mpfr_clear(a); mpfr_clear(b); mpfr_clear(r);
   return v;
 }
@@ -76,6 +90,16 @@ static const struct fn FN[] = {
   E1(asinpi, mpfr_asinpi, -1, 1) E1(acospi, mpfr_acospi, -1, 1) E1(atanpi, mpfr_atanpi, -100, 100)
   E1(lgamma, m_lgamma, -20, 40) E1(tgamma, mpfr_gamma, -20, 36) E1(rsqrt, mpfr_rec_sqrt, 0, 100)
   E2(atan2pi, mpfr_atan2pi, -10, 10, -10, 10) E2(powr, mpfr_powr, 0, 4, -30, 30)
+  /* the 26 with vector code; set 0's range is the float one */
+  E1(exp, mpfr_exp, -87, 87) E1(exp2, mpfr_exp2, -125, 125) E1(exp10, mpfr_exp10, -37, 38)
+  E1(log, mpfr_log, 0, 1000) E1(log2, mpfr_log2, 0, 1000) E1(log10, mpfr_log10, 0, 1000)
+  E1(sin, mpfr_sin, -100, 100) E1(cos, mpfr_cos, -100, 100) E1(tan, mpfr_tan, -100, 100)
+  E1(acos, mpfr_acos, -1, 1) E1(acosh, mpfr_acosh, 1, 1000) E1(asin, mpfr_asin, -1, 1)
+  E1(asinh, mpfr_asinh, -1000, 1000) E1(atan, mpfr_atan, -1000, 1000) E1(atanh, mpfr_atanh, -1, 1)
+  E1(cbrt, mpfr_cbrt, -1000, 1000) E1(cosh, mpfr_cosh, -80, 80) E1(erf, mpfr_erf, -5, 5)
+  E1(erfc, mpfr_erfc, -5, 9) E1(expm1, mpfr_expm1, -80, 80) E1(log1p, mpfr_log1p, -0.9, 1000)
+  E1(sinh, mpfr_sinh, -80, 80) E1(tanh, mpfr_tanh, -10, 10)
+  E2(pow, mpfr_pow, 0, 4, -30, 30) E2(atan2, mpfr_atan2, -10, 10, -10, 10) E2(hypot, mpfr_hypot, -10, 10, -10, 10)
   {"pown", 0, 3, 0, (void *)_ZGVdN4vv_pown, (void *)_ZGVbN2vv_pown, 0.5, 2, 0, 0},
   {"pownf", 1, 3, 0, (void *)_ZGVdN8vv_pownf, (void *)_ZGVbN4vv_pownf, 0.5, 2, 0, 0},
 };
@@ -162,35 +186,41 @@ static void run8(const struct fn *f, const double *x, const double *y, const int
 
 /* crmvec-pownf-tab.h's inputs, x and -x, through both pownf entry points
    (ctl: the double result rounded to float, without the table) */
-static int table_cases(int ctl)
+static int table_cases(int ctl, int mode, mpfr_rnd_t rnd)
 {
   long bad = 0, n = 0;
   for (unsigned i = 0; i < sizeof POWNF_EXC / sizeof POWNF_EXC[0]; i++)
     for (int sg = 0; sg < 2; sg++) {
       float x; memcpy(&x, &POWNF_EXC[i].x, 4); if (sg) x = -x;
-      int k = POWNF_EXC[i].n; double w = mp(1, 3, 0, x, 0, k);
+      int k = POWNF_EXC[i].n; double w = mp(1, 3, 0, x, 0, k, rnd);
       float xs[8], rd[8], rb[8]; int ks[8];
       for (int j = 0; j < 8; j++) { xs[j] = x; ks[j] = k; }
+      fesetround(mode);
       if (ctl) { for (int j = 0; j < 8; j++) rd[j] = rb[j] = (float)cr_pow(x, k); }
       else {
         _mm256_storeu_ps(rd, _ZGVdN8vv_pownf(_mm256_loadu_ps(xs), _mm256_loadu_si256((const __m256i *)ks)));
         _mm_storeu_ps(rb, _ZGVbN4vv_pownf(_mm_loadu_ps(xs), _mm_loadu_si128((const __m128i *)ks)));
       }
+      fesetround(FE_TONEAREST);
       bad += !same(rd[0], w) + !same(rb[0], w); n += 2;
     }
   printf("pownf%s on crmvec-pownf-tab.h's %ld inputs (x and -x, d and b): %ld differ from MPFR\n", ctl ? " CONTROL (no table)" : "", n, bad);
   return bad != 0;
 }
 
-int main(int argc, char **argv)
+static const struct { const char *name; int mode; mpfr_rnd_t rnd; } MODES[] = {
+  {"nearest", FE_TONEAREST, MPFR_RNDN}, {"up", FE_UPWARD, MPFR_RNDU}, {"down", FE_DOWNWARD, MPFR_RNDD}, {"zero", FE_TOWARDZERO, MPFR_RNDZ}};
+
+/* every function in one rounding mode (ctl: the three deliberately wrong
+   versions; ctl 2: sin run upward but judged against MPFR to nearest) */
+static int one_mode(int mi, long long blocks, int ctl, const char *only)
 {
-  int ctl = argc > 1 && !strcmp(argv[1], "controls");
-  int lg = argc > 1 && !ctl ? atoi(argv[1]) : 20;
-  long long blocks = (1LL << lg) / 8;
-  int bad_fns = 0;
+  int bad_fns = 0, mode = MODES[mi].mode; mpfr_rnd_t rnd = MODES[mi].rnd;
   for (unsigned fi = 0; fi < NFN; fi++) {
     const struct fn *f = &FN[fi];
-    if (ctl && strcmp(f->name, "powr") && strcmp(f->name, "pownf")) continue;
+    if (ctl == 1 && strcmp(f->name, "powr") && strcmp(f->name, "pownf")) continue;
+    if (ctl == 2 && strcmp(f->name, "sin")) continue;
+    if (only && strcmp(f->name, only)) continue;
     long long bad[5] = {0}, cnt[5] = {0}; char first[160] = "";
 #pragma omp parallel for schedule(dynamic, 256)
     for (long long blk = 0; blk < blocks; blk++) {
@@ -203,10 +233,12 @@ int main(int argc, char **argv)
         if (f->fl) y[i] = (float)y[i];
         n[i] = f->kind == 3 ? input_n(&s, set) : 0;
       }
-      run8(f, x, y, n, out, ctl);
+      fesetround(ctl == 2 ? FE_UPWARD : mode);
+      run8(f, x, y, n, out, ctl == 1);
+      fesetround(FE_TONEAREST);
       long long b = 0;
       for (int i = 0; i < 8; i++) {
-        double w = mp(f->fl, f->kind, f->mf, x[i], y[i], n[i]);
+        double w = mp(f->fl, f->kind, f->mf, x[i], y[i], n[i], ctl == 2 ? MPFR_RNDN : rnd);
         for (int e = 0; e < 2; e++) if (!same(out[8 * e + i], w)) {
           b++;
 #pragma omp critical
@@ -220,14 +252,33 @@ int main(int argc, char **argv)
       cnt[set] += 16;
     }
     long long tb = 0, tc = 0; for (int k = 0; k < 5; k++) { tb += bad[k]; tc += cnt[k]; }
-    printf("%-9s%s %lld results (d and b entry points): %lld differ from MPFR [uniform %lld, exponents %lld, bits %lld, quarters/specials %lld]%s\n",
-           f->name, ctl ? " CONTROL" : "", tc, tb, bad[0], bad[1], bad[2], bad[3], first);
+    printf("%-9s%s %-7s %lld results (d and b): %lld differ from MPFR [uniform %lld, exponents %lld, bits %lld, quarters/specials %lld]%s\n",
+           f->name, ctl ? " CONTROL" : "", MODES[mi].name, tc, tb, bad[0], bad[1], bad[2], bad[3], first);
     if (f->kind == 3) printf("          of which x near 1 with |n| > 2^24: %lld differ of %lld\n", bad[4], cnt[4]);
     bad_fns += tb != 0;
   }
-  if (ctl) { bad_fns += table_cases(1);
-    printf("CONTROLS: %s\n", bad_fns == 3 ? "all three differ, as they must" : "a control did NOT differ: the check is blind"); return bad_fns != 3; }
-  bad_fns += table_cases(0);
+  return bad_fns;
+}
+
+int main(int argc, char **argv)
+{
+  int ctl = argc > 1 && !strcmp(argv[1], "controls");
+  int lg = argc > 1 && !ctl ? atoi(argv[1]) : 20;
+  const char *ms = argc > 2 ? argv[2] : "nearest", *only = argc > 3 ? argv[3] : NULL;
+  long long blocks = (1LL << lg) / 8;
+  if (ctl) {
+    int c = one_mode(0, blocks, 1, NULL);
+    c += table_cases(1, FE_TONEAREST, MPFR_RNDN);
+    c += one_mode(0, blocks, 2, NULL);
+    printf("CONTROLS: %s\n", c == 4 ? "all four differ, as they must" : "a control did NOT differ: the check is blind");
+    return c != 4;
+  }
+  int bad_fns = 0;
+  for (int mi = 0; mi < 4; mi++) {
+    if (strcmp(ms, "all") && strcmp(ms, MODES[mi].name)) continue;
+    bad_fns += one_mode(mi, blocks, 0, only);
+    if (!only || !strcmp(only, "pownf")) bad_fns += table_cases(0, MODES[mi].mode, MODES[mi].rnd);
+  }
   printf("VERDICT: %s\n", bad_fns ? "DIFFERS from MPFR" : "IDENTICAL to MPFR on every input tried");
   return bad_fns != 0;
 }

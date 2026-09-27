@@ -1,0 +1,8 @@
+libdir=@CRMDIR@
+includedir=@INCDIR@
+
+Name: crmvec
+Description: Correctly rounded vector math: a drop-in libmvec.so.1 (and, on aarch64, libsleefgnuabi.so.3); half and bfloat16 arrays
+Version: @VERSION@
+Libs: -L${libdir} -Wl,-rpath,${libdir} -lmvec
+Cflags: -I${includedir}

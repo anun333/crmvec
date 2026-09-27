@@ -12,7 +12,7 @@ names = [l.strip() for l in open(os.path.join(D, 'sleef-gnuabi-aarch64.txt')) if
 fns = {}
 for m in re.finditer(r'\b([FD][12])\((\w+)\)', open(os.path.join(D, 'crmvec-functions.h')).read()):
     fns[m.group(2)] = m.group(1)[1]                      # '1' or '2' arguments
-for m in re.finditer(r'\b[LS]([DF])(1|2|3|I|N|P|PP)\((\w+),', open(os.path.join(D, 'crmvec-lanes.h')).read()):
+for m in re.finditer(r'\b[LSV]([DF])(1|2|3|I|N|P|PP)\((\w+),', open(os.path.join(D, 'crmvec-lanes.h')).read()):
     fns[m.group(3)] = m.group(2)
 pat = re.compile(r'^_ZGV([ns])([NM])(\d+|x)((?:v|l\d+)+)_(\w+)$')
 norm = re.compile(r'^(?:__)?(?:fast)?([a-z0-9]+?)(?:_finite)?(?:_u35|_u3500)?$')

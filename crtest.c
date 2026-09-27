@@ -12,6 +12,8 @@
      crtest verify2 [f...]   two arguments (powf, pow, atan2f, atan2, hypotf,
                              hypot): 2^30 random pairs each, in four sets per
                              kind (see P2), plus every pair of 40 specials
+     CRTEST_ROUND=up|down|zero  run verify, verify64 or verify2 in that
+                             rounding mode (added 2026-09-27)
      crtest time             one core, min of 7 passes after a warm-up: crmvec
                              vs glibc's libmvec (dlopen by absolute path) vs
                              scalar CORE-MATH, twice: 16M inputs (memory-
@@ -35,6 +37,8 @@
 #include <stdlib.h>
 #include <string.h>
 #include <time.h>
+#include <fenv.h>
+#include <omp.h>
 
 typedef __m256 (*v8)(__m256);
 typedef __m256 (*v8v)(__m256, __m256);
@@ -465,9 +469,28 @@ static int own_build(void)
   return !bad;
 }
 
+/* CRTEST_ROUND=up|down|zero: run the checks in that rounding mode (both the
+   entry points and CORE-MATH, which is correctly rounded in every mode).
+   Set before the first parallel region, so OpenMP's threads, created by
+   this one, start in it; each thread's mode is read back to make sure. */
+static int set_round(void)
+{
+  const char *r = getenv("CRTEST_ROUND"); int m = FE_TONEAREST;
+  if (!r || !*r || !strcmp(r, "nearest")) return 0;
+  if (!strcmp(r, "up")) m = FE_UPWARD; else if (!strcmp(r, "down")) m = FE_DOWNWARD;
+  else if (!strcmp(r, "zero")) m = FE_TOWARDZERO; else { printf("CRTEST_ROUND=%s: not a mode\n", r); return -1; }
+  fesetround(m);
+  int wrong = 0;
+#pragma omp parallel reduction(+ : wrong)
+  wrong += fegetround() != m;
+  printf("rounding mode: %s (all %d threads)\n", r, omp_get_max_threads());
+  return wrong ? -1 : 0;
+}
+
 int main(int argc, char **argv)
 {
   if (!own_build()) return 2;
+  if (set_round()) { printf("VOID: rounding mode not set on every thread\n"); return 2; }
   if (argc > 1 && !strcmp(argv[1], "time")) return timing(argc, argv);
   if (argc > 1 && !strcmp(argv[1], "verify64")) return verify64(argc, argv);
   if (argc > 1 && !strcmp(argv[1], "verify2")) return verify2(argc, argv);

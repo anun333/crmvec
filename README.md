@@ -26,6 +26,8 @@ reproducible across libraries.
 |---|---|
 | AVX2 (`_ZGVdN8v_*`, `_ZGVdN4v_*`) | vector code, with scalar CORE-MATH for the lanes it can't decide |
 | SSE2 (`_ZGVbN4v_*`, `_ZGVbN2v_*`) | on a CPU with AVX2 and FMA, 36 of the 52 run the AVX2 code on their lanes (where that measured faster with half its lanes idle); the others, and every one on older CPUs, loop over scalar CORE-MATH |
+| AVX (`_ZGVcN8v_*`, `_ZGVcN4v_*`) | what gcc calls for code built with `-mavx`: the AVX2 code on a CPU that has it, else scalar CORE-MATH |
+| AVX-512 (`_ZGVeN16v_*`, `_ZGVeN8v_*`) | what gcc calls for code built with `-mavx512f`: the AVX2 code on each half |
 
 With glibc's `__*_finite` names for `exp`, `log` and `pow`, that is 116
 symbols: every one LLVM's x86 vectorizer can call through `libmvec` in LLVM
@@ -33,19 +35,39 @@ symbols: every one LLVM's x86 vectorizer can call through `libmvec` in LLVM
 [llvm/llvm-project#223817](https://github.com/llvm/llvm-project/pull/223817)
 first proposed (its current version adds only their SSE2 forms). A program
 that needs another `libmvec` symbol fails to link against this library,
-loudly, rather than falling back silently.
+loudly, rather than falling back silently. With the AVX and AVX-512 forms,
+it has every name glibc 2.39's x86 `libmvec` exports except `sincos`, which
+gcc does not call.
 
-Also, with no vector code yet (each lane runs the scalar function, at
-CORE-MATH's speed), OpenCL's other correctly rounded functions under their
-C23 names, in float and double, with SSE2 and AVX2 entry points on x86 (48
-more symbols) and on aarch64:
+Also OpenCL's other correctly rounded functions, under their C23 names, in
+float and double, with SSE2 and AVX2 entry points on x86 and on aarch64:
 
 `sinpi` `cospi` `tanpi` `asinpi` `acospi` `atanpi` `atan2pi` `lgamma`
 `tgamma` `rsqrt` `powr` `pown`
 
-The first ten are CORE-MATH's. `powr` and `pown` are built on its `pow`
-(`crmvec-scalar.c`). `pown`'s int argument is a vector of ints: an xmm
-register, or a ymm for 8 floats, as LLVM passes them.
+- **Vector code on x86:** `sinpi`, `cospi`, `tanpi` and `rsqrt` in float,
+  and `powr` and `pown` in both precisions, built on the vector `pow`.
+- **Scalar per lane:** the rest run CORE-MATH's scalar function on each lane,
+  at its speed.
+- **Where they come from:** CORE-MATH has ten of the twelve; `powr` and
+  `pown` are built on its `pow` (`crmvec-scalar.c`).
+- **`pown`'s int argument** is a vector of ints: an xmm register, or a ymm for
+  8 floats, as LLVM passes them.
+
+And half precision (IEEE binary16) and bfloat16: 42 of CORE-MATH's
+correctly rounded functions in each format. Arrays go in and out as
+`uint16_t` bit patterns, so the caller needs no compiler support for either
+type:
+
+```
+void crmvec_f16_exp(const uint16_t *x, uint16_t *y, size_t n);
+void crmvec_bf16_pow(const uint16_t *x, const uint16_t *y, uint16_t *z, size_t n);
+void crmvec_f16_sincos(const uint16_t *x, uint16_t *s, uint16_t *c, size_t n);
+```
+
+That covers `acos` … `tgamma`, including `exp2m1`, `log2p1`, `sinpi`,
+`rsqrt` and `sqrt` (the list is `crmvec-f16-list.h`). There is no vector
+code yet: each element runs CORE-MATH's function.
 
 ## Using it
 
@@ -53,6 +75,36 @@ register, or a ymm for 8 floats, as LLVM passes them.
 make                      # libmvec.so.1 and the checks (gcc, or CC=clang with libomp)
 LD_LIBRARY_PATH=$PWD your-program
 ```
+
+Or install it (version 0.1.0):
+
+```
+make lib                  # the libraries only (on aarch64: libmvec.so.1 and libsleefgnuabi.so.3)
+make install PREFIX=/usr/local
+crmvec-run your-program   # the program's vector math from crmvec, nothing else changed
+pkg-config --cflags --libs crmvec   # to link crmvec.h's functions, with an rpath to crmvec
+```
+
+The libraries go to `lib/crmvec/`, a directory of their own. They replace the
+system's `libmvec.so.1` only for programs run with `crmvec-run` or linked
+with pkg-config's rpath, never system-wide.
+
+Packages, from this repository:
+- **Debian and Ubuntu** (`debian/`, `dpkg-buildpackage -b`): built on Ubuntu
+  24.04 for amd64 and, under emulation, arm64. The packaged libraries pass
+  the checks below; on arm64, the gcc and clang drop-in loops under qemu.
+- **Fedora** (`crmvec.spec`, `rpmbuild -bb`): built and installed on Fedora
+  44 (gcc 16), and its library passes the checks there. It does not claim to
+  provide `libmvec.so.1` to other packages.
+- **Nix** (`package.nix`, `nix-build`): built with nixpkgs 24.05 (gcc 13.2),
+  and its library passes the checks.
+- **conda-forge** (`conda/recipe.yaml`): written, not yet submitted to
+  conda-forge.
+
+All of them build without link-time optimization, and run `make clean`
+first, so a source tree holding an earlier build cannot ship it. The checks have run on
+the library as compiled file by file, not on code optimized across crmvec
+and CORE-MATH.
 
 [PoCL](https://github.com/pocl/pocl) built with
 `ENABLE_HOST_CPU_VECTORIZE_LIBMVEC=ON` loads `libmvec.so.1` by its SONAME
@@ -110,8 +162,20 @@ calls `libmvec` for them. Programs vectorized by gcc or clang against
     result (`crmvec-pownf-tab.h`); without the list, 15 of them would come
     out wrong.
 
-The vector code assumes round-to-nearest, the default everywhere and
-OpenCL's only mode. Like `libmvec`, it sets no `errno`.
+**Every rounding mode.** The vector code is correct in round-to-nearest,
+the default everywhere and OpenCL's only mode. In the other three modes,
+every entry point notices the mode and hands its lanes to CORE-MATH, which
+is correctly rounded in all four. On x86 it watches two additions round
+rather than reading the control register, which cost nearly three times as much;
+the check costs 5% of the median function's time. CORE-MATH is built with
+`-frounding-math` for this, as its own builds are. Without that check,
+`sinf` rounding upward was wrong on 967 million of its 2^32 inputs.
+Like `libmvec`, the library sets no `errno`.
+
+**Subnormals under `-ffast-math`.** A program linked with gcc's `-ffast-math`
+starts with the CPU flushing subnormals to zero (FTZ and DAZ). Subnormal
+inputs and results are then flushed in this library too, as in the rest of
+that program, CORE-MATH's scalar code included.
 
 ## Checking it
 
@@ -128,8 +192,13 @@ python3 gen-row-tables.py | cmp - crmvec-rows-tab.h   # the row tables hold CORE
 CRTEST_SMOOTH=1 ./crtest time   # the same, on inputs that vary smoothly along the array
 ./bbench ./libmvec.so.1 /usr/lib/x86_64-linux-gnu/libmvec.so.1   # the SSE2 entry points' speed
 ./crtest time        # speed against glibc's libmvec and scalar CORE-MATH
-./mpfrcheck          # sinpi ... pown through both x86 entry points, against MPFR (needs libmpfr-dev)
-./mpfrcheck controls # three deliberately wrong versions, which it must catch
+./mpfrcheck 20 all   # all 38 functions, both x86 entry points, all four rounding modes, against MPFR (libmpfr-dev)
+./mpfrcheck controls # four deliberately wrong versions, which it must catch
+./lcheck             # sinpif cospif tanpif rsqrtf: all 2^32 inputs, both entry points
+./f16check           # half and bfloat16: every input of every one-argument function, four modes, against MPFR
+./cecheck c          # the AVX entry points; `sde64 -spr -- ./cecheck e` for AVX-512 (Intel SDE)
+port/dropin-x86.sh   # loops gcc vectorized with -mavx and -mavx512f, against this library and glibc's
+CRTEST_ROUND=up ./crtest verify   # any check above in another rounding mode (also bcheck, cecheck, aarch64-check)
 ./pownf-search       # the proof for float pown with |n| > 2^24 (about 6 minutes on 8 threads)
 LD_LIBRARY_PATH=$PWD python3 check-pocl.py   # through PoCL (needs pyopencl)
 python3 check-pocl.py                        # the control, with glibc's libmvec
@@ -143,12 +212,23 @@ AVX. Through PoCL, all 16 functions it hands to `libmvec` give
 CORE-MATH's results in both precisions. With glibc's `libmvec` in its place,
 the same kernels differ on 1.86 billion inputs.
 
-The functions added on 2026-09-27 have their own checks, all run with gcc
-13.3 on a fresh copy of this repository:
-- `mpfrcheck`: 0 differences from MPFR, through both x86 entry points, on
-  2^22 inputs per function.
-- `pownf-search`: every one of its 19.5 billion (x, n) pairs is covered.
-- The aarch64 checks below: 0 differences.
+What was added on 2026-09-27 has its own checks, all run with gcc 13.3 on a
+fresh copy of this repository:
+- **`mpfrcheck`:** all 38 functions, both precisions, both x86 entry points,
+  2^20 inputs each in each of the four rounding modes: 0 differences from
+  MPFR. The same run with the rounding-mode check switched off differs,
+  which is the control.
+- **`lcheck`:** `sinpif`, `cospif`, `tanpif` and `rsqrtf`, whose vector code is
+  new, correct on all 2^32 inputs. They are correct even with their rounding
+  test off, so the control cuts the polynomial short instead, and then
+  hundreds of thousands of results come out wrong.
+- **`f16check`:** every input of every one-argument half and bfloat16
+  function, and 2^20 pairs of each two-argument one, in all four modes: 0
+  differences from MPFR. aarch64 gives the same output bits.
+- **`cecheck`:** the AVX entry points natively, and under Intel SDE on a CPU
+  without AVX2. The AVX-512 entry points under SDE. 0 differences.
+- **`pownf-search`:** every one of its 19.5 billion (x, n) pairs is covered.
+- **The aarch64 checks below:** 0 differences, in round-upward too.
 
 The checks do see wrong answers when there are some. Each vector path was
 rebuilt with its rounding test disabled, and then failed its check: every
@@ -176,43 +256,46 @@ index is uniformly tiny for all 16,384 indices, so `sin`'s bound covers it.
 
 Correct rounding costs speed. On one AMD Ryzen 5 PRO 5650U (Zen 3), one
 core, memory-bound, built with gcc 13.3, in ns per element, AVX2 entry
-points (each figure the fastest of two runs, 2026-09-27):
+points (each figure the fastest of two runs, 2026-09-27, with the
+rounding-mode check):
 
 | | crmvec | glibc `libmvec` | scalar CORE-MATH |
 |---|---|---|---|
-| `sinf` / `cosf` / `tanf` | 1.7 / 1.6 / 1.5 | 0.5 / 0.6 / 0.6 | 4.0 / 4.2 / 4.4 |
-| `expf` / `logf` | 1.4 / 1.9 | 0.6 / 0.7 | 2.5 / 2.7 |
-| `powf` | 5.9 | 2.7 | 12.7 |
-| `atanf` / `asinf` | 2.6 / 3.3 | 0.5 / 0.5 | 4.7 / 5.0 |
-| `erff` / `erfcf` | 3.1 / 4.4 | 0.6 / 0.7 | 5.1 / 8.0 |
-| `hypotf` | 1.0 | 0.7 | 6.7 |
-| `exp` / `log` | 2.5 / 2.5 | 1.2 / 1.4 | 4.1 / 5.8 |
-| `expm1` / `log1p` | 3.4 / 3.5 | 1.2 / 1.6 | 5.6 / 6.2 |
-| `sin` / `cos` | 3.8 / 3.7 | 1.4 / 1.4 | 7.4 / 24.9 |
-| `tan` | 7.1 | 1.2 | 29.5 |
-| `pow` | 7.9 | 5.1 | 18.8 |
-| `atan` / `atan2` | 4.8 / 5.9 | 1.3 / 2.3 | 5.4 / 13.6 |
-| `sinh` / `cosh` | 6.1 / 5.9 | 1.4 / 1.5 | 7.0 / 6.5 |
-| `asinh` / `acosh` | 6.0 / 6.5 | 4.2 / 4.0 | 9.2 / 9.2 |
-| `erf` / `erfc` | 5.6 / 15.8 | 1.3 / 1.6 | 10.3 / 30.4 |
-| `hypot` | 3.9 | 1.6 | 11.4 |
+| `sinf` / `cosf` / `tanf` | 2.0 / 1.8 / 1.7 | 0.5 / 0.7 / 0.6 | 4.0 / 4.4 / 4.6 |
+| `expf` / `logf` | 1.5 / 2.1 | 0.7 / 0.7 | 2.7 / 2.8 |
+| `powf` | 6.1 | 2.7 | 13.1 |
+| `atanf` / `asinf` | 2.9 / 3.6 | 0.5 / 0.6 | 4.9 / 5.3 |
+| `erff` / `erfcf` | 3.2 / 4.7 | 0.6 / 0.7 | 5.3 / 8.3 |
+| `hypotf` | 1.1 | 0.7 | 6.9 |
+| `exp` / `log` | 2.8 / 2.9 | 1.2 / 1.4 | 4.2 / 6.0 |
+| `expm1` / `log1p` | 4.0 / 4.2 | 1.2 / 1.7 | 5.9 / 6.4 |
+| `sin` / `cos` | 4.4 / 4.3 | 1.3 / 1.3 | 7.7 / 25.7 |
+| `tan` | 7.7 | 1.2 | 30.4 |
+| `pow` | 8.6 | 5.3 | 19.6 |
+| `atan` / `atan2` | 5.4 / 5.8 | 1.4 / 2.4 | 5.6 / 14.0 |
+| `sinh` / `cosh` | 6.6 / 6.4 | 1.5 / 1.5 | 7.1 / 6.7 |
+| `asinh` / `acosh` | 6.5 / 7.1 | 4.4 / 4.1 | 9.6 / 9.4 |
+| `erf` / `erfc` | 6.1 / 16.4 | 1.3 / 1.7 | 10.7 / 31.1 |
+| `hypot` | 3.9 | 1.6 | 11.7 |
 
 `./crtest time` prints all 52. Every function is slower than glibc, from
-1.4x (double `asinh`) to 10x (double `erfc`); the median is 2.9x. glibc
+1.5x (double `asinh`) to 9.9x (double `erfc`); the median is 3.3x, of
+which the rounding-mode check is 5%. glibc
 computes in single precision on 8 lanes and makes no correct-rounding
 promise; correct rounding needs double precision, on 4 lanes. Every function
-is faster than scalar CORE-MATH. The tables are read a row per lane with
+but `expm1f` (3.0 ns against 2.8) is faster than scalar CORE-MATH. The tables are read a row per lane with
 ordinary loads rather than a column at a time with gathers, which on this
 CPU made the table-heavy functions up to twice as fast; functions made of
 several regimes compute a regime only when some lane of the vector is in
 it. On inputs that vary smoothly along the array (`CRTEST_SMOOTH=1`), as
-real data mostly does, the median is also 2.9x, and `atan` takes 2.8 ns
-instead of the 4.8 above. Built with clang 22, the code is 6%
-faster at the median than with gcc.
+real data mostly does, the median is 3.1x, and `atan` takes 3.3 ns
+instead of the 5.4 above. Built with clang 22, the code was 6% faster at
+the median than with gcc (measured 2026-09-26, before the rounding-mode
+check).
 
 The SSE2 entry points, which programs built for baseline x86-64 call, are
-3.3x slower than glibc's at the median (1.3x to 8.3x; `./bbench`). On this
-CPU 36 of them run the AVX2 code: double `cos` takes 7.9 ns per element
+3.4x slower than glibc's at the median (1.3x to 8.4x; `./bbench`). On this
+CPU 36 of them run the AVX2 code: double `cos` takes 8.6 ns per element
 there against 49.6 looping over CORE-MATH built without `-mfma`.
 
 ## Other CPUs: aarch64
@@ -315,17 +398,21 @@ caller's vector registers survive lazy binding.
   emulation. The x86 vector paths need AVX2 and FMA; without them, the SSE2
   entry points loop over scalar CORE-MATH.
 - Timed on one CPU. Checked with two compilers (gcc 13.3, clang 22).
-- No AVX (`_ZGVc`) or AVX-512 (`_ZGVe`) entry points yet. LLVM does not
-  emit them for these functions, but gcc does: a program gcc vectorized with
-  `-mavx` calls `_ZGVcN4v_sin`, and with `-mavx512f` `_ZGVeN8v_sin`, and it
-  will not load with this library in place of glibc's. SLEEF's x86 library
-  had them too, so this is not a replacement for it on x86.
-- The functions added for OpenCL and for SLEEF have no vector code yet.
-  Each lane runs CORE-MATH's scalar function (the C library's for exact
-  operations), at scalar speed.
+- The AVX-512 entry points are checked only under Intel's emulator (SDE);
+  this CPU has no AVX-512. They split into two AVX2 calls rather than using
+  512-bit code.
+- Most of the functions added for OpenCL and SLEEF, and all the half and
+  bfloat16 ones, have no vector code yet. Each lane or element runs
+  CORE-MATH's scalar function, or the C library's for exact operations, at
+  scalar speed.
 - No `rootn`: CORE-MATH has none, and correct rounding for every n needs its
   own analysis. No `sincos` on x86: gcc does not vectorize calls to it.
 - Vectorized `lgamma` does not set `signgam`, as SLEEF's does not.
+- A program built against glibc's `libmvec` prints "no version information
+  available" twice when it starts with crmvec's library, then runs normally.
+  glibc's names carry symbol versions (`GLIBC_2.22`, `GLIBC_2.35`) and
+  crmvec's do not. With versions, a program built against a glibc newer
+  than crmvec's list would refuse to start instead of warning.
 
 ## Credits and license
 

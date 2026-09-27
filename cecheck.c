@@ -1,0 +1,133 @@
+/* cecheck: the AVX (_ZGVc) and AVX-512 (_ZGVe) entry points of the built
+   libmvec.so.1 against scalar CORE-MATH from libcrref.so, bit for bit (NaN
+   == NaN). Added 2026-09-27.
+
+     cecheck c [dir [k]]    the AVX entry points: natively (on a CPU with
+                            AVX2 they run the AVX2 code), or under Intel SDE
+                            on a CPU with AVX but not AVX2 (sde64 -snb --),
+                            where they loop over CORE-MATH
+     cecheck e [dir [k]]    the AVX-512 entry points (sde64 -spr -- on a
+                            CPU without AVX-512)
+   2^k calls per function (default 16). Controls, in the same run: every
+   exported _ZGVc (or _ZGVe) name must be tested, and sinf's entry judged
+   against cr_cosf must differ. Built for baseline x86-64; the calls use
+   target attributes, so nothing outside them needs AVX. */
+#define _GNU_SOURCE
+#include <dlfcn.h>
+#include <immintrin.h>
+#include <math.h>
+#include <fenv.h>
+#include <stdint.h>
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+
+#define F1 "expf exp2f exp10f logf log2f log10f sinf cosf tanf acosf acoshf asinf asinhf atanf atanhf cbrtf coshf erff erfcf expm1f log1pf sinhf tanhf"
+#define D1 "exp log sin cos tan acos acosh asin asinh atan atanh cbrt cosh erf erfc exp2 exp10 expm1 log2 log10 log1p sinh tanh"
+#define F2 "powf atan2f hypotf"
+#define D2 "pow atan2 hypot"
+
+static uint64_t rng = 0x9e3779b97f4a7c15ULL;
+static uint64_t next(void) { rng ^= rng << 13; rng ^= rng >> 7; rng ^= rng << 17; return rng; }
+static float f_of(uint32_t u) { float f; memcpy(&f, &u, 4); return f; }
+static double d_of(uint64_t u) { double d; memcpy(&d, &u, 8); return d; }
+static int same_f(float a, float b) { return (a != a && b != b) || !memcmp(&a, &b, 4); }
+static int same_d(double a, double b) { return (a != a && b != b) || !memcmp(&a, &b, 8); }
+static float in_f(void) { uint64_t r = next(); return (r & 1) ? f_of((uint32_t)(r >> 32)) : (float)((double)(int64_t)(r >> 1) * 0x1p-58); }
+static double in_d(void) { uint64_t r = next(); return (r & 1) ? d_of(next()) : (double)(int64_t)r * 0x1p-58; }
+
+/* one call of an entry point on arrays; lanes: 8/4 (c) or 16/8 (e) */
+__attribute__((target("avx"), noinline)) static void call_c(void *v, int fl, int two, const void *x, const void *y, void *out)
+{
+  if (fl) { __m256 a = _mm256_loadu_ps(x), b = _mm256_loadu_ps(y);
+    _mm256_storeu_ps(out, two ? ((__m256 (*)(__m256, __m256))v)(a, b) : ((__m256 (*)(__m256))v)(a)); }
+  else { __m256d a = _mm256_loadu_pd(x), b = _mm256_loadu_pd(y);
+    _mm256_storeu_pd(out, two ? ((__m256d (*)(__m256d, __m256d))v)(a, b) : ((__m256d (*)(__m256d))v)(a)); }
+}
+__attribute__((target("avx512f"), noinline)) static void call_e(void *v, int fl, int two, const void *x, const void *y, void *out)
+{
+  if (fl) { __m512 a = _mm512_loadu_ps(x), b = _mm512_loadu_ps(y);
+    _mm512_storeu_ps(out, two ? ((__m512 (*)(__m512, __m512))v)(a, b) : ((__m512 (*)(__m512))v)(a)); }
+  else { __m512d a = _mm512_loadu_pd(x), b = _mm512_loadu_pd(y);
+    _mm512_storeu_pd(out, two ? ((__m512d (*)(__m512d, __m512d))v)(a, b) : ((__m512d (*)(__m512d))v)(a)); }
+}
+
+static long N = 1 << 16;
+static char cls;
+static long check(int fl, int two, void *vec, void *ref)
+{
+  int lanes = (cls == 'c' ? 8 : 16) / (fl ? 1 : 2);
+  long bad = 0;
+  for (long i = 0; i < N; i++) {
+    float xf[16], yf[16], of[16]; double xd[16], yd[16], od[16];
+    for (int k = 0; k < lanes; k++) { xf[k] = in_f(); yf[k] = in_f(); xd[k] = in_d(); yd[k] = in_d(); }
+    if (fl) {
+      (cls == 'c' ? call_c : call_e)(vec, 1, two, xf, yf, of);
+      for (int k = 0; k < lanes; k++) bad += !same_f(of[k], two ? ((float (*)(float, float))ref)(xf[k], yf[k]) : ((float (*)(float))ref)(xf[k]));
+    } else {
+      (cls == 'c' ? call_c : call_e)(vec, 0, two, xd, yd, od);
+      for (int k = 0; k < lanes; k++) bad += !same_d(od[k], two ? ((double (*)(double, double))ref)(xd[k], yd[k]) : ((double (*)(double))ref)(xd[k]));
+    }
+  }
+  return bad;
+}
+
+static char tested[128][40]; static int ntested;
+static long run(void *lib, void *ref, int fl, int two, const char *list, int *fns)
+{
+  long bad_total = 0; char buf[512]; strcpy(buf, list);
+  for (char *f = strtok(buf, " "); f; f = strtok(NULL, " ")) {
+    char sym[40], rsym[40];
+    snprintf(sym, sizeof sym, "_ZGV%cN%d%s_%s", cls, (cls == 'c' ? 8 : 16) / (fl ? 1 : 2), two ? "vv" : "v", f);
+    snprintf(rsym, sizeof rsym, "cr_%s", f);
+    void *v = dlsym(lib, sym), *r = dlsym(ref, rsym);
+    if (!v || !r) { printf("  %-12s MISSING (%s)\n", f, v ? rsym : sym); bad_total++; continue; }
+    long b = check(fl, two, v, r);
+    if (b) printf("  %-8s: %ld differ\n", sym, b);
+    bad_total += b; (*fns)++; strcpy(tested[ntested++], sym);
+  }
+  return bad_total;
+}
+
+/* CRTEST_ROUND=up|down|zero: run in that rounding mode (added 2026-09-27) */
+static int set_round_env(void)
+{
+  const char *r = getenv("CRTEST_ROUND");
+  if (!r || !*r || !strcmp(r, "nearest")) return 0;
+  int m = !strcmp(r, "up") ? FE_UPWARD : !strcmp(r, "down") ? FE_DOWNWARD : !strcmp(r, "zero") ? FE_TOWARDZERO : -1;
+  if (m < 0 || fesetround(m)) { printf("CRTEST_ROUND=%s: not a mode\n", r); return -1; }
+  printf("rounding mode: %s\n", r); return 0;
+}
+
+int main(int argc, char **argv)
+{
+  if (set_round_env()) return 2;
+  cls = argc > 1 ? argv[1][0] : 'c';
+  if (cls != 'c' && cls != 'e') { printf("usage: cecheck c|e [dir [k]]\n"); return 2; }
+  const char *dir = argc > 2 ? argv[2] : ".";
+  if (argc > 3) N = 1L << atoi(argv[3]);
+  char p1[512], p2[512]; snprintf(p1, sizeof p1, "%s/libmvec.so.1", dir); snprintf(p2, sizeof p2, "%s/libcrref.so", dir);
+  void *lib = dlopen(p1, RTLD_NOW | RTLD_LOCAL), *ref = dlopen(p2, RTLD_NOW | RTLD_LOCAL);
+  if (!lib || !ref) { printf("VOID: cannot load %s\n", dlerror()); return 2; }
+  __builtin_cpu_init();
+  printf("class %c; this CPU: avx %d, avx2 %d, fma %d, avx512f %d\n", cls, __builtin_cpu_supports("avx"), __builtin_cpu_supports("avx2"),
+         __builtin_cpu_supports("fma"), __builtin_cpu_supports("avx512f"));
+  int fns = 0; long bad = 0;
+  bad += run(lib, ref, 1, 0, F1, &fns); bad += run(lib, ref, 1, 1, F2, &fns);
+  bad += run(lib, ref, 0, 0, D1, &fns); bad += run(lib, ref, 0, 1, D2, &fns);
+  char cmd[600]; snprintf(cmd, sizeof cmd, "nm -D --defined-only %s | awk '{print $3}' | grep '^_ZGV%c'", p1, cls);
+  FILE *pp = popen(cmd, "r"); char line[80]; int exported = 0, untested = 0;
+  while (pp && fgets(line, sizeof line, pp)) {
+    line[strcspn(line, "\n")] = 0; exported++;
+    int found = 0; for (int i = 0; i < ntested; i++) if (!strcmp(tested[i], line)) found = 1;
+    if (!found) { printf("  exported but untested: %s\n", line); untested++; }
+  }
+  if (pp) pclose(pp);
+  char s[40]; snprintf(s, sizeof s, "_ZGV%cN%dv_sinf", cls, cls == 'c' ? 8 : 16);
+  long ctl = check(1, 0, dlsym(lib, s), dlsym(ref, "cr_cosf"));
+  printf("control: %s against cr_cosf: %ld differ (must be > 0)\n", s, ctl);
+  printf("coverage: %d functions tested, %ld calls each; library exports %d _ZGV%c symbols, %d untested\n", fns, N, exported, cls, untested);
+  int ok = !bad && !untested && ctl > 0 && exported > 0;
+  printf("VERDICT: %s\n", ok ? "every entry point IDENTICAL to CORE-MATH on every input tried" : "FAILED");
+  return !ok;
+}

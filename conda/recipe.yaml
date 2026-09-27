@@ -1,0 +1,52 @@
+# conda-forge recipe for crmvec (rattler-build, recipe format v1). To submit:
+# a pull request to conda-forge/staged-recipes with this directory. The
+# sha256 is the release tarball's (git tag v0.1.0 on anun333/crmvec).
+context:
+  version: "0.1.0"
+
+package:
+  name: crmvec
+  version: ${{ version }}
+
+source:
+  url: https://github.com/anun333/crmvec/archive/refs/tags/v${{ version }}.tar.gz
+  sha256: SHA256_OF_THE_TAGGED_TARBALL
+
+build:
+  number: 0
+  skip:
+    - not linux
+  script:
+    - make clean
+    - make lib CC="$CC"
+    - make install PREFIX="$PREFIX"
+
+requirements:
+  build:
+    - ${{ compiler('c') }}
+    - ${{ stdlib('c') }}
+    - make
+  host:
+    - if: aarch64
+      then: simde
+
+tests:
+  - script:
+      - test -f $PREFIX/lib/crmvec/libmvec.so.1
+      - test -f $PREFIX/include/crmvec.h
+      - test -x $PREFIX/bin/crmvec-run
+
+about:
+  homepage: https://github.com/anun333/crmvec
+  license: MIT
+  license_file: LICENSE
+  summary: Correctly rounded vector math, a drop-in libmvec (and, on aarch64, libsleefgnuabi)
+  description: |
+    The vector functions gcc and clang call when they vectorize a loop over
+    sin, exp, pow and 23 more, correctly rounded (bit for bit CORE-MATH's)
+    in every rounding mode; half-precision and bfloat16 arrays. Installed
+    in lib/crmvec, used through crmvec-run or pkg-config crmvec.
+
+extra:
+  recipe-maintainers:
+    - anun333

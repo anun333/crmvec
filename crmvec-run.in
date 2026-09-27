@@ -1,0 +1,6 @@
+#!/bin/sh
+# crmvec-run: run a program with crmvec's libmvec.so.1 (and, on aarch64,
+# libsleefgnuabi.so.3) found before the system's, so that the vector math it
+# was compiled to call is correctly rounded. Nothing else changes.
+#   crmvec-run ./program args...
+LD_LIBRARY_PATH="@CRMDIR@${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}" exec "$@"

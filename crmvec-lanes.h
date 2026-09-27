@@ -19,7 +19,12 @@
      SD3 SF3           three (fma)              SDI SFI           int result
      LDN LFN SDN SFN   (x, n)                   SDP SFP           result, and *p
      SDPP SFPP         void; results through p and q
-   Any shape left undefined expands to nothing. */
+   Any shape left undefined expands to nothing.
+
+   VF1 VD2 VF2 VDN VFN: as LF1 LD2 LF2 LDN LFN (and expanded through them
+   unless defined), for the functions x86 gives a vector path (sinpif,
+   cospif, tanpif, rsqrtf; powr, pown: built on crmvec's vector pow, crmvec.c);
+   every other includer treats them as L entries. Added 2026-09-27. */
 #ifndef CRMVEC_LANES_DECL
 #define CRMVEC_LANES_DECL
 double cr_sinpi(double), cr_cospi(double), cr_tanpi(double), cr_asinpi(double), cr_acospi(double);
@@ -43,6 +48,21 @@ int ilogb(double), ilogbf(float);
 #endif
 
 #define CRL_NONE(n, e)
+#ifndef VF1
+#define VF1 LF1
+#endif
+#ifndef VD2
+#define VD2 LD2
+#endif
+#ifndef VF2
+#define VF2 LF2
+#endif
+#ifndef VDN
+#define VDN LDN
+#endif
+#ifndef VFN
+#define VFN LFN
+#endif
 #ifndef LD1
 #define LD1 CRL_NONE
 #endif
@@ -105,18 +125,18 @@ int ilogb(double), ilogbf(float);
 #endif
 
 /* L: correctly rounded, every ISA */
-LD1(sinpi, cr_sinpi(x))     LF1(sinpif, cr_sinpif(x))
-LD1(cospi, cr_cospi(x))     LF1(cospif, cr_cospif(x))
-LD1(tanpi, cr_tanpi(x))     LF1(tanpif, cr_tanpif(x))
+LD1(sinpi, cr_sinpi(x))     VF1(sinpif, cr_sinpif(x))
+LD1(cospi, cr_cospi(x))     VF1(cospif, cr_cospif(x))
+LD1(tanpi, cr_tanpi(x))     VF1(tanpif, cr_tanpif(x))
 LD1(asinpi, cr_asinpi(x))   LF1(asinpif, cr_asinpif(x))
 LD1(acospi, cr_acospi(x))   LF1(acospif, cr_acospif(x))
 LD1(atanpi, cr_atanpi(x))   LF1(atanpif, cr_atanpif(x))
 LD1(lgamma, cr_lgamma(x))   LF1(lgammaf, cr_lgammaf(x))
 LD1(tgamma, cr_tgamma(x))   LF1(tgammaf, cr_tgammaf(x))
-LD1(rsqrt, cr_rsqrt(x))     LF1(rsqrtf, cr_rsqrtf(x))
+LD1(rsqrt, cr_rsqrt(x))     VF1(rsqrtf, cr_rsqrtf(x))
 LD2(atan2pi, cr_atan2pi(x, y))  LF2(atan2pif, cr_atan2pif(x, y))
-LD2(powr, crm_powr(x, y))       LF2(powrf, crm_powrf(x, y))
-LDN(pown, crm_pown(x, n))       LFN(pownf, crm_pownf(x, n))
+VD2(powr, crm_powr(x, y))       VF2(powrf, crm_powrf(x, y))
+VDN(pown, crm_pown(x, n))       VFN(pownf, crm_pownf(x, n))
 
 /* S: SLEEF's other names, aarch64 */
 SDPP(sincos, cr_sincos(x, p, q))      SFPP(sincosf, cr_sincosf(x, p, q))
@@ -142,6 +162,11 @@ SD3(fma, __builtin_fma(x, y, z))  SF3(fmaf, __builtin_fmaf(x, y, z))
 SDN(ldexp, ldexp(x, n))         SFN(ldexpf, ldexpf(x, n))
 SDP(modf, modf(x, p))           SFP(modff, modff(x, p))
 
+#undef VF1
+#undef VD2
+#undef VF2
+#undef VDN
+#undef VFN
 #undef LD1
 #undef LF1
 #undef LD2

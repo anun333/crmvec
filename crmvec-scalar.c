@@ -2,6 +2,7 @@
    under that name, made from ones it does. Added 2026-09-27. Hidden: the
    entry points in crmvec.c, crmvec-aarch64.c and crmvec-sve.c call them.
    Checked against MPFR by mpfrcheck.c. */
+#include <fenv.h>
 #include <math.h>
 #include <stdint.h>
 #include <string.h>
@@ -38,7 +39,11 @@ HIDDEN double crm_pown(double x, int n) { return cr_pow(x, (double)n); }
    2^24 whose result lies between half the smallest subnormal and the
    overflow threshold (19.5 billion pairs) and finds 35 such midpoints, on
    15 of which rounding again goes the wrong way; crmvec-pownf-tab.h lists
-   all 35 with MPFR's correctly rounded result, for x > 0. */
+   all 35 with MPFR's correctly rounded result, for x > 0. In the directed
+   modes no table is needed: cr_pow rounds in the current mode, and two
+   roundings in the same direction give the one rounding (the smallest
+   float at or above the smallest double at or above x^n is the smallest
+   float at or above x^n, since floats are doubles). */
 #include "crmvec-pownf-tab.h"
 static int float_midpoint(double r)   /* r exactly halfway between two floats (subnormals counted) */
 {
@@ -52,7 +57,7 @@ HIDDEN float crm_pownf(float x, int n)
 {
   if (n >= -(1 << 24) && n <= (1 << 24)) return cr_powf(x, (float)n);
   double r = cr_pow((double)x, (double)n);
-  if (float_midpoint(r)) {
+  if (float_midpoint(r) && fegetround() == FE_TONEAREST) {
     float a = fabsf(x); uint32_t ax; memcpy(&ax, &a, 4);
     for (unsigned i = 0; i < sizeof POWNF_EXC / sizeof POWNF_EXC[0]; i++)
       if (POWNF_EXC[i].x == ax && POWNF_EXC[i].n == n) {
@@ -72,3 +77,19 @@ HIDDEN double crm_frfrexp(double x) { int e; return frexp(x, &e); }
 HIDDEN float crm_frfrexpf(float x) { int e; return frexpf(x, &e); }
 HIDDEN int crm_expfrexp(double x) { int e; frexp(x, &e); return x - x == 0 ? e : 0; }
 HIDDEN int crm_expfrexpf(float x) { int e; frexpf(x, &e); return x - x == 0 ? e : 0; }
+
+/* The L group of crmvec-lanes.h as exported scalar functions, crmvec_<name>
+   (added 2026-09-27): what a vectorized caller calls for the lanes it does
+   not vectorize. PoCL's experimental ENABLE_HOST_CPU_VECTORIZE_CRMVEC
+   builtins call these, and its vectorizer rows map them to the _ZGV entry
+   points. Own names, not C23's: glibc 2.41+ has its own sinpi, and C23's
+   pown takes a long long where OpenCL's takes an int. */
+#include "crmvec-lanes.h"
+#define EXPORT __attribute__((visibility("default")))
+#define LD1(NM, e) EXPORT double crmvec_##NM(double x) { return e; }
+#define LF1(NM, e) EXPORT float crmvec_##NM(float x) { return e; }
+#define LD2(NM, e) EXPORT double crmvec_##NM(double x, double y) { return e; }
+#define LF2(NM, e) EXPORT float crmvec_##NM(float x, float y) { return e; }
+#define LDN(NM, e) EXPORT double crmvec_##NM(double x, int n) { return e; }
+#define LFN(NM, e) EXPORT float crmvec_##NM(float x, int n) { return e; }
+#include "crmvec-lanes.h"

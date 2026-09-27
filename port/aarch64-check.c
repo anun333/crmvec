@@ -15,6 +15,7 @@
    others in the last bit). NaNs compare equal to NaNs. */
 #include <arm_neon.h>
 #include <arm_sve.h>
+#include <fenv.h>
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -322,8 +323,19 @@ static void all_floats(void)
 #undef D2
 }
 
+/* CRTEST_ROUND=up|down|zero: run in that rounding mode (added 2026-09-27) */
+static int set_round_env(void)
+{
+  const char *r = getenv("CRTEST_ROUND");
+  if (!r || !*r || !strcmp(r, "nearest")) return 0;
+  int m = !strcmp(r, "up") ? FE_UPWARD : !strcmp(r, "down") ? FE_DOWNWARD : !strcmp(r, "zero") ? FE_TOWARDZERO : -1;
+  if (m < 0 || fesetround(m)) { printf("CRTEST_ROUND=%s: not a mode\n", r); return -1; }
+  printf("rounding mode: %s\n", r); return 0;
+}
+
 int main(int argc, char **argv)
 {
+  if (set_round_env()) return 2;
   if (argc > 1 && !strcmp(argv[1], "floats")) all_floats();
   else { long n = argc > 2 ? atol(argv[2]) : 1 << 14; sample(n); lanes(n / 16); }
   printf("VERDICT: %s (%ld results checked, %ld differ)\n", bad_total ? "DIFFERS from CORE-MATH" : "IDENTICAL to CORE-MATH on every input tried",

@@ -17,6 +17,7 @@
 #include <emmintrin.h>
 #include <link.h>
 #include <math.h>
+#include <fenv.h>
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -107,8 +108,19 @@ static long run(void *lib, void *ref, const char *kind, const char *list, int *f
 
 static int cb(struct dl_phdr_info *info, size_t size, void *data) { (void)size; (void)data; if (strstr(info->dlpi_name, "libmvec.so.1")) printf("loaded: %s\n", info->dlpi_name); return 0; }
 
+/* CRTEST_ROUND=up|down|zero: run in that rounding mode (added 2026-09-27) */
+static int set_round_env(void)
+{
+  const char *r = getenv("CRTEST_ROUND");
+  if (!r || !*r || !strcmp(r, "nearest")) return 0;
+  int m = !strcmp(r, "up") ? FE_UPWARD : !strcmp(r, "down") ? FE_DOWNWARD : !strcmp(r, "zero") ? FE_TOWARDZERO : -1;
+  if (m < 0 || fesetround(m)) { printf("CRTEST_ROUND=%s: not a mode\n", r); return -1; }
+  printf("rounding mode: %s\n", r); return 0;
+}
+
 int main(int argc, char **argv)
 {
+  if (set_round_env()) return 2;
   const char *dir = argc > 1 ? argv[1] : ".";
   if (argc > 2) N = 1L << atoi(argv[2]);
   char p1[512], p2[512]; snprintf(p1, sizeof p1, "%s/libmvec.so.1", dir); snprintf(p2, sizeof p2, "%s/libcrref.so", dir);

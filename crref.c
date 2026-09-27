@@ -80,3 +80,27 @@ double crmref_powr(double x, double y) { return crm_powr(x, y); }
 float crmref_powrf(float x, float y) { return crm_powrf(x, y); }
 double crmref_pown(double x, int n) { return crm_pown(x, n); }
 float crmref_pownf(float x, int n) { return crm_pownf(x, n); }
+
+/* array references for crmvec-c23-pocl.py: the L group (added 2026-09-27) */
+double cr_sinpi(double), cr_cospi(double), cr_tanpi(double), cr_asinpi(double), cr_acospi(double), cr_atanpi(double);
+double cr_rsqrt(double), cr_lgamma(double), cr_tgamma(double), cr_atan2pi(double, double);
+float cr_sinpif(float), cr_cospif(float), cr_tanpif(float), cr_asinpif(float), cr_acospif(float), cr_atanpif(float);
+float cr_rsqrtf(float), cr_lgammaf(float), cr_tgammaf(float), cr_atan2pif(float, float);
+#define LOOPN(NAME, T, F)                                  \
+  void NAME(const T *x, const int *n, T *y, long len)      \
+  {                                                        \
+    _Pragma("omp parallel for schedule(static)")           \
+    for (long i = 0; i < len; i++) y[i] = F(x[i], n[i]);   \
+  }
+LOOP(ref_sinpi, double, cr_sinpi) LOOP(ref_cospi, double, cr_cospi) LOOP(ref_tanpi, double, cr_tanpi)
+LOOP(ref_asinpi, double, cr_asinpi) LOOP(ref_acospi, double, cr_acospi) LOOP(ref_atanpi, double, cr_atanpi)
+LOOP(ref_rsqrt, double, cr_rsqrt) LOOP(ref_lgamma, double, cr_lgamma) LOOP(ref_tgamma, double, cr_tgamma)
+LOOP(ref_sinpif, float, cr_sinpif) LOOP(ref_cospif, float, cr_cospif) LOOP(ref_tanpif, float, cr_tanpif)
+LOOP(ref_asinpif, float, cr_asinpif) LOOP(ref_acospif, float, cr_acospif) LOOP(ref_atanpif, float, cr_atanpif)
+LOOP(ref_rsqrtf, float, cr_rsqrtf) LOOP(ref_lgammaf, float, cr_lgammaf) LOOP(ref_tgammaf, float, cr_tgammaf)
+LOOP2(ref_atan2pi, double, cr_atan2pi) LOOP2(ref_atan2pif, float, cr_atan2pif)
+LOOP2(ref_powr, double, crm_powr) LOOP2(ref_powrf, float, crm_powrf)
+LOOPN(ref_pown, double, crm_pown) LOOPN(ref_pownf, float, crm_pownf)
+/* the two float ones the list above lacked (added 2026-09-27, for coremath-pocl.py) */
+float cr_expf(float), cr_logf(float);
+LOOP(ref_expf, float, cr_expf) LOOP(ref_logf, float, cr_logf)

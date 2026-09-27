@@ -38,6 +38,39 @@
 #endif
 #include <stdint.h>
 #include <string.h>
+#if !(defined(__x86_64__) || defined(__i386__))
+#include <fenv.h>
+#endif
+
+/* The rounding-mode guard (added 2026-09-27). The vector code is correct in
+   round-to-nearest only: its fast paths decide special regimes (tiny
+   arguments, the edges of a regime) as round-to-nearest would, and the
+   exhaustive check in round-upward found every float function but three
+   wrong on millions of inputs. CORE-MATH, built with -frounding-math, is
+   correctly rounded in all four modes. So every entry point below is
+   defined under an internal name (crmvec-rename.h: _ZGVdN8v_expf is
+   crvi_expf), and the exported name is a wrapper at the end of this file
+   that runs the vector code in round-to-nearest and CORE-MATH lane by lane
+   otherwise; the SSE2, AVX, AVX-512 and powr/pown paths, which call the
+   internal names, check for themselves. On x86, crm_rn() does not read
+   MXCSR but watches two additions round: 1 + 3*2^-54 goes to 1 + 2^-52 in
+   round-to-nearest and upward only, and -1 - 3*2^-54 to -1 - 2^-52 in
+   round-to-nearest and downward only. Reading MXCSR (stmxcsr) cost 14% of
+   the median function's time, the additions 5% (2026-09-27); the empty asm
+   keeps the compiler from folding them. Elsewhere it asks fegetround. */
+#include "crmvec-rename.h"
+#if defined(CRM_GUARD_OFF)   /* the checks' control: the vector code in every mode */
+static inline __attribute__((always_inline)) int crm_rn(void) { return 1; }
+#elif defined(__x86_64__) || defined(__i386__)
+static inline __attribute__((always_inline)) int crm_rn(void) {
+  __m128d a = _mm_set_pd(-1.0, 1.0);
+  __asm__("" : "+x"(a));
+  __m128d r = _mm_add_pd(a, _mm_set_pd(-0x3p-54, 0x3p-54));
+  return _mm_movemask_pd(_mm_cmpeq_pd(r, _mm_set_pd(-0x1.0000000000001p0, 0x1.0000000000001p0))) == 3;
+}
+#else
+static inline __attribute__((always_inline)) int crm_rn(void) { return fegetround() == FE_TONEAREST; }
+#endif
 
 float cr_expf(float), cr_exp2f(float), cr_exp10f(float);
 float cr_logf(float), cr_log2f(float), cr_log10f(float);
@@ -3834,7 +3867,7 @@ __attribute__((constructor)) static void crm_cpu(void)
 #ifndef BVEC_ALL
 #define BVEC_ALL -1
 #endif
-#define BVON(n) ((BVEC_ALL < 0 ? BV_##n : BVEC_ALL) && crm_avx2)
+#define BVON(n) ((BVEC_ALL < 0 ? BV_##n : BVEC_ALL) && crm_avx2 && crm_rn())
 #define F1(n) AVX2 __attribute__((noinline)) static __m128 bv_##n(__m128 x)                          \
   { return _mm256_castps256_ps128(_ZGVdN8v_##n(_mm256_set_m128(x, x))); }                          \
   __m128 _ZGVbN4v_##n(__m128 x)                                                                     \
@@ -3905,5 +3938,278 @@ ALIAS(_ZGVbN2vv___pow_finite, _ZGVbN2vv_pow, __m128d, (__m128d, __m128d), NOATTR
 #define LF2(n, e) XL2(float, __m128, 4, _ZGVbN4vv_##n, e, NOATTR) XL2(float, __m256, 8, _ZGVdN8vv_##n, e, AVX2)
 #define LDN(n, e) XLN(double, __m128d, __m128i, 2, _ZGVbN2vv_##n, e, NOATTR) XLN(double, __m256d, __m128i, 4, _ZGVdN4vv_##n, e, AVX2)
 #define LFN(n, e) XLN(float, __m128, __m128i, 4, _ZGVbN4vv_##n, e, NOATTR) XLN(float, __m256, __m256i, 8, _ZGVdN8vv_##n, e, AVX2)
+/* sinpif, cospif, rsqrtf, powr and pown have vector paths (below) */
+#define VF1(n, e)
+#define VD2(n, e)
+#define VF2(n, e)
+#define VDN(n, e)
+#define VFN(n, e)
 #include "crmvec-lanes.h"
+
+/* powr and pown on crmvec's vector pow (added 2026-09-27). pown(x, n) is
+   pow(x, n) exactly (crmvec-scalar.c), with n converted exactly; for floats
+   only while |n| <= 2^24, the rest of the lanes going to crm_pownf. powr is
+   pow except at its special values, fixed lane by lane with exact
+   comparisons, so it is correctly rounded in every mode that pow is: NaN
+   for x < 0, 0^0, inf^0, 1^inf, NaN^0 and 1^NaN (where pow gives 1), and
+   -0 counts as +0. Checked by mpfrcheck against MPFR. */
+#define POWR_BODY(V, S, CMP, BLEND, SET1, AND, OR, POW, AS)                                   \
+  V zero = SET1(0), one = SET1(1), inf = SET1(__builtin_inf());                                       \
+  V xz = CMP(x, zero, _CMP_EQ_OQ), yz = CMP(y, zero, _CMP_EQ_OQ);                              \
+  V x0 = BLEND(x, zero, xz);                                /* -0 as +0 */                     \
+  V r = POW(x0, y);                                                                            \
+  V yinf = CMP(AS(y), inf, _CMP_EQ_OQ), ynan = CMP(y, y, _CMP_UNORD_Q), xnan = CMP(x, x, _CMP_UNORD_Q); \
+  V bad = OR(OR(CMP(x, zero, _CMP_LT_OQ), AND(xz, yz)),                                        \
+             OR(AND(CMP(x, inf, _CMP_EQ_OQ), yz),                                              \
+                OR(AND(CMP(x, one, _CMP_EQ_OQ), OR(yinf, ynan)), AND(xnan, yz))));             \
+  return BLEND(r, SET1(__builtin_nan("")), bad);
+static inline AVX2I __m256d absd(__m256d v) { return _mm256_andnot_pd(_mm256_set1_pd(-0.0), v); }
+static inline AVX2I __m256 absf(__m256 v) { return _mm256_andnot_ps(_mm256_set1_ps(-0.0f), v); }
+#define LANEWISE(T, N, V, CR, VI, NI)                                                        \
+  { T a[N]; NI b[N]; memcpy(a, &x, sizeof a); memcpy(b, &y, sizeof b);                          \
+    for (int i = 0; i < N; i++) a[i] = CR(a[i], b[i]); V r; memcpy(&r, a, sizeof r); return r; }
+AVX2 __m256d _ZGVdN4vv_powr(__m256d x, __m256d y)
+{ if (!crm_rn()) LANEWISE(double, 4, __m256d, crm_powr, __m256d, double)
+  POWR_BODY(__m256d, double, _mm256_cmp_pd, _mm256_blendv_pd, _mm256_set1_pd, _mm256_and_pd, _mm256_or_pd, _ZGVdN4vv_pow, absd) }
+AVX2 __m256 _ZGVdN8vv_powrf(__m256 x, __m256 y)
+{ if (!crm_rn()) LANEWISE(float, 8, __m256, crm_powrf, __m256, float)
+  POWR_BODY(__m256, float, _mm256_cmp_ps, _mm256_blendv_ps, _mm256_set1_ps, _mm256_and_ps, _mm256_or_ps, _ZGVdN8vv_powf, absf) }
+AVX2 __m256d _ZGVdN4vv_pown(__m256d x, __m128i n)
+{ if (!crm_rn()) { __m128i y = n; LANEWISE(double, 4, __m256d, crm_pown, __m128i, int32_t) }
+  return _ZGVdN4vv_pow(x, _mm256_cvtepi32_pd(n)); }
+AVX2 __m256 _ZGVdN8vv_pownf(__m256 x, __m256i n)
+{
+  if (!crm_rn()) { __m256i y = n; LANEWISE(float, 8, __m256, crm_pownf, __m256i, int32_t) }
+  __m256 r = _ZGVdN8vv_powf(x, _mm256_cvtepi32_ps(n));
+  __m256i lim = _mm256_set1_epi32(1 << 24);
+  __m256i big = _mm256_or_si256(_mm256_cmpgt_epi32(n, lim), _mm256_cmpgt_epi32(_mm256_sub_epi32(_mm256_setzero_si256(), lim), n));
+  if (_mm256_testz_si256(big, big)) return r;
+  float a[8], o[8]; int32_t k[8], b[8];
+  _mm256_storeu_ps(a, x); _mm256_storeu_ps(o, r); _mm256_storeu_si256((__m256i *)k, n); _mm256_storeu_si256((__m256i *)b, big);
+  for (int i = 0; i < 8; i++) if (b[i]) o[i] = crm_pownf(a[i], k[i]);
+  return _mm256_loadu_ps(o);
+}
+/* sinpif, cospif and rsqrtf (added 2026-09-27), in double with the float
+   rounding test (ambiguous), flagged lanes recomputed by CORE-MATH (finish8).
+   sinpi/cospi: x = n/2 + r with n = round(2x), |r| <= 1/4, exact in double
+   for every float (x has 24 bits and |x| < 2^22 here), then sin(pi r) and
+   cos(pi r) by Taylor polynomials of degree 15 and 16 (truncation below
+   2^-55 at |pi r| <= pi/4), chosen and signed by n mod 4. IEEE's zero signs:
+   sinpi of an integer takes x's sign, cospi of a half-integer is +0. |x| >=
+   2^22 (integers and half-integers), infinities and NaN go to CORE-MATH.
+   rsqrt: sqrt and a division in double, each correctly rounded, so within
+   2^-52; x <= 0, infinities and NaN go to CORE-MATH. The bound given to
+   ambiguous() is 2^-44 for all three, far above the evaluation error;
+   checked on every input (lcheck.c), where a zero bound fails. */
+static const double SINPI_C[8] = {   /* pi^(2k+1) / (2k+1)!, alternating (mpmath, 300 bits) */
+  0x1.921fb54442d18p+1, -0x1.4abbce625be53p+2, 0x1.466bc6775aae2p+1, -0x1.32d2cce62bd86p-1,
+  0x1.50783487ee782p-4, -0x1.e3074fde8871fp-8, 0x1.e8f434d018d63p-12, -0x1.6fadb9f155744p-16};
+static const double COSPI_C[9] = {   /* pi^(2k) / (2k)!, alternating (mpmath, 300 bits) */
+  0x1.0000000000000p+0, -0x1.3bd3cc9be45dep+2, 0x1.03c1f081b5ac4p+2, -0x1.55d3c7e3cbffap+0,
+  0x1.e1f506891babbp-3, -0x1.a6d1f2a204a8cp-6, 0x1.f9d38a3763cc3p-10, -0x1.b6e24f44b128fp-14,
+  0x1.20c62c2f2d7f5p-18};
+#ifndef SINPI_TERMS   /* the check's control: fewer terms must fail it */
+#define SINPI_TERMS 8
 #endif
+AVX2I static inline __m256d sinpi_half(__m256d x, int cosine, __m128i *flag)
+{
+  __m256d ax = _mm256_andnot_pd(_mm256_set1_pd(-0.0), x);
+  __m256d big = _mm256_cmp_pd(ax, _mm256_set1_pd(0x1p22), _CMP_NLT_UQ);          /* |x| >= 2^22, or NaN */
+  x = _mm256_andnot_pd(big, x);                                                   /* those lanes: 0 */
+  __m256d n = _mm256_round_pd(_mm256_add_pd(x, x), _MM_FROUND_TO_NEAREST_INT | _MM_FROUND_NO_EXC);
+  __m256d r = _mm256_fnmadd_pd(n, _mm256_set1_pd(0.5), x);                      /* x - n/2, exact */
+  __m256d z = _mm256_mul_pd(r, r);
+  __m256d s = _mm256_set1_pd(SINPI_C[SINPI_TERMS - 1]), c = _mm256_set1_pd(COSPI_C[SINPI_TERMS]);
+  for (int k = SINPI_TERMS - 2; k >= 0; k--) s = _mm256_fmadd_pd(s, z, _mm256_set1_pd(SINPI_C[k]));
+  for (int k = SINPI_TERMS - 1; k >= 0; k--) c = _mm256_fmadd_pd(c, z, _mm256_set1_pd(COSPI_C[k]));
+  s = _mm256_mul_pd(s, r);
+  /* n mod 4 (+1 for cospi: cos(pi x) = sin(pi (x + 1/2))) */
+  __m128i q = _mm256_cvtpd_epi32(n);
+  if (cosine) q = _mm_add_epi32(q, _mm_set1_epi32(1));
+  __m256d odd = _mm256_castsi256_pd(_mm256_cvtepi32_epi64(_mm_slli_epi32(q, 31)));   /* sign bit set iff q odd */
+  __m256d neg = _mm256_castsi256_pd(_mm256_slli_epi64(_mm256_cvtepi32_epi64(_mm_srli_epi32(q, 1)), 63));  /* q & 2 */
+  __m256d y = _mm256_blendv_pd(s, c, odd);
+  y = _mm256_xor_pd(y, neg);
+  __m256d rz = _mm256_cmp_pd(r, _mm256_setzero_pd(), _CMP_EQ_OQ);
+  if (!cosine) y = _mm256_blendv_pd(y, _mm256_mul_pd(x, _mm256_setzero_pd()), _mm256_andnot_pd(odd, rz));   /* integer: +-0 as x */
+  else y = _mm256_add_pd(y, _mm256_setzero_pd());                                /* half-integer: +0 */
+  *flag = _mm_or_si128(ambiguous(y, 0x1p-44), _mm256_castsi256_si128(_mm256_permutevar8x32_epi32(_mm256_castpd_si256(big), _mm256_setr_epi32(0, 2, 4, 6, 0, 2, 4, 6))));
+  return y;
+}
+#define SINPIF(NAME, COS, CR)                                                                  \
+  AVX2 __m256 _ZGVdN8v_##NAME(__m256 xf)                                                       \
+  {                                                                                            \
+    if (!crm_rn()) { float a[8]; _mm256_storeu_ps(a, xf); for (int i = 0; i < 8; i++) a[i] = CR(a[i]); return _mm256_loadu_ps(a); } \
+    __m128i r0, r1;                                                                            \
+    __m256d y0 = sinpi_half(_mm256_cvtps_pd(_mm256_castps256_ps128(xf)), COS, &r0);             \
+    __m256d y1 = sinpi_half(_mm256_cvtps_pd(_mm256_extractf128_ps(xf, 1)), COS, &r1);           \
+    return finish8(xf, y0, y1, r0, r1, CR);                                                     \
+  }
+SINPIF(sinpif, 0, cr_sinpif)
+SINPIF(cospif, 1, cr_cospif)
+/* tanpi from the same reduction: sin(pi r)/cos(pi r) for even n, and
+   -cos(pi r)/sin(pi r) for odd n (tan has period 1 in pi x); integers and
+   half-integers (r = 0: zeros and poles, with IEEE's sign rules) go to
+   CORE-MATH, as do |x| >= 2^22, infinities and NaN. */
+AVX2I static inline __m256d tanpi_half(__m256d x, __m128i *flag)
+{
+  __m256d ax = _mm256_andnot_pd(_mm256_set1_pd(-0.0), x);
+  __m256d big = _mm256_cmp_pd(ax, _mm256_set1_pd(0x1p22), _CMP_NLT_UQ);
+  x = _mm256_andnot_pd(big, x);
+  __m256d n = _mm256_round_pd(_mm256_add_pd(x, x), _MM_FROUND_TO_NEAREST_INT | _MM_FROUND_NO_EXC);
+  __m256d r = _mm256_fnmadd_pd(n, _mm256_set1_pd(0.5), x);
+  __m256d rz = _mm256_cmp_pd(r, _mm256_setzero_pd(), _CMP_EQ_OQ);
+  r = _mm256_blendv_pd(r, _mm256_set1_pd(0.125), rz);                            /* those lanes: recomputed */
+  __m256d z = _mm256_mul_pd(r, r);
+  __m256d s = _mm256_set1_pd(SINPI_C[SINPI_TERMS - 1]), c = _mm256_set1_pd(COSPI_C[SINPI_TERMS]);
+  for (int k = SINPI_TERMS - 2; k >= 0; k--) s = _mm256_fmadd_pd(s, z, _mm256_set1_pd(SINPI_C[k]));
+  for (int k = SINPI_TERMS - 1; k >= 0; k--) c = _mm256_fmadd_pd(c, z, _mm256_set1_pd(COSPI_C[k]));
+  s = _mm256_mul_pd(s, r);
+  __m128i q = _mm256_cvtpd_epi32(n);
+  __m256d odd = _mm256_castsi256_pd(_mm256_cvtepi32_epi64(_mm_slli_epi32(q, 31)));
+  __m256d num = _mm256_blendv_pd(s, _mm256_xor_pd(c, _mm256_set1_pd(-0.0)), odd), den = _mm256_blendv_pd(c, s, odd);
+  __m256d y = _mm256_div_pd(num, den);
+  __m256d bad = _mm256_or_pd(big, rz);
+  *flag = _mm_or_si128(ambiguous(y, 0x1p-44), _mm256_castsi256_si128(_mm256_permutevar8x32_epi32(_mm256_castpd_si256(bad), _mm256_setr_epi32(0, 2, 4, 6, 0, 2, 4, 6))));
+  return y;
+}
+AVX2 __m256 _ZGVdN8v_tanpif(__m256 xf)
+{
+  if (!crm_rn()) { float a[8]; _mm256_storeu_ps(a, xf); for (int i = 0; i < 8; i++) a[i] = cr_tanpif(a[i]); return _mm256_loadu_ps(a); }
+  __m128i r0, r1;
+  __m256d y0 = tanpi_half(_mm256_cvtps_pd(_mm256_castps256_ps128(xf)), &r0);
+  __m256d y1 = tanpi_half(_mm256_cvtps_pd(_mm256_extractf128_ps(xf, 1)), &r1);
+  return finish8(xf, y0, y1, r0, r1, cr_tanpif);
+}
+AVX2I static inline __m256d rsqrt_half(__m256d x, __m128i *flag)
+{
+  __m256d ok = _mm256_and_pd(_mm256_cmp_pd(x, _mm256_setzero_pd(), _CMP_GT_OQ), _mm256_cmp_pd(x, _mm256_set1_pd(__builtin_inf()), _CMP_LT_OQ));
+  x = _mm256_blendv_pd(_mm256_set1_pd(1.0), x, ok);                               /* others: 1, recomputed */
+  __m256d y = _mm256_div_pd(_mm256_set1_pd(1.0), _mm256_sqrt_pd(x));
+  __m256d bad = _mm256_xor_pd(ok, _mm256_castsi256_pd(_mm256_set1_epi64x(-1)));
+  *flag = _mm_or_si128(ambiguous(y, 0x1p-44), _mm256_castsi256_si128(_mm256_permutevar8x32_epi32(_mm256_castpd_si256(bad), _mm256_setr_epi32(0, 2, 4, 6, 0, 2, 4, 6))));
+  return y;
+}
+AVX2 __m256 _ZGVdN8v_rsqrtf(__m256 xf)
+{
+  if (!crm_rn()) { float a[8]; _mm256_storeu_ps(a, xf); for (int i = 0; i < 8; i++) a[i] = cr_rsqrtf(a[i]); return _mm256_loadu_ps(a); }
+  __m128i r0, r1;
+  __m256d y0 = rsqrt_half(_mm256_cvtps_pd(_mm256_castps256_ps128(xf)), &r0);
+  __m256d y1 = rsqrt_half(_mm256_cvtps_pd(_mm256_extractf128_ps(xf, 1)), &r1);
+  return finish8(xf, y0, y1, r0, r1, cr_rsqrtf);
+}
+#define BVF1(NAME)                                                                             \
+  AVX2 __attribute__((noinline)) static __m128 bvf_##NAME(__m128 x)                             \
+  { return _mm256_castps256_ps128(_ZGVdN8v_##NAME(_mm256_set_m128(x, x))); }                    \
+  __m128 _ZGVbN4v_##NAME(__m128 x)                                                              \
+  { if (crm_avx2 && crm_rn()) return bvf_##NAME(x);                                            \
+    float a[4]; memcpy(a, &x, 16); for (int i = 0; i < 4; i++) a[i] = cr_##NAME(a[i]); memcpy(&x, a, 16); return x; }
+BVF1(sinpif)
+BVF1(cospif)
+BVF1(rsqrtf)
+BVF1(tanpif)
+
+/* SSE2: the AVX2 code on duplicated lanes where the CPU has it (pow's
+   vector path is several times faster than scalar CORE-MATH), else per lane */
+#define BVP(NAME, V, W, T, N, SETW, CASTV, VI, DUPI, CR, NI)                                   \
+  AVX2 __attribute__((noinline)) static V bvp_##NAME(V x, VI y)                                  \
+  { return CASTV(_ZGVd##W##_##NAME(SETW(x), DUPI(y))); }                                      \
+  V _ZGVb##N##_##NAME(V x, VI y)                                                                 \
+  { if (crm_avx2 && crm_rn()) return bvp_##NAME(x, y);                                                       \
+    T a[16 / sizeof(T)]; NI b[16 / sizeof(NI)]; memcpy(a, &x, 16); memcpy(b, &y, 16);           \
+    for (unsigned i = 0; i < 16 / sizeof(T); i++) a[i] = CR(a[i], b[i]); memcpy(&x, a, 16); return x; }
+#define DUPD(v) _mm256_set_m128d(v, v)
+#define DUPF(v) _mm256_set_m128(v, v)
+#define DUPI2(v) _mm_unpacklo_epi64(v, v)          /* 2 ints for 2 doubles, then again */
+#define DUPI4(v) _mm256_set_m128i(v, v)
+BVP(powr, __m128d, N4vv, double, N2vv, DUPD, _mm256_castpd256_pd128, __m128d, DUPD, crm_powr, double)
+BVP(powrf, __m128, N8vv, float, N4vv, DUPF, _mm256_castps256_ps128, __m128, DUPF, crm_powrf, float)
+BVP(pown, __m128d, N4vv, double, N2vv, DUPD, _mm256_castpd256_pd128, __m128i, DUPI2, crm_pown, int32_t)
+BVP(pownf, __m128, N8vv, float, N4vv, DUPF, _mm256_castps256_ps128, __m128i, DUPI4, crm_pownf, int32_t)
+#endif
+
+/* ---- the AVX (c) and AVX-512 (e) entry points (added 2026-09-27) --------- */
+
+/* gcc calls these for a loop vectorized with -mavx (_ZGVcN4v_sin, 4 doubles
+   or 8 floats in a ymm register, for a CPU that may lack AVX2 and FMA) or
+   -mavx512f (_ZGVeN8v_sin, 8 doubles or 16 floats in a zmm register); LLVM
+   does not. glibc exports both classes for the same 26 functions, so a
+   program built that way would not load against this library without them.
+   c: on a CPU with AVX2 and FMA, the AVX2 code on the same lanes; else
+   scalar CORE-MATH per lane. e: the AVX2 code on each half (every AVX-512
+   CPU has AVX2 and FMA; the scalar loop stays for completeness). Checked by
+   cecheck.c, natively for c and under Intel SDE for e and for c on a CPU
+   without AVX2. */
+#if defined(__x86_64__) || defined(__i386__)
+#define AVXC __attribute__((target("avx"), noinline))
+#define AVXE __attribute__((target("avx512f"), noinline))
+#define F1(n)                                                                                 \
+  AVXC __m256 _ZGVcN8v_##n(__m256 x)                                                           \
+  { if (crm_avx2 && crm_rn()) return _ZGVdN8v_##n(x);                                                      \
+    float a[8]; _mm256_storeu_ps(a, x); for (int i = 0; i < 8; i++) a[i] = cr_##n(a[i]); return _mm256_loadu_ps(a); } \
+  AVXE __m512 _ZGVeN16v_##n(__m512 x)                                                          \
+  { float a[16]; _mm512_storeu_ps(a, x);                                                       \
+    if (crm_avx2 && crm_rn()) { _mm256_storeu_ps(a, _ZGVdN8v_##n(_mm256_loadu_ps(a))); _mm256_storeu_ps(a + 8, _ZGVdN8v_##n(_mm256_loadu_ps(a + 8))); } \
+    else for (int i = 0; i < 16; i++) a[i] = cr_##n(a[i]);                                     \
+    return _mm512_loadu_ps(a); }
+#define D1(n)                                                                                 \
+  AVXC __m256d _ZGVcN4v_##n(__m256d x)                                                         \
+  { if (crm_avx2 && crm_rn()) return _ZGVdN4v_##n(x);                                                      \
+    double a[4]; _mm256_storeu_pd(a, x); for (int i = 0; i < 4; i++) a[i] = cr_##n(a[i]); return _mm256_loadu_pd(a); } \
+  AVXE __m512d _ZGVeN8v_##n(__m512d x)                                                         \
+  { double a[8]; _mm512_storeu_pd(a, x);                                                       \
+    if (crm_avx2 && crm_rn()) { _mm256_storeu_pd(a, _ZGVdN4v_##n(_mm256_loadu_pd(a))); _mm256_storeu_pd(a + 4, _ZGVdN4v_##n(_mm256_loadu_pd(a + 4))); } \
+    else for (int i = 0; i < 8; i++) a[i] = cr_##n(a[i]);                                      \
+    return _mm512_loadu_pd(a); }
+#define F2(n)                                                                                 \
+  AVXC __m256 _ZGVcN8vv_##n(__m256 x, __m256 y)                                                \
+  { if (crm_avx2 && crm_rn()) return _ZGVdN8vv_##n(x, y);                                                  \
+    float a[8], b[8]; _mm256_storeu_ps(a, x); _mm256_storeu_ps(b, y); for (int i = 0; i < 8; i++) a[i] = cr_##n(a[i], b[i]); \
+    return _mm256_loadu_ps(a); }                                                               \
+  AVXE __m512 _ZGVeN16vv_##n(__m512 x, __m512 y)                                               \
+  { float a[16], b[16]; _mm512_storeu_ps(a, x); _mm512_storeu_ps(b, y);                        \
+    if (crm_avx2 && crm_rn()) for (int h = 0; h < 16; h += 8) _mm256_storeu_ps(a + h, _ZGVdN8vv_##n(_mm256_loadu_ps(a + h), _mm256_loadu_ps(b + h))); \
+    else for (int i = 0; i < 16; i++) a[i] = cr_##n(a[i], b[i]);                               \
+    return _mm512_loadu_ps(a); }
+#define D2(n)                                                                                 \
+  AVXC __m256d _ZGVcN4vv_##n(__m256d x, __m256d y)                                             \
+  { if (crm_avx2 && crm_rn()) return _ZGVdN4vv_##n(x, y);                                                  \
+    double a[4], b[4]; _mm256_storeu_pd(a, x); _mm256_storeu_pd(b, y); for (int i = 0; i < 4; i++) a[i] = cr_##n(a[i], b[i]); \
+    return _mm256_loadu_pd(a); }                                                               \
+  AVXE __m512d _ZGVeN8vv_##n(__m512d x, __m512d y)                                             \
+  { double a[8], b[8]; _mm512_storeu_pd(a, x); _mm512_storeu_pd(b, y);                         \
+    if (crm_avx2 && crm_rn()) for (int h = 0; h < 8; h += 4) _mm256_storeu_pd(a + h, _ZGVdN4vv_##n(_mm256_loadu_pd(a + h), _mm256_loadu_pd(b + h))); \
+    else for (int i = 0; i < 8; i++) a[i] = cr_##n(a[i], b[i]);                                \
+    return _mm512_loadu_pd(a); }
+#include "crmvec-functions.h"
+#undef F1
+#undef D1
+#undef F2
+#undef D2
+#endif
+
+/* ---- the exported AVX2 names: the rounding-mode guard (added 2026-09-27) --- */
+
+/* In round-to-nearest, the vector code (crvi_<name>); in any other mode,
+   CORE-MATH lane by lane. See crm_rn at the top. */
+#define F1(n) AVX2 __m256 crvx_##n(__m256) __asm__("_ZGVdN8v_" #n);                            \
+  AVX2 __m256 crvx_##n(__m256 x)                                                               \
+  { if (__builtin_expect(crm_rn(), 1)) return crvi_##n(x);                                     \
+    float a[8]; memcpy(a, &x, 32); for (int i = 0; i < 8; i++) a[i] = cr_##n(a[i]); memcpy(&x, a, 32); return x; }
+#define D1(n) AVX2 __m256d crvx_##n(__m256d) __asm__("_ZGVdN4v_" #n);                          \
+  AVX2 __m256d crvx_##n(__m256d x)                                                             \
+  { if (__builtin_expect(crm_rn(), 1)) return crvi_##n(x);                                     \
+    double a[4]; memcpy(a, &x, 32); for (int i = 0; i < 4; i++) a[i] = cr_##n(a[i]); memcpy(&x, a, 32); return x; }
+#define F2(n) AVX2 __m256 crvx_##n(__m256, __m256) __asm__("_ZGVdN8vv_" #n);                   \
+  AVX2 __m256 crvx_##n(__m256 x, __m256 y)                                                     \
+  { if (__builtin_expect(crm_rn(), 1)) return crvi_##n(x, y);                                  \
+    float a[8], b[8]; memcpy(a, &x, 32); memcpy(b, &y, 32); for (int i = 0; i < 8; i++) a[i] = cr_##n(a[i], b[i]); memcpy(&x, a, 32); return x; }
+#define D2(n) AVX2 __m256d crvx_##n(__m256d, __m256d) __asm__("_ZGVdN4vv_" #n);                \
+  AVX2 __m256d crvx_##n(__m256d x, __m256d y)                                                  \
+  { if (__builtin_expect(crm_rn(), 1)) return crvi_##n(x, y);                                  \
+    double a[4], b[4]; memcpy(a, &x, 32); memcpy(b, &y, 32); for (int i = 0; i < 4; i++) a[i] = cr_##n(a[i], b[i]); memcpy(&x, a, 32); return x; }
+#include "crmvec-functions.h"
+#undef F1
+#undef D1
+#undef F2
+#undef D2

@@ -11,3 +11,10 @@ build-port/
 mpfrcheck
 pownf-search
 build-sleef/
+f16check
+cecheck
+lcheck
+libcrf16.a
+build-f16/
+build-dropin-x86/
+*.o
