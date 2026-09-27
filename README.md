@@ -22,7 +22,7 @@ reproducible across libraries.
 
 | entry points | what runs |
 |---|---|
-| AVX2 (`_ZGVdN8v_*`, `_ZGVdN4v_*`) | vector code, with scalar CORE-MATH for the lanes it can't decide (double `atan`: a loop over scalar CORE-MATH, which measured faster than its vector code) |
+| AVX2 (`_ZGVdN8v_*`, `_ZGVdN4v_*`) | vector code, with scalar CORE-MATH for the lanes it can't decide |
 | SSE2 (`_ZGVbN4v_*`, `_ZGVbN2v_*`) | loops over scalar CORE-MATH |
 
 With glibc's `__*_finite` names for `exp`, `log` and `pow`, that is 116
@@ -68,7 +68,10 @@ calls `libmvec` for them. Programs vectorized by gcc or clang against
 - **`powf`, and every double function**: CORE-MATH's fast paths, transcribed
   operation for operation into AVX2. Each lane is decided by CORE-MATH's own
   proven rounding test; lanes it can't decide, and special inputs, go to
-  CORE-MATH's scalar function. Three rest on something else:
+  CORE-MATH's scalar function. For double `atan`, CORE-MATH's second stage
+  (`as_atan_refine2`) is transcribed too, since its fast test rejects 2-14%
+  of inputs: those lanes stay in vector code, and only the ones refine2
+  itself singles out go to `cr_atan`. Three rest on something else:
   - **double `cos`**: `sin`'s fast path with the table index moved a quarter
     turn (cos x = sin(|x| + pi/2)), which CORE-MATH's bound for `sin` covers.
   - **double `tan`**: the `sin` and `cos` results divided in double-double,
@@ -94,6 +97,7 @@ OpenCL's only mode. Like `libmvec`, it sets no `errno`.
 ./hypot-midpoints    # double hypot on inputs whose result is exactly halfway between two doubles
 ./tan-poles          # double tan near its poles, where its error bound is tightest
 python3 sincos-tables.py crmvec-sin-tab.h   # the sin/cos table error, for every index (needs mpmath)
+python3 gen-row-tables.py | cmp - crmvec-rows-tab.h   # the row tables hold CORE-MATH's entries, bit for bit
 ./crtest time        # speed against glibc's libmvec and scalar CORE-MATH
 LD_LIBRARY_PATH=$PWD python3 check-pocl.py   # through PoCL (needs pyopencl)
 python3 check-pocl.py                        # the control, with glibc's libmvec
@@ -132,37 +136,38 @@ index is uniformly tiny for all 16,384 indices, so `sin`'s bound covers it.
 ## Speed
 
 Correct rounding costs speed. On one AMD Ryzen 5 PRO 5650U (Zen 3), one
-core, memory-bound, built with gcc 13.3, in ns per element (glibc's figure is
-the fastest of three runs):
+core, memory-bound, built with gcc 13.3, in ns per element (each figure the
+fastest of four runs, 2026-09-27):
 
 | | crmvec | glibc `libmvec` | scalar CORE-MATH |
 |---|---|---|---|
-| `sinf` / `cosf` / `tanf` | 1.7 / 1.7 / 1.5 | 0.5 / 0.6 / 0.6 | 4.0 / 4.2 / 4.4 |
+| `sinf` / `cosf` / `tanf` | 1.7 / 1.6 / 1.5 | 0.5 / 0.6 / 0.6 | 4.0 / 4.2 / 4.4 |
 | `expf` / `logf` | 1.4 / 1.9 | 0.7 / 0.7 | 2.5 / 2.7 |
 | `powf` | 5.9 | 2.7 | 12.7 |
-| `atanf` / `asinf` | 2.4 / 3.3 | 0.5 / 0.5 | 4.8 / 5.1 |
+| `atanf` / `asinf` | 2.6 / 3.3 | 0.5 / 0.5 | 4.7 / 5.1 |
 | `erff` / `erfcf` | 3.1 / 4.4 | 0.6 / 0.7 | 5.1 / 8.0 |
 | `hypotf` | 1.0 | 0.7 | 6.7 |
-| `exp` / `log` | 2.4 / 2.6 | 1.2 / 1.4 | 4.1 / 5.8 |
-| `sin` / `cos` | 3.8 / 3.7 | 1.4 / 1.4 | 7.5 / 24.9 |
-| `tan` | 7.2 | 1.2 | 29.6 |
-| `pow` | 7.9 | 5.1 | 18.8 |
-| `atan` / `atan2` | 6.5 / 5.7 | 1.3 / 2.3 | 5.4 / 13.6 |
+| `exp` / `log` | 2.4 / 2.5 | 1.1 / 1.4 | 4.1 / 5.8 |
+| `expm1` / `log1p` | 3.4 / 3.5 | 1.2 / 1.6 | 5.7 / 6.2 |
+| `sin` / `cos` | 3.8 / 3.7 | 1.4 / 1.4 | 7.4 / 24.8 |
+| `tan` | 7.2 | 1.2 | 29.7 |
+| `pow` | 8.0 | 5.1 | 18.9 |
+| `atan` / `atan2` | 4.9 / 5.7 | 1.3 / 2.3 | 5.4 / 13.7 |
 | `sinh` / `cosh` | 6.1 / 5.9 | 1.4 / 1.5 | 6.8 / 6.5 |
-| `erf` / `erfc` | 5.5 / 15.8 | 1.3 / 1.6 | 10.3 / 30.1 |
-| `hypot` | 3.6 | 1.6 | 11.4 |
+| `asinh` / `acosh` | 6.0 / 6.5 | 4.3 / 4.0 | 9.3 / 9.2 |
+| `erf` / `erfc` | 5.5 / 15.8 | 1.3 / 1.6 | 10.4 / 30.1 |
+| `hypot` | 3.7 | 1.6 | 11.4 |
 
 `./crtest time` prints all 52. Every function is slower than glibc, from
-1.5x (`hypotf`) to 10x (double `erfc`); the median is 3.2x. glibc computes
-in single precision on 8 lanes and makes no correct-rounding promise;
-correct rounding needs double precision, on 4 lanes. All but one are faster
-than scalar CORE-MATH: double `atan`, which loops over CORE-MATH, is 1.2x
-slower than calling it directly (the cost of entering a vector function and
-moving its values in and out). The tables
-are read a row per lane with ordinary loads rather than a column at a time
-with gathers, which on this CPU made the table-heavy functions up to twice
-as fast. Built with clang 22, an earlier build of the same day was 7%
-faster at the median than with gcc.
+1.4x (double `asinh`) to 10x (double `erfc`); the median is 2.8x. glibc
+computes in single precision on 8 lanes and makes no correct-rounding
+promise; correct rounding needs double precision, on 4 lanes. Every function
+is faster than scalar CORE-MATH. The tables are read a row per lane with
+ordinary loads rather than a column at a time with gathers, which on this
+CPU made the table-heavy functions up to twice as fast; functions made of
+several regimes compute a regime only when some lane of the vector is in
+it. Built with clang 22, the same code is 6% faster at the median than with
+gcc.
 
 ## Limits
 

@@ -17,3 +17,5 @@ static const double EXP_HARD[] = {
 };
 static const double COS_HARD[] = {0x1.8000000000009p-23, 0x1.8000000000024p-22, 0x1.800000000009p-21, 0x1.20000000000f3p-20, 0x1.800000000024p-20};  /* 5, from cos.c */
 static const double TAN_HARD[] = {0x1.dffffffffff1fp-22, 0x1.dfffffffffc7cp-21};  /* 2, from tan.c */
+/* 20: the 10 distinct inputs as_atan_refine2 in atan.c lists as exceptions, both signs */
+static const double ATAN_HARD[] = {0x1.0dc89a3b5501p-7, 0x1.e3fb41d2d226p-8, 0x1.7ba49f739829fp-1, 0x1.a933fe176b375p-3, 0x1.bb04a79820063p-8, 0x1.cd30a9499618bp-8, 0x1.f44aa37b8e66bp-7, 0x1.fd2ac95e57ef9p-8, 0x1.6419079bbf601p-6, 0x1.d768804487b07p-3, -0x1.0dc89a3b5501p-7, -0x1.e3fb41d2d226p-8, -0x1.7ba49f739829fp-1, -0x1.a933fe176b375p-3, -0x1.bb04a79820063p-8, -0x1.cd30a9499618bp-8, -0x1.f44aa37b8e66bp-7, -0x1.fd2ac95e57ef9p-8, -0x1.6419079bbf601p-6, -0x1.d768804487b07p-3};
