@@ -10,7 +10,7 @@ package:
 
 source:
   url: https://github.com/anun333/crmvec/archive/refs/tags/v${{ version }}.tar.gz
-  sha256: SHA256_OF_THE_TAGGED_TARBALL
+  sha256: 6ece1212734ae3c3d7819df93870fe795fc9459dab72dfaa2ba95593c8418128
 
 build:
   number: 0
