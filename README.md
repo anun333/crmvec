@@ -315,9 +315,11 @@ caller's vector registers survive lazy binding.
   emulation. The x86 vector paths need AVX2 and FMA; without them, the SSE2
   entry points loop over scalar CORE-MATH.
 - Timed on one CPU. Checked with two compilers (gcc 13.3, clang 22).
-- No AVX (`_ZGVc`) or AVX-512 (`_ZGVe`) entry points: no LLVM version above
-  emits them for these functions. SLEEF's x86 library had them, so this is
-  not a replacement for it on x86.
+- No AVX (`_ZGVc`) or AVX-512 (`_ZGVe`) entry points yet. LLVM does not
+  emit them for these functions, but gcc does: a program gcc vectorized with
+  `-mavx` calls `_ZGVcN4v_sin`, and with `-mavx512f` `_ZGVeN8v_sin`, and it
+  will not load with this library in place of glibc's. SLEEF's x86 library
+  had them too, so this is not a replacement for it on x86.
 - The functions added for OpenCL and for SLEEF have no vector code yet.
   Each lane runs CORE-MATH's scalar function (the C library's for exact
   operations), at scalar speed.
