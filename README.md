@@ -22,7 +22,7 @@ reproducible across libraries.
 
 | entry points | what runs |
 |---|---|
-| AVX2 (`_ZGVdN8v_*`, `_ZGVdN4v_*`) | vector code, with scalar CORE-MATH for the lanes it can't decide (double `atan`, `sinh`, `cosh`: a loop over scalar CORE-MATH, which measured faster than their vector code) |
+| AVX2 (`_ZGVdN8v_*`, `_ZGVdN4v_*`) | vector code, with scalar CORE-MATH for the lanes it can't decide (double `atan`: a loop over scalar CORE-MATH, which measured faster than its vector code) |
 | SSE2 (`_ZGVbN4v_*`, `_ZGVbN2v_*`) | loops over scalar CORE-MATH |
 
 With glibc's `__*_finite` names for `exp`, `log` and `pow`, that is 116
@@ -58,8 +58,9 @@ calls `libmvec` for them. Programs vectorized by gcc or clang against
   the other way; otherwise CORE-MATH's scalar function computes that lane.
   `asinf`, `cbrtf`, `erff` and `erfcf` skip that test, and `tanf` has none:
   for them the exhaustive check shows the vector result is always the
-  correctly rounded one. Each is proven by checking all 2^32 inputs against
-  CORE-MATH. `sinf`,
+  correctly rounded one. `expf`, `exp2f` and `exp10f` compute 8 lanes at a
+  time in float-float arithmetic, with a rounding test of their own. Each is
+  proven by checking all 2^32 inputs against CORE-MATH. `sinf`,
   `cosf` and `tanf` follow CORE-MATH's own schemes, with arguments above 2^26
   reduced by a table form of Payne-Hanek (`gen-pio2-table.py`); `erff` and
   `erfcf` transcribe CORE-MATH's; the rest are built here on shared exp, log
@@ -127,30 +128,32 @@ core, memory-bound, built with gcc 13.3, in ns per element:
 
 | | crmvec | glibc `libmvec` | scalar CORE-MATH |
 |---|---|---|---|
-| `sinf` / `cosf` / `tanf` | 2.2 / 2.1 / 1.6 | 0.6 / 0.7 / 0.6 | 4.1 / 4.4 / 4.5 |
-| `expf` / `logf` | 1.5 / 2.0 | 0.7 / 0.7 | 2.6 / 2.8 |
-| `powf` | 6.2 | 2.7 | 13.1 |
-| `atanf` / `asinf` | 2.4 / 3.4 | 0.5 / 0.5 | 4.8 / 5.2 |
-| `erff` / `erfcf` | 5.9 / 4.5 | 0.6 / 0.7 | 5.3 / 8.2 |
-| `hypotf` | 1.1 | 0.7 | 7.0 |
-| `exp` / `log` | 3.3 / 3.0 | 1.2 / 1.4 | 5.1 / 6.0 |
-| `sin` / `cos` | 6.4 / 6.1 | 1.4 / 1.4 | 7.6 / 25.5 |
-| `tan` | 12.6 | 1.2 | 30.2 |
-| `pow` | 9.3 | 5.2 | 19.4 |
-| `atan` / `atan2` | 6.8 / 6.1 | 1.3 / 2.4 | 5.5 / 13.9 |
-| `sinh` / `cosh` | 8.5 / 7.9 | 1.4 / 1.5 | 7.9 / 7.4 |
-| `erf` / `erfc` | 8.7 / 24.6 | 1.4 / 1.7 | 10.6 / 34.8 |
-| `hypot` | 3.7 | 1.6 | 11.7 |
+| `sinf` / `cosf` / `tanf` | 2.1 / 2.0 / 1.5 | 0.5 / 0.6 / 0.6 | 4.0 / 4.2 / 4.4 |
+| `expf` / `logf` | 1.4 / 1.9 | 0.7 / 0.7 | 2.5 / 2.7 |
+| `powf` | 5.9 | 2.7 | 12.7 |
+| `atanf` / `asinf` | 2.4 / 3.3 | 0.5 / 0.5 | 4.8 / 5.1 |
+| `erff` / `erfcf` | 3.1 / 4.4 | 0.6 / 0.7 | 5.1 / 8.0 |
+| `hypotf` | 1.1 | 0.7 | 6.7 |
+| `exp` / `log` | 2.5 / 2.6 | 1.2 / 1.4 | 4.1 / 5.8 |
+| `sin` / `cos` | 3.8 / 3.7 | 1.4 / 1.4 | 7.5 / 24.9 |
+| `tan` | 7.2 | 1.2 | 29.6 |
+| `pow` | 8.0 | 5.1 | 18.9 |
+| `atan` / `atan2` | 6.6 / 5.7 | 1.3 / 2.3 | 5.5 / 13.6 |
+| `sinh` / `cosh` | 6.8 / 6.4 | 1.4 / 1.5 | 6.8 / 6.5 |
+| `erf` / `erfc` | 5.8 / 16.0 | 1.3 / 1.6 | 10.4 / 30.1 |
+| `hypot` | 3.6 | 1.6 | 11.4 |
 
 `./crtest time` prints all 52. Every function is slower than glibc, from
-1.5x (`hypotf`) to 15x (double `erfc`); the median is 3.5x. glibc computes
+1.5x (`hypotf`) to 10x (double `erfc`); the median is 3.2x. glibc computes
 in single precision on 8 lanes and makes no correct-rounding promise;
-correct rounding needs double precision, on 4 lanes. Most functions are
-faster than scalar CORE-MATH, but four are not yet: `erff`, and double
-`atan`, `sinh` and `cosh`, by up to 1.2x. The last three already loop over
-CORE-MATH; the remaining gap is the cost of entering a vector function and
-moving its values in and out, up to about 1 ns per element. Built with clang 22,
-the median function is 7% faster than with gcc.
+correct rounding needs double precision, on 4 lanes. All but two are faster
+than scalar CORE-MATH: double `sinh` ties, and double `atan`, which loops
+over CORE-MATH, is 1.2x slower than calling it directly (the cost of
+entering a vector function and moving its values in and out). The tables
+are read a row per lane with ordinary loads rather than a column at a time
+with gathers, which on this CPU made the table-heavy functions up to twice
+as fast. Built with clang 22, an earlier build of the same day was 7%
+faster at the median than with gcc.
 
 ## Limits
 

@@ -428,8 +428,28 @@ static int timing(int argc, char **argv)
   return 0;
 }
 
+/* Every vector entry point tested here must come from this build. If
+   crmvec.c defines none (a switch tested before it was defined did exactly
+   that to exp2f and exp10f, 2026-09-26), the link still succeeds: -lm's
+   linker script pulls in glibc's libmvec, and the checks would compare glibc
+   with CORE-MATH. dladdr names the object each function lives in. */
+static int own_build(void)
+{
+  Dl_info self, d;
+  if (!dladdr((void *)own_build, &self)) { printf("VOID: dladdr failed\n"); return 0; }
+  int bad = 0;
+#define OWN(name, fp) do { if (!dladdr((void *)(fp), &d) || strcmp(d.dli_fname, self.dli_fname)) { \
+      printf("VOID: %s comes from %s, not this build\n", name, dladdr((void *)(fp), &d) ? d.dli_fname : "?"); bad = 1; } } while (0)
+  for (unsigned f = 0; f < NF; f++) OWN(F[f].name, F[f].vec);
+  for (unsigned f = 0; f < ND; f++) OWN(D[f].name, D[f].vec);
+  for (unsigned f = 0; f < sizeof P2 / sizeof P2[0]; f++) OWN(P2[f].name, P2[f].is_float ? (void *)P2[f].vf : (void *)P2[f].vd);
+#undef OWN
+  return !bad;
+}
+
 int main(int argc, char **argv)
 {
+  if (!own_build()) return 2;
   if (argc > 1 && !strcmp(argv[1], "time")) return timing(argc, argv);
   if (argc > 1 && !strcmp(argv[1], "verify64")) return verify64(argc, argv);
   if (argc > 1 && !strcmp(argv[1], "verify2")) return verify2(argc, argv);
