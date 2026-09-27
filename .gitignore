@@ -18,3 +18,4 @@ libcrf16.a
 build-f16/
 build-dropin-x86/
 *.o
+ebench

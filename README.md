@@ -191,6 +191,7 @@ python3 sincos-tables.py crmvec-sin-tab.h   # the sin/cos table error, for every
 python3 gen-row-tables.py | cmp - crmvec-rows-tab.h   # the row tables hold CORE-MATH's entries, bit for bit
 CRTEST_SMOOTH=1 ./crtest time   # the same, on inputs that vary smoothly along the array
 ./bbench ./libmvec.so.1 /usr/lib/x86_64-linux-gnu/libmvec.so.1   # the SSE2 entry points' speed
+./ebench ./libmvec.so.1 /usr/lib/x86_64-linux-gnu/libmvec.so.1   # the AVX-512 entry points' speed (VOID without AVX-512F)
 ./crtest time        # speed against glibc's libmvec and scalar CORE-MATH
 ./mpfrcheck 20 all   # all 38 functions, both x86 entry points, all four rounding modes, against MPFR (libmpfr-dev)
 ./mpfrcheck controls # four deliberately wrong versions, which it must catch
@@ -397,10 +398,14 @@ caller's vector registers survive lazy binding.
 - Built and timed for x86-64; aarch64 built and checked only under
   emulation. The x86 vector paths need AVX2 and FMA; without them, the SSE2
   entry points loop over scalar CORE-MATH.
-- Timed on one CPU. Checked with two compilers (gcc 13.3, clang 22).
-- The AVX-512 entry points are checked only under Intel's emulator (SDE);
-  this CPU has no AVX-512. They split into two AVX2 calls rather than using
-  512-bit code.
+- Timed on one CPU, plus the busy, hired Zen 4 above. Checked with two compilers
+  (gcc 13.3, clang 22).
+- The AVX-512 entry points split into two AVX2 calls rather than using
+  512-bit code. They are checked under Intel's emulator (SDE) and natively
+  on a hired AMD EPYC 4564P (Zen 4), where every check above passes. There,
+  per element, they are 8% slower than the AVX2 entry points, while glibc's
+  512-bit code is 23% faster than its AVX2 code. So against glibc they are
+  4.5x at the median, where the AVX2 entry points are 2.9x (`./ebench`).
 - Most of the functions added for OpenCL and SLEEF, and all the half and
   bfloat16 ones, have no vector code yet. Each lane or element runs
   CORE-MATH's scalar function, or the C library's for exact operations, at

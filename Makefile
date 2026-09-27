@@ -59,7 +59,7 @@ all: lib $(A64)/aarch64-check
 lib: $(A64)/libmvec.so.1 $(A64)/libsleefgnuabi.so.3
 LIBS_BUILT = $(A64)/libmvec.so.1 $(A64)/libsleefgnuabi.so.3
 else
-all: libmvec.so.1 crtest libcrref.so bcheck cecheck lcheck hypot-midpoints tan-poles bbench mpfrcheck pownf-search f16check headercheck
+all: libmvec.so.1 crtest libcrref.so bcheck cecheck lcheck hypot-midpoints tan-poles bbench ebench mpfrcheck pownf-search f16check headercheck
 lib: libmvec.so.1
 LIBS_BUILT = libmvec.so.1
 endif
@@ -116,6 +116,10 @@ cecheck: cecheck.c
 # like the programs that call them. bvdecide.py turns its output into crmvec-bvec.h.
 bbench: bbench.c
 	$(CC) $(CFLAGS) -o $@ bbench.c -ldl -lm
+
+# the AVX-512 entry points' speed (bbench's twin; VOID on a CPU without AVX-512F)
+ebench: ebench.c
+	$(CC) $(CFLAGS) -o $@ ebench.c -ldl -lm
 
 # crmvec-lanes.h's functions through both x86 entry points against MPFR
 # (libmpfr-dev 4.2), and the exhaustive search that proves pownf's double
@@ -183,7 +187,7 @@ sleef-exports: $(A64)/libsleefgnuabi.so.3
 	 test ! -s $(A64)/missing.txt && test ! -s $(A64)/no-vpcs.txt
 
 clean:
-	rm -f libmvec.so.1 crmvec.o crmvec-avx2.o crtest libcrref.so bcheck hypot-midpoints tan-poles bbench mpfrcheck pownf-search libcrf16.a f16check cecheck lcheck
+	rm -f libmvec.so.1 crmvec.o crmvec-avx2.o crtest libcrref.so bcheck hypot-midpoints tan-poles bbench ebench mpfrcheck pownf-search libcrf16.a f16check cecheck lcheck
 	rm -rf $(A64) build-sleef build-f16
 
 print-sources:   # for the export script: every CORE-MATH source the build uses
