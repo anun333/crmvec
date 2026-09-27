@@ -207,7 +207,9 @@ qemu-aarch64 -cpu max build-aarch64/aarch64-check floats   # all 2^32 inputs of 
 port/port-build.sh    # the core on x86, aarch64 and riscv64: one output hash
 ```
 Every entry point matches CORE-MATH built for aarch64 at SVE lengths of
-128, 256, 512 and 2048 bits. Loops calling `sin`, `log`, `expf` and
+128, 256, 512 and 2048 bits, and all 2^32 inputs of each of the 23 float
+functions give CORE-MATH's result through `_ZGVnN4v_` (98.8 billion
+results, 0 differ; 4.6 hours under emulation). Loops calling `sin`, `log`, `expf` and
 `atan2f`, vectorized by gcc against glibc's headers and linked against
 glibc's `libmvec`, give CORE-MATH's results with this library first on the
 library path (0 of 400,000 differ); with glibc's own, 33,871 differ. The
