@@ -124,23 +124,24 @@ CORE-MATH's proofs (and, for `atan2`, its measurement), on the transcription
 ## Speed
 
 Correct rounding costs speed. On one AMD Ryzen 5 PRO 5650U (Zen 3), one
-core, memory-bound, built with gcc 13.3, in ns per element:
+core, memory-bound, built with gcc 13.3, in ns per element (glibc's figure is
+the faster of two runs):
 
 | | crmvec | glibc `libmvec` | scalar CORE-MATH |
 |---|---|---|---|
-| `sinf` / `cosf` / `tanf` | 2.1 / 2.0 / 1.5 | 0.5 / 0.6 / 0.6 | 4.0 / 4.2 / 4.4 |
+| `sinf` / `cosf` / `tanf` | 1.7 / 1.6 / 1.5 | 0.5 / 0.6 / 0.6 | 4.0 / 4.2 / 4.4 |
 | `expf` / `logf` | 1.4 / 1.9 | 0.7 / 0.7 | 2.5 / 2.7 |
-| `powf` | 5.9 | 2.7 | 12.7 |
-| `atanf` / `asinf` | 2.4 / 3.3 | 0.5 / 0.5 | 4.8 / 5.1 |
+| `powf` | 5.9 | 2.7 | 12.8 |
+| `atanf` / `asinf` | 2.4 / 3.3 | 0.5 / 0.5 | 4.7 / 5.1 |
 | `erff` / `erfcf` | 3.1 / 4.4 | 0.6 / 0.7 | 5.1 / 8.0 |
-| `hypotf` | 1.1 | 0.7 | 6.7 |
+| `hypotf` | 1.0 | 0.7 | 6.7 |
 | `exp` / `log` | 2.5 / 2.6 | 1.2 / 1.4 | 4.1 / 5.8 |
-| `sin` / `cos` | 3.8 / 3.7 | 1.4 / 1.4 | 7.5 / 24.9 |
-| `tan` | 7.2 | 1.2 | 29.6 |
+| `sin` / `cos` | 3.8 / 3.7 | 1.4 / 1.4 | 7.4 / 25.0 |
+| `tan` | 7.2 | 1.2 | 29.5 |
 | `pow` | 8.0 | 5.1 | 18.9 |
-| `atan` / `atan2` | 6.6 / 5.7 | 1.3 / 2.3 | 5.5 / 13.6 |
-| `sinh` / `cosh` | 6.8 / 6.4 | 1.4 / 1.5 | 6.8 / 6.5 |
-| `erf` / `erfc` | 5.8 / 16.0 | 1.3 / 1.6 | 10.4 / 30.1 |
+| `atan` / `atan2` | 6.6 / 5.7 | 1.3 / 2.3 | 5.4 / 13.7 |
+| `sinh` / `cosh` | 6.8 / 6.3 | 1.4 / 1.5 | 6.9 / 6.5 |
+| `erf` / `erfc` | 5.8 / 15.8 | 1.3 / 1.6 | 10.4 / 30.5 |
 | `hypot` | 3.6 | 1.6 | 11.4 |
 
 `./crtest time` prints all 52. Every function is slower than glibc, from

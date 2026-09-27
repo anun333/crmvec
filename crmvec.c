@@ -801,6 +801,30 @@ static const double SIN_PI16[32] = {   /* sin(i pi/16), CORE-MATH's tb */
   -0x1.6a09e667f3bcdp-1, -0x1.a9b66290ea1a3p-1, -0x1.d906bcf328d46p-1, -0x1.f6297cff75cbp-1,
   -0x1p+0, -0x1.f6297cff75cbp-1, -0x1.d906bcf328d46p-1, -0x1.a9b66290ea1a3p-1,
   -0x1.6a09e667f3bcdp-1, -0x1.1c73b39ae68c8p-1, -0x1.87de2a6aea963p-2, -0x1.8f8b83c69a60bp-3};
+/* SIN_PI16 as rows (sin(i pi/16), sin((i+8) pi/16)): the sin and cos entries
+   trig_fast reads for one lane are then one row, read by GATHER2 (TRIG_ROWS).
+   Generated from SIN_PI16's own values. */
+static const double SIN_COS_PI16[32][2] __attribute__((aligned(16))) = {
+  {0x0p+0, 0x1p+0}, {0x1.8f8b83c69a60bp-3, 0x1.f6297cff75cbp-1},
+  {0x1.87de2a6aea963p-2, 0x1.d906bcf328d46p-1}, {0x1.1c73b39ae68c8p-1, 0x1.a9b66290ea1a3p-1},
+  {0x1.6a09e667f3bcdp-1, 0x1.6a09e667f3bcdp-1}, {0x1.a9b66290ea1a3p-1, 0x1.1c73b39ae68c8p-1},
+  {0x1.d906bcf328d46p-1, 0x1.87de2a6aea963p-2}, {0x1.f6297cff75cbp-1, 0x1.8f8b83c69a60bp-3},
+  {0x1p+0, 0x0p+0}, {0x1.f6297cff75cbp-1, -0x1.8f8b83c69a60bp-3},
+  {0x1.d906bcf328d46p-1, -0x1.87de2a6aea963p-2}, {0x1.a9b66290ea1a3p-1, -0x1.1c73b39ae68c8p-1},
+  {0x1.6a09e667f3bcdp-1, -0x1.6a09e667f3bcdp-1}, {0x1.1c73b39ae68c8p-1, -0x1.a9b66290ea1a3p-1},
+  {0x1.87de2a6aea963p-2, -0x1.d906bcf328d46p-1}, {0x1.8f8b83c69a60bp-3, -0x1.f6297cff75cbp-1},
+  {0x0p+0, -0x1p+0}, {-0x1.8f8b83c69a60bp-3, -0x1.f6297cff75cbp-1},
+  {-0x1.87de2a6aea963p-2, -0x1.d906bcf328d46p-1}, {-0x1.1c73b39ae68c8p-1, -0x1.a9b66290ea1a3p-1},
+  {-0x1.6a09e667f3bcdp-1, -0x1.6a09e667f3bcdp-1}, {-0x1.a9b66290ea1a3p-1, -0x1.1c73b39ae68c8p-1},
+  {-0x1.d906bcf328d46p-1, -0x1.87de2a6aea963p-2}, {-0x1.f6297cff75cbp-1, -0x1.8f8b83c69a60bp-3},
+  {-0x1p+0, 0x0p+0}, {-0x1.f6297cff75cbp-1, 0x1.8f8b83c69a60bp-3},
+  {-0x1.d906bcf328d46p-1, 0x1.87de2a6aea963p-2}, {-0x1.a9b66290ea1a3p-1, 0x1.1c73b39ae68c8p-1},
+  {-0x1.6a09e667f3bcdp-1, 0x1.6a09e667f3bcdp-1}, {-0x1.1c73b39ae68c8p-1, 0x1.a9b66290ea1a3p-1},
+  {-0x1.87de2a6aea963p-2, 0x1.d906bcf328d46p-1}, {-0x1.8f8b83c69a60bp-3, 0x1.f6297cff75cbp-1}};
+#ifndef TRIG_ROWS
+#define TRIG_ROWS 1   /* 2026-09-26: sinf -20%, cosf -18%, proven on all 2^32 inputs */
+#endif
+
 
 AVX2I static inline __m256d trig_fast(__m256d x, int shift8)
 {
@@ -817,7 +841,10 @@ AVX2I static inline __m256d trig_fast(__m256d x, int shift8)
   __m256i m31 = _mm256_set1_epi64x(31);
   __m256i is = _mm256_and_si256(_mm256_add_epi64(q, _mm256_set1_epi64x(shift8)), m31);
   __m256i ic = _mm256_and_si256(_mm256_add_epi64(q, _mm256_set1_epi64x(shift8 + 8)), m31);
-#ifndef TRIG_PERMUTE
+#if TRIG_ROWS
+  __m256d s0, c0; GATHER2(&SIN_COS_PI16[0][0], _mm256_slli_epi64(is, 1), s0, c0);
+  (void)ic;
+#elif !defined TRIG_PERMUTE
   __m256d s0 = _mm256_i64gather_pd(SIN_PI16, is, 8), c0 = _mm256_i64gather_pd(SIN_PI16, ic, 8);
 #else
   /* Unused: measured SLOWER than the gathers on Zen 3 (2026-09-26: sinf 2.40
