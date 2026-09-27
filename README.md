@@ -1,8 +1,9 @@
 # crmvec
 
 Correctly rounded vector math for x86-64 (and, built and checked under
-emulation, aarch64): a drop-in replacement for glibc's `libmvec.so.1` whose
-results are the correctly rounded ones, bit for bit the same as
+emulation, aarch64): a drop-in replacement for glibc's `libmvec.so.1`, and
+on aarch64 for SLEEF's `libsleefgnuabi.so.3`, whose results are the
+correctly rounded ones, bit for bit the same as
 [CORE-MATH](https://core-math.gitlabpages.inria.fr/)'s.
 
 glibc's vector functions are accurate to a few ulps, and different libraries
@@ -33,6 +34,18 @@ symbols: every one LLVM's x86 vectorizer can call through `libmvec` in LLVM
 first proposed (its current version adds only their SSE2 forms). A program
 that needs another `libmvec` symbol fails to link against this library,
 loudly, rather than falling back silently.
+
+Also, with no vector code yet (each lane runs the scalar function, at
+CORE-MATH's speed), OpenCL's other correctly rounded functions under their
+C23 names, in float and double, with SSE2 and AVX2 entry points on x86 (48
+more symbols) and on aarch64:
+
+`sinpi` `cospi` `tanpi` `asinpi` `acospi` `atanpi` `atan2pi` `lgamma`
+`tgamma` `rsqrt` `powr` `pown`
+
+The first ten are CORE-MATH's. `powr` and `pown` are built on its `pow`
+(`crmvec-scalar.c`). `pown`'s int argument is a vector of ints: an xmm
+register, or a ymm for 8 floats, as LLVM passes them.
 
 ## Using it
 
@@ -83,6 +96,19 @@ calls `libmvec` for them. Programs vectorized by gcc or clang against
     that.
 - **`atan2f` and `hypotf`**: two-argument, so not checkable exhaustively.
   Their error bounds are derived in `crmvec.c`, beside the code.
+- **The functions with no vector code** (`crmvec-lanes.h`): each lane is
+  CORE-MATH's scalar function, or for an exact operation the C library's.
+  Three are this library's own, in `crmvec-scalar.c`:
+  - **`powr`** is `pow` where x > 0, with IEEE 754's special values
+    elsewhere (NaN for x < 0, 0^0, inf^0 and 1^inf).
+  - **`pown(x, n)`** is `pow(x, n)`, since every int is exact as a double.
+  - **Float `pown` with |n| > 2^24** (where a float can't hold n) is
+    computed in double and rounded to float. That second rounding is wrong
+    only when the double lands exactly halfway between two floats.
+    `pownf-search` walks all 19.5 billion (x, n) whose result isn't 0 or
+    infinity and finds 35 such cases. The library lists them with MPFR's
+    result (`crmvec-pownf-tab.h`); without the list, 15 of them would come
+    out wrong.
 
 The vector code assumes round-to-nearest, the default everywhere and
 OpenCL's only mode. Like `libmvec`, it sets no `errno`.
@@ -102,6 +128,9 @@ python3 gen-row-tables.py | cmp - crmvec-rows-tab.h   # the row tables hold CORE
 CRTEST_SMOOTH=1 ./crtest time   # the same, on inputs that vary smoothly along the array
 ./bbench ./libmvec.so.1 /usr/lib/x86_64-linux-gnu/libmvec.so.1   # the SSE2 entry points' speed
 ./crtest time        # speed against glibc's libmvec and scalar CORE-MATH
+./mpfrcheck          # sinpi ... pown through both x86 entry points, against MPFR (needs libmpfr-dev)
+./mpfrcheck controls # three deliberately wrong versions, which it must catch
+./pownf-search       # the proof for float pown with |n| > 2^24 (about 6 minutes on 8 threads)
 LD_LIBRARY_PATH=$PWD python3 check-pocl.py   # through PoCL (needs pyopencl)
 python3 check-pocl.py                        # the control, with glibc's libmvec
 ```
@@ -113,6 +142,13 @@ that an AVX2 instruction does fault there, so nothing on that path needs
 AVX. Through PoCL, all 16 functions it hands to `libmvec` give
 CORE-MATH's results in both precisions. With glibc's `libmvec` in its place,
 the same kernels differ on 1.86 billion inputs.
+
+The functions added on 2026-09-27 have their own checks, all run with gcc
+13.3 on a fresh copy of this repository:
+- `mpfrcheck`: 0 differences from MPFR, through both x86 entry points, on
+  2^22 inputs per function.
+- `pownf-search`: every one of its 19.5 billion (x, n) pairs is covered.
+- The aarch64 checks below: 0 differences.
 
 The checks do see wrong answers when there are some. Each vector path was
 rebuilt with its rounding test disabled, and then failed its check: every
@@ -187,8 +223,10 @@ there against 49.6 looping over CORE-MATH built without `-mfma`.
 intrinsics (`crmvec-simde.h`). It exports glibc's aarch64 names for all 26
 functions: AdvSIMD (`_ZGVnN2v_`, `_ZGVnN4v_`, with the vector calling
 convention glibc declares them with; `crmvec-aarch64.c`) and SVE
-(`_ZGVsMxv_`, masked, any vector length; `crmvec-sve.c`), 130 symbols in all,
-covering the 75 in glibc 2.39's aarch64 `libmvec`.
+(`_ZGVsMxv_`, masked, any vector length; `crmvec-sve.c`), 130 symbols,
+covering the 75 in glibc 2.39's aarch64 `libmvec`. The same library also
+exports the functions below that have no vector code yet, and all of
+SLEEF's names (next section): 718 symbols in all.
 
 Two things had to be fixed in SIMDe's intrinsics for this, and both are in
 `crmvec-simde.h`. SIMDe computes its 256-bit fused multiply-adds as a
@@ -205,6 +243,8 @@ make aarch64
 qemu-aarch64 -cpu max,sve-default-vector-length=64 build-aarch64/aarch64-check sample   # every entry point, three input sets
 qemu-aarch64 -cpu max build-aarch64/aarch64-check floats   # all 2^32 inputs of the 23 floats (hours)
 port/port-build.sh    # the core on x86, aarch64 and riscv64: one output hash
+make sleef-exports    # all 644 of SLEEF's names, each flagged VARIANT_PCS
+port/sleef-dropin.sh  # loops vectorized by clang -fveclib=SLEEF, against this library and SLEEF 3.9's
 ```
 Every entry point matches CORE-MATH built for aarch64 at SVE lengths of
 128, 256, 512 and 2048 bits, and all 2^32 inputs of each of the 23 float
@@ -218,6 +258,57 @@ library's symbols are unversioned; it binds them anyway. On riscv64 the
 same core gives the same bits (`port/port-build.sh`), but glibc has no
 riscv64 `libmvec` to stand in for.
 
+## As SLEEF's library (aarch64)
+
+clang's `-fveclib=SLEEF` on AArch64 calls the functions of SLEEF's GNU-ABI
+library, `libsleefgnuabi.so.3`. SLEEF deleted that library in April 2025,
+eight days after its 3.9.0 release, and has made no release since, but
+LLVM still emits its names. `make aarch64` also builds
+`build-aarch64/libsleefgnuabi.so.3`: the same code under SLEEF's SONAME,
+exporting all 644 names SLEEF 3.9.0's library exported
+(`sleef-gnuabi-aarch64.txt`). That is each function in AdvSIMD, masked SVE
+and unmasked SVE forms, plus SLEEF's other spellings (`_u35`,
+`fast*_u3500`, `__*_finite`), which are aliases here, since a correctly
+rounded result meets any accuracy they promise. With its directory first on
+the library path, a program built against SLEEF gets these functions
+without a rebuild.
+
+Beyond the 26 above, SLEEF has two kinds of function:
+- **Correctly rounded here, from CORE-MATH:** `sinpi`, `cospi`, `sincos`,
+  `sincospi`, `lgamma`, `tgamma`.
+- **Exact operations,** which have one right answer: `sqrt` `fma` `fmin`
+  `fmax` `fdim` `fmod` `remainder` `copysign` `fabs` `ceil` `floor` `rint`
+  `round` `trunc` `ldexp` `ilogb` `modf` `nextafter` `frfrexp` `expfrexp`.
+  Here they are the C library's, so a vectorized loop gets exactly what its
+  scalar version got.
+
+The test is `port/sleef-dropin.sh`:
+- **What it runs:** clang 22 with `-fveclib=SLEEF` compiles loops for every
+  function in LLVM's SLEEF table, for AdvSIMD and for SVE, and they run
+  under qemu against scalar CORE-MATH (the C library for exact operations).
+- **What reaches the library:** 74 of the 86 loops call SLEEF's names. The
+  rest become instructions (`sqrt`, `fma`, `fmin`, `fmax`, `copysign`), or
+  aren't a C function clang knows (`sincospi`).
+- **With this library:** 0 results differ, with AdvSIMD and at SVE lengths
+  of 128 to 2048 bits.
+- **With SLEEF 3.9's own:** 15,301 of 704,512 results differ.
+  - **Within its bounds:** about half are 1 ulp off.
+  - **Documented limits:** most of the rest are where SLEEF documents none
+    or a looser answer. `asinh` and `acosh` return infinity for huge
+    arguments; `fmod`, `sinpi` and `cospi` are unspecified beyond stated
+    ranges; zeros can come back with the wrong sign.
+  - **Different constant:** `ilogb(0)` returns INT_MIN where glibc returns
+    -INT_MAX.
+  - **Against SLEEF's own documentation, about 500:** `ldexp` returns NaN
+    or infinity for infinite, zero or extreme arguments. `sinpi` and `cospi`
+    are far off within their documented range once |x| passes about 2^28
+    (2^23 in float): `cospif(8388609)` returns +1 for -1.
+
+Every exported AdvSIMD and SVE function carries the ELF `VARIANT_PCS`
+flag, aliases included (`make sleef-exports` checks this and the name
+list). The flag makes the dynamic linker bind calls to them eagerly, so a
+caller's vector registers survive lazy binding.
+
 ## Limits
 
 - Built and timed for x86-64; aarch64 built and checked only under
@@ -225,7 +316,14 @@ riscv64 `libmvec` to stand in for.
   entry points loop over scalar CORE-MATH.
 - Timed on one CPU. Checked with two compilers (gcc 13.3, clang 22).
 - No AVX (`_ZGVc`) or AVX-512 (`_ZGVe`) entry points: no LLVM version above
-  emits them for these functions.
+  emits them for these functions. SLEEF's x86 library had them, so this is
+  not a replacement for it on x86.
+- The functions added for OpenCL and for SLEEF have no vector code yet.
+  Each lane runs CORE-MATH's scalar function (the C library's for exact
+  operations), at scalar speed.
+- No `rootn`: CORE-MATH has none, and correct rounding for every n needs its
+  own analysis. No `sincos` on x86: gcc does not vectorize calls to it.
+- Vectorized `lgamma` does not set `signgam`, as SLEEF's does not.
 
 ## Credits and license
 

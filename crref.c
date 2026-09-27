@@ -72,3 +72,11 @@ LOOP2(ref_atan2f, float, cr_atan2f)
 LOOP2(ref_hypotf, float, cr_hypotf)
 LOOP2(ref_atan2, double, cr_atan2)
 LOOP2(ref_hypot, double, cr_hypot)
+
+/* bcheck's references for the functions crmvec-scalar.c builds on CORE-MATH
+   (powr, pown), compiled here separately from libmvec.so.1 (added 2026-09-27) */
+double crm_powr(double, double), crm_pown(double, int); float crm_powrf(float, float), crm_pownf(float, int);
+double crmref_powr(double x, double y) { return crm_powr(x, y); }
+float crmref_powrf(float x, float y) { return crm_powrf(x, y); }
+double crmref_pown(double x, int n) { return crm_pown(x, n); }
+float crmref_pownf(float x, int n) { return crm_pownf(x, n); }

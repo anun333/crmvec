@@ -27,6 +27,9 @@
    d class (AVX2, 8 lanes) uses the vector paths; b class (SSE2, 4 lanes)
    loops over scalar CORE-MATH, which measured faster there.
 
+   Functions with no vector path yet (sinpi ... pown, crmvec-lanes.h) run
+   the scalar function on each lane; their x86 entry points are at the end.
+
    cr_* are CORE-MATH's own C files (MIT), compiled alongside. */
 #if defined(__x86_64__) || defined(__i386__)
 #include <immintrin.h>
@@ -3875,3 +3878,32 @@ ALIAS(_ZGVdN4v___log_finite, _ZGVdN4v_log, __m256d, (__m256d), AVX2)
 ALIAS(_ZGVbN2v___log_finite, _ZGVbN2v_log, __m128d, (__m128d), NOATTR)
 ALIAS(_ZGVdN4vv___pow_finite, _ZGVdN4vv_pow, __m256d, (__m256d, __m256d), AVX2)
 ALIAS(_ZGVbN2vv___pow_finite, _ZGVbN2vv_pow, __m128d, (__m128d, __m128d), NOATTR)
+
+/* ---- lane by lane (crmvec-lanes.h; added 2026-09-27) ------------------ */
+
+/* The L group of crmvec-lanes.h on x86 (sinpi ... pown): b (SSE2) and d
+   (AVX2) entry points that run the scalar function on each lane. pown's
+   int argument is an xmm, a ymm for 8 floats, lanes from the first, as
+   LLVM passes <N x i32>. On aarch64 crmvec-aarch64.c and crmvec-sve.c
+   export the whole list. */
+#if defined(__x86_64__) || defined(__i386__)
+#define XL1(T, V, N, NAME, e, ATTR)                                                      \
+  ATTR V NAME(V v)                                                                     \
+  { T a[N]; memcpy(a, &v, sizeof a); for (int i = 0; i < N; i++) { T x = a[i]; a[i] = e; } \
+    memcpy(&v, a, sizeof a); return v; }
+#define XL2(T, V, N, NAME, e, ATTR)                                                      \
+  ATTR V NAME(V v, V w)                                                                \
+  { T a[N], b[N]; memcpy(a, &v, sizeof a); memcpy(b, &w, sizeof b);                    \
+    for (int i = 0; i < N; i++) { T x = a[i], y = b[i]; a[i] = e; } memcpy(&v, a, sizeof a); return v; }
+#define XLN(T, V, VI, N, NAME, e, ATTR)                                                  \
+  ATTR V NAME(V v, VI k)                                                               \
+  { T a[N]; int32_t m[sizeof(VI) / 4]; memcpy(a, &v, sizeof a); memcpy(m, &k, sizeof m); \
+    for (int i = 0; i < N; i++) { T x = a[i]; int n = m[i]; a[i] = e; } memcpy(&v, a, sizeof a); return v; }
+#define LD1(n, e) XL1(double, __m128d, 2, _ZGVbN2v_##n, e, NOATTR) XL1(double, __m256d, 4, _ZGVdN4v_##n, e, AVX2)
+#define LF1(n, e) XL1(float, __m128, 4, _ZGVbN4v_##n, e, NOATTR) XL1(float, __m256, 8, _ZGVdN8v_##n, e, AVX2)
+#define LD2(n, e) XL2(double, __m128d, 2, _ZGVbN2vv_##n, e, NOATTR) XL2(double, __m256d, 4, _ZGVdN4vv_##n, e, AVX2)
+#define LF2(n, e) XL2(float, __m128, 4, _ZGVbN4vv_##n, e, NOATTR) XL2(float, __m256, 8, _ZGVdN8vv_##n, e, AVX2)
+#define LDN(n, e) XLN(double, __m128d, __m128i, 2, _ZGVbN2vv_##n, e, NOATTR) XLN(double, __m256d, __m128i, 4, _ZGVdN4vv_##n, e, AVX2)
+#define LFN(n, e) XLN(float, __m128, __m128i, 4, _ZGVbN4vv_##n, e, NOATTR) XLN(float, __m256, __m256i, 8, _ZGVdN8vv_##n, e, AVX2)
+#include "crmvec-lanes.h"
+#endif

@@ -8,3 +8,6 @@ tan-poles
 bbench
 build-aarch64/
 build-port/
+mpfrcheck
+pownf-search
+build-sleef/
