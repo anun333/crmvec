@@ -92,6 +92,8 @@ OpenCL's only mode. Like `libmvec`, it sets no `errno`.
 ./bcheck             # every SSE2 entry point of libmvec.so.1 against CORE-MATH
 ./emu-check.sh       # the same on an emulated Core 2 (qemu-x86_64 -cpu Conroe: no AVX)
 ./hypot-midpoints    # double hypot on inputs whose result is exactly halfway between two doubles
+./tan-poles          # double tan near its poles, where its error bound is tightest
+python3 sincos-tables.py crmvec-sin-tab.h   # the sin/cos table error, for every index (needs mpmath)
 ./crtest time        # speed against glibc's libmvec and scalar CORE-MATH
 LD_LIBRARY_PATH=$PWD python3 check-pocl.py   # through PoCL (needs pyopencl)
 python3 check-pocl.py                        # the control, with glibc's libmvec
@@ -118,39 +120,45 @@ for `hypot` from Pythagorean triples, and without the test 2,624 of its
 
 Double precision can't be checked exhaustively. There, correctness rests on
 CORE-MATH's proofs (and, for `atan2`, its measurement), on the transcription
-(tested on billions of inputs), and for double `tan` on the bound in
-`crmvec.c`.
+(tested on billions of inputs), and on two arguments of this library's own,
+both written out in `crmvec.c` and checked independently. For double `tan`,
+`tan-poles` tests its bound where it is tightest: 205,999 vectors whose
+inputs all lie within 2^-12 of a pole are all sent to CORE-MATH, while with
+the bound set to zero 283,441 of their results come out wrong. For double
+`cos`, computed as `sin` with its table index shifted a quarter turn,
+`sincos-tables.py` shows that the part of the error that depends on the
+index is uniformly tiny for all 16,384 indices, so `sin`'s bound covers it.
 
 ## Speed
 
 Correct rounding costs speed. On one AMD Ryzen 5 PRO 5650U (Zen 3), one
 core, memory-bound, built with gcc 13.3, in ns per element (glibc's figure is
-the faster of two runs):
+the fastest of three runs):
 
 | | crmvec | glibc `libmvec` | scalar CORE-MATH |
 |---|---|---|---|
-| `sinf` / `cosf` / `tanf` | 1.7 / 1.6 / 1.5 | 0.5 / 0.6 / 0.6 | 4.0 / 4.2 / 4.4 |
+| `sinf` / `cosf` / `tanf` | 1.7 / 1.7 / 1.5 | 0.5 / 0.6 / 0.6 | 4.0 / 4.2 / 4.4 |
 | `expf` / `logf` | 1.4 / 1.9 | 0.7 / 0.7 | 2.5 / 2.7 |
-| `powf` | 5.9 | 2.7 | 12.8 |
-| `atanf` / `asinf` | 2.4 / 3.3 | 0.5 / 0.5 | 4.7 / 5.1 |
+| `powf` | 5.9 | 2.7 | 12.7 |
+| `atanf` / `asinf` | 2.4 / 3.3 | 0.5 / 0.5 | 4.8 / 5.1 |
 | `erff` / `erfcf` | 3.1 / 4.4 | 0.6 / 0.7 | 5.1 / 8.0 |
 | `hypotf` | 1.0 | 0.7 | 6.7 |
-| `exp` / `log` | 2.5 / 2.6 | 1.2 / 1.4 | 4.1 / 5.8 |
-| `sin` / `cos` | 3.8 / 3.7 | 1.4 / 1.4 | 7.4 / 25.0 |
-| `tan` | 7.2 | 1.2 | 29.5 |
-| `pow` | 8.0 | 5.1 | 18.9 |
-| `atan` / `atan2` | 6.6 / 5.7 | 1.3 / 2.3 | 5.4 / 13.7 |
-| `sinh` / `cosh` | 6.8 / 6.3 | 1.4 / 1.5 | 6.9 / 6.5 |
-| `erf` / `erfc` | 5.8 / 15.8 | 1.3 / 1.6 | 10.4 / 30.5 |
+| `exp` / `log` | 2.4 / 2.6 | 1.2 / 1.4 | 4.1 / 5.8 |
+| `sin` / `cos` | 3.8 / 3.7 | 1.4 / 1.4 | 7.5 / 24.9 |
+| `tan` | 7.2 | 1.2 | 29.6 |
+| `pow` | 7.9 | 5.1 | 18.8 |
+| `atan` / `atan2` | 6.5 / 5.7 | 1.3 / 2.3 | 5.4 / 13.6 |
+| `sinh` / `cosh` | 6.1 / 5.9 | 1.4 / 1.5 | 6.8 / 6.5 |
+| `erf` / `erfc` | 5.5 / 15.8 | 1.3 / 1.6 | 10.3 / 30.1 |
 | `hypot` | 3.6 | 1.6 | 11.4 |
 
 `./crtest time` prints all 52. Every function is slower than glibc, from
 1.5x (`hypotf`) to 10x (double `erfc`); the median is 3.2x. glibc computes
 in single precision on 8 lanes and makes no correct-rounding promise;
-correct rounding needs double precision, on 4 lanes. All but two are faster
-than scalar CORE-MATH: double `sinh` ties, and double `atan`, which loops
-over CORE-MATH, is 1.2x slower than calling it directly (the cost of
-entering a vector function and moving its values in and out). The tables
+correct rounding needs double precision, on 4 lanes. All but one are faster
+than scalar CORE-MATH: double `atan`, which loops over CORE-MATH, is 1.2x
+slower than calling it directly (the cost of entering a vector function and
+moving its values in and out). The tables
 are read a row per lane with ordinary loads rather than a column at a time
 with gathers, which on this CPU made the table-heavy functions up to twice
 as fast. Built with clang 22, an earlier build of the same day was 7%

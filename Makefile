@@ -14,7 +14,7 @@ CR      := expf.c exp2f.c exp10f.c logf.c log2f.c log10f.c sinf.c cosf.c tanf.c 
            exp10.c exp2.c expm1.c hypot.c log1p.c log2.c sinh.c tanh.c atan2/atan2.c log10/log10.c
 HDR     := $(wildcard crmvec-*.h)
 
-all: libmvec.so.1 crtest libcrref.so bcheck hypot-midpoints
+all: libmvec.so.1 crtest libcrref.so bcheck hypot-midpoints tan-poles
 
 libmvec.so.1: crmvec.c $(HDR) $(CR)
 	$(CC) $(CFLAGS) $(FP) -fPIC -shared -Wl,-soname,libmvec.so.1 -o $@ crmvec.c $(CR) -lm
@@ -32,8 +32,13 @@ bcheck: bcheck.c
 hypot-midpoints: hypot-midpoints.c crmvec.c $(HDR) $(CR)
 	$(CC) $(CFLAGS) $(FP) -mavx2 -mfma -o $@ hypot-midpoints.c crmvec.c $(CR) -lm
 
+# cr_tan renamed to a counter inside crmvec.c only, to see which lanes go to it
+tan-poles: tan-poles.c tan-poles.h crmvec.c $(HDR) $(CR)
+	$(CC) $(CFLAGS) $(FP) -mavx2 -mfma -Dcr_tan=cnt_tan -c -o tan-poles-crmvec.o crmvec.c
+	$(CC) $(CFLAGS) $(FP) -mavx2 -mfma -o $@ tan-poles.c tan-poles-crmvec.o $(CR) -lm
+	rm -f tan-poles-crmvec.o
 clean:
-	rm -f libmvec.so.1 crtest libcrref.so bcheck hypot-midpoints
+	rm -f libmvec.so.1 crtest libcrref.so bcheck hypot-midpoints tan-poles
 
 print-sources:   # for the export script: every CORE-MATH source the build uses
 	@echo $(CR)

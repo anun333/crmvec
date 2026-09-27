@@ -2139,9 +2139,10 @@ AVX2I static inline __m256d sinhcosh_fast(__m256d x, int is_cosh, __m256d *redo)
   __m256d tl, ql; __m256i dummy;
   __m256d th = exp_tables(il, &tl, &dummy);                 /* il's low 12 bits index the tables */
   __m256d qh = exp_tables(jl, &ql, &dummy);
-  __m256i j1 = _mm256_slli_epi64(_mm256_and_si256(jl, _mm256_set1_epi64x(0x3f)), 1);
-  __m256i j0 = _mm256_slli_epi64(_mm256_and_si256(_mm256_srli_epi64(jl, 6), _mm256_set1_epi64x(0x3f)), 1);
-  __m256d qh1 = _mm256_mul_pd(_mm256_i64gather_pd(&EXP_T0[0][1], j0, 8), _mm256_i64gather_pd(&EXP_T1[0][1], j1, 8));  /* q0h*q1h */
+  /* q0h*q1h: exp_tables(jl) read the same two rows and returned their hi
+     parts' product (t1h t0h; IEEE multiplication commutes), so this is qh,
+     bit for bit. It was two more gathers and a multiply until 2026-09-26. */
+  __m256d qh1 = qh;
   __m256d dx = _mm256_add_pd(_mm256_sub_pd(ax, _mm256_mul_pd(_mm256_set1_pd(0x1.62e42ffp-13), t)),
                              _mm256_mul_pd(_mm256_set1_pd(0x1.718432a1b0e26p-47), t));
   __m256d dx2 = _mm256_mul_pd(dx, dx), mx = _mm256_xor_pd(dx, SIGN);
@@ -2627,15 +2628,24 @@ double cr_erf(double);
 
 /* cr_erf_fast for 0 < z <= 0x1.7afb48dc96626p+2: h + l ~ erf z, relative
    error below *err (erfc.c's copy of it is the same code and table) */
+#ifndef ERF_SKIP
+#define ERF_SKIP 1
+#endif
 AVX2I static inline void erf_core(__m256d z, __m256d *ho, __m256d *lo, __m256d *erro)
 {
 #define C_(k) _mm256_set1_pd(k)
+  /* Each block runs only if some lane needs it (ERF_SKIP); the lanes that
+     are computed get exactly the operations they always did. */
+  __m256d small = _mm256_cmp_pd(z, C_(0.0625), _CMP_LT_OQ);
+  int ms = _mm256_movemask_pd(small);
+  __m256d h0 = _mm256_setzero_pd(), l0 = h0, h2 = h0, l2 = h0, th, tl;
+  if (!ERF_SKIP || ms) {
   /* z < 1/16 */
   __m256d z2h = _mm256_mul_pd(z, z), z2l = _mm256_fmsub_pd(z, z, z2h), z4 = _mm256_mul_pd(z2h, z2h);
   __m256d c9 = _mm256_fmadd_pd(C_(-0x1.bf9f8d2c202e4p-11), z2h, C_(0x1.565bbf8a0fe0bp-8));
   __m256d c5 = _mm256_fmadd_pd(C_(-0x1.b82ce31189904p-6), z2h, C_(0x1.ce2f21a042b7fp-4));
   c5 = _mm256_fmadd_pd(c9, z4, c5);
-  __m256d th = _mm256_mul_pd(z2h, c5), tl = _mm256_fmsub_pd(z2h, c5, th);
+  th = _mm256_mul_pd(z2h, c5); tl = _mm256_fmsub_pd(z2h, c5, th);
   __m256d h = _mm256_add_pd(C_(-0x1.812746b0379e7p-2), th), l = _mm256_sub_pd(th, _mm256_sub_pd(h, C_(-0x1.812746b0379e7p-2)));
   l = _mm256_add_pd(l, _mm256_add_pd(tl, C_(0x1.f1a64d72722a2p-57)));
   __m256d hc = h;
@@ -2643,8 +2653,10 @@ AVX2I static inline void erf_core(__m256d z, __m256d *ho, __m256d *lo, __m256d *
   tl = _mm256_add_pd(tl, _mm256_fmadd_pd(z2h, l, C_(0x1.1ae3a7862d9c4p-56)));
   h = _mm256_add_pd(C_(0x1.20dd750429b6dp+0), th); l = _mm256_sub_pd(th, _mm256_sub_pd(h, C_(0x1.20dd750429b6dp+0)));
   l = _mm256_add_pd(l, _mm256_fmadd_pd(z2l, hc, tl));
-  __m256d h0 = _mm256_mul_pd(h, z); tl = _mm256_fmsub_pd(h, z, h0);
-  __m256d l0 = _mm256_fmadd_pd(l, z, tl);
+  h0 = _mm256_mul_pd(h, z); tl = _mm256_fmsub_pd(h, z, h0);
+  l0 = _mm256_fmadd_pd(l, z, tl);
+  }
+  if (!ERF_SKIP || ms != 0xf) {
   /* 1/16 <= z: the table */
   __m256d v = _mm256_floor_pd(_mm256_mul_pd(C_(16.0), z));
   __m256d vi = _mm256_min_pd(_mm256_max_pd(_mm256_sub_pd(v, C_(1.0)), _mm256_setzero_pd()), C_(93.0));
@@ -2670,10 +2682,10 @@ __m256d cc_[13]; LOAD_ROWS(CT, _mm256_mul_epu32(row, _mm256_set1_epi64x(13)), cc
   l1 = _mm256_add_pd(l1, _mm256_add_pd(tl, _mm256_fmadd_pd(w, c2l, G_(3))));
   th = _mm256_mul_pd(w, h1); tl = _mm256_fmsub_pd(w, h1, th);
   tl = _mm256_fmadd_pd(w, l1, tl);
-  __m256d h2 = _mm256_add_pd(G_(0), th), l2 = _mm256_sub_pd(th, _mm256_sub_pd(h2, G_(0)));
+  h2 = _mm256_add_pd(G_(0), th); l2 = _mm256_sub_pd(th, _mm256_sub_pd(h2, G_(0)));
   l2 = _mm256_add_pd(l2, _mm256_add_pd(tl, G_(1)));
 #undef G_
-  __m256d small = _mm256_cmp_pd(z, C_(0.0625), _CMP_LT_OQ);
+  }
   *ho = _mm256_blendv_pd(h2, h0, small); *lo = _mm256_blendv_pd(l2, l0, small);
   *erro = _mm256_mul_pd(_mm256_blendv_pd(C_(0x1.11p-69), C_(0x1.78p-69), small), C_(CM_EPS_SCALE));
 #undef C_
@@ -2944,7 +2956,16 @@ AVX2 __m256d _ZGVdN4v_log(__m256d x)
    cos is the same computation one quarter turn along: cos x = sin(|x| +
    pi/2) = sin((k + 2^13) pi/2^14 + r), the same r with the table index
    shifted by 2^13 and no sign from x. The bound in sin.c holds for every
-   table index and every |r| < 2^-13.339, so it covers cos unchanged. (cos.c
+   table index and every |r| < 2^-13.339, so it covers cos unchanged.
+   Checked independently 2026-09-26 (sin.c's proof, sin.pdf, is not
+   published): of the bound's terms, the reduction and the polynomials in r
+   do not depend on the index; the ones that do are the tables and their
+   products, which sincos-tables.py recomputes exactly (every double
+   operation and fma rounded as the code does) for all 2^14 indices: Sh + Sl
+   within 2^-104.74 of sin(j pi/2^14) and Ch within 2^-52.19 of cos(j pi/2^14),
+   which only multiplies sh (|sh| < 2^-13.3), so below 2^-65.5. Uniform
+   over j: no index is special, and every index cos uses, sin uses too. The
+   script's control: one ulp off in one entry shows as 2^-64 at that index. (cos.c
    itself uses an older algorithm with 128-bit integer reduction.)
    Lanes that fail the test, |x| >= 2^31, inf and nan go to cr_sin / cr_cos:
    that includes tiny x, whose results are below the absolute bound. */
@@ -3085,7 +3106,18 @@ SINCOS(cos, 1, cr_cos)
      exact by fma, and the terms dropped or rounded after it are each below
      2^-104 |qh|; |dq| < 2^-102, bounded here by 2^-95.
    - B = (es + ec)(1 + 2^-40) + 2^-95 covers all of it, the slack also
-     covering the rounding in computing B and in the test below.
+     covering the rounding in computing B and in the test below. That needs
+     1/(1 - ec) <= 1 + 2^-40, which is not true for every lane: near a pole
+     of tan, |ch| can be small enough that ec is large. It holds wherever the
+     test can pass: B >= ec, and a lane passes only if qh + (ql -+ B|qh|)
+     round to the same double, which needs B|qh| below about an ulp of qh,
+     so B < 2^-50 and ec < 2^-50, giving 1/(1 - ec) < 1 + 2^-49.9. Near-pole
+     lanes, where the factor matters, always fail the test and go to cr_tan.
+     (This step was missing from the first version of this argument; found
+     by the independent re-reading, 2026-09-26. tan-poles.c checks it: of
+     205,999 vectors whose 4 lanes all have |cos x| < 2^-12, none was decided
+     by the vector path; with B = 0 the same test sees 823,996 lanes decided
+     and 283,441 wrong.)
    The test is CORE-MATH's: qh + (ql -+ B |qh|) must round the same way.
    Lanes with |sh| or |ch| too small for the bound (tan near 0 or a pole),
    and everything sincos_dd cannot take, go to cr_tan. */
