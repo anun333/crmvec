@@ -3340,6 +3340,7 @@ DOUBLE_FAST(log1p, log1p_fast, cr_log1p)
 AVX2 __m256d _ZGVdN4v_expm1(__m256d); AVX2 __m256d _ZGVdN4v_log1p(__m256d);
 #endif
 DOUBLE_FAST(cbrt, cbrt_fast, cr_cbrt)
+#if !CRMVEC_PORT
 #if !CR_LOOP_ATAN && !ATAN_REFINE
 DOUBLE_FAST(atan, atan_fast, cr_atan)
 #elif !CR_LOOP_ATAN
@@ -3362,6 +3363,12 @@ AVX2 __m256d _ZGVdN4v_atan(__m256d x)
   for (int k = 0; k < 4; k++) if (m >> k & 1) ys[k] = cr_atan(xs[k]);
   return _mm256_loadu_pd(ys);
 }
+#endif
+#else   /* PORT=1: port/crmvec-port.c supplies it (port-atan.h) */
+#if CR_LOOP_ATAN
+#error "PORT=1 replaces atan: keep CR_LOOP_ATAN at 0"
+#endif
+AVX2 __m256d _ZGVdN4v_atan(__m256d);
 #endif
 #if ASIN_REFINE
 AVX2 __m256d _ZGVdN4v_asin(__m256d x)
