@@ -555,12 +555,12 @@ check` passes on both builds. On aarch64 this is the default from 0.3.0
     through SIMDe;
   - `sin` and `cos` take 9.5 and 9.6, against 63;
   - `expf` takes 6.0, against 88;
-  - over the 35 ported by 0.3.0, the portable entry points are 2.3
-    (`erfcf`) to 19 (`sinhf`) times faster than the SIMDe route. They are
-    still 3 to 10 times slower than glibc's where glibc has the function
-    (CI run 36407622664);
-  - the other 17 doubles took 50 to 540 ns per element through SIMDe
-    there; their portable timings come from the next CI run;
+  - over all 52 (CI run 36427128874), the portable entry points take 3.2
+    (`hypotf`) to 38 (`erfc`) ns per element, 2.3 (`erfcf`) to 19
+    (`sinhf`) times faster than the SIMDe route, which takes 29 to 543.
+    The slowest before, `erfc`, `pow` and `erf`, went from 543, 260 and
+    158 ns to 38, 22 and 19. They are still 2.1 to 9.8 times slower than
+    glibc's where glibc has the function;
 - SLEEF's names for them;
 - the blocks the SVE entry points call.
 
