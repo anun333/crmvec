@@ -47,7 +47,7 @@ PORT_INLINE vd port_exp2_core(vd t)
   vd s = (vd)((k + splatl(1023)) << 52);
   vd r = t - (kd - BIG);
   vd p = splatd(PORT_C2[9]);
-  for (int i = 8; i >= 0; i--) p = fmad_v(p, r, splatd(PORT_C2[i]));
+  PORT_UNROLL for (int i = 8; i >= 0; i--) p = fmad_v(p, r, splatd(PORT_C2[i]));
   return p * s;
 }
 
@@ -55,7 +55,7 @@ PORT_INLINE vd port_exp2_core(vd t)
 PORT_INLINE vd port_expm1_d(vd u)
 {
   vd p = splatd(PORT_INVFACT[13]);
-  for (int n = 12; n >= 1; n--) p = fmad_v(p, u, splatd(PORT_INVFACT[n]));
+  PORT_UNROLL for (int n = 12; n >= 1; n--) p = fmad_v(p, u, splatd(PORT_INVFACT[n]));
   vd small = u * p;
   vd t = port_min(port_max(u * splatd(0x1.71547652b82fep+0), splatd(-300.0)), splatd(300.0));
   vd big = port_exp2_core(t) - splatd(1.0);
@@ -79,7 +79,7 @@ PORT_INLINE vd port_sinhf_half(vd x, vl *redo)
 {
   vd ax = port_abs(x), x2 = x * x;
   vd p = splatd(PORT_INVFACT[13]);
-  for (int n = 11; n >= 1; n -= 2) p = fmad_v(p, x2, splatd(PORT_INVFACT[n]));
+  PORT_UNROLL for (int n = 11; n >= 1; n -= 2) p = fmad_v(p, x2, splatd(PORT_INVFACT[n]));
   vd small = x * p;
   vd t = port_min(ax * splatd(0x1.71547652b82fep+0), splatd(300.0));
   vd big = (port_exp2_core(t) - port_exp2_core(splatd(0.0) - t)) * splatd(0.5);

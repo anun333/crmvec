@@ -37,6 +37,13 @@ PORT_INLINE vi splati(int32_t c) { vi r; for (int i = 0; i < NF; i++) r[i] = c; 
 PORT_INLINE vd splatd(double c) { vd r; for (int i = 0; i < ND; i++) r[i] = c; return r; }
 PORT_INLINE vl splatl(int64_t c) { vl r; for (int i = 0; i < ND; i++) r[i] = c; return r; }
 
+/* Fully unroll a short polynomial loop. Left as a loop, gcc 13 doesn't
+   pack the lane loops of the fmad_v calls inside it, and leaves them scalar
+   ("couldn't vectorize loop"; 144 scalar FMAs in coshf on AVX2,
+   2026-09-28). Unrolled, its SLP packs them as in the written-out
+   polynomials. The arithmetic and its order are unchanged. */
+#define PORT_UNROLL _Pragma("GCC unroll 16")
+
 /* a * b + c with one rounding: clang's elementwise builtin, or a lane loop
    over the scalar builtin that gcc turns into one vector FMA (-O3) */
 PORT_INLINE vf fmaf_v(vf a, vf b, vf c)
