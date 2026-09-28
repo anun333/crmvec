@@ -12,6 +12,7 @@
 #include "port-exp.h"
 #include "port-expf.h"
 #include "port-sincos.h"
+#include "port-sinf.h"
 #include <arm_neon.h>
 
 #define EXPORT __attribute__((visibility("default"), aarch64_vector_pcs))
@@ -78,6 +79,8 @@ HIDDEN void crm_blk_exp(double *a)
 PORT_F1(expf)
 PORT_F1(exp2f)
 PORT_F1(exp10f)
+PORT_F1(sinf)
+PORT_F1(cosf)
 EXPORT __typeof__(_ZGVnN4v_expf) _ZGVnN4v___expf_finite __attribute__((alias("_ZGVnN4v_expf")));
 EXPORT __typeof__(_ZGVnN4v_exp2f) _ZGVnN4v___exp2f_finite __attribute__((alias("_ZGVnN4v_exp2f")));
 EXPORT __typeof__(_ZGVnN4v_exp2f) _ZGVnN4v_exp2f_u35 __attribute__((alias("_ZGVnN4v_exp2f")));
@@ -100,5 +103,11 @@ EXPORT __typeof__(_ZGVnN4v_exp10f) _ZGVnN4v_exp10f_u35 __attribute__((alias("_ZG
   }
 PORT_D1(sin)
 PORT_D1(cos)
+PORT_D1(tan)
 EXPORT __typeof__(_ZGVnN2v_sin) _ZGVnN2v_sin_u35 __attribute__((alias("_ZGVnN2v_sin")));
 EXPORT __typeof__(_ZGVnN2v_cos) _ZGVnN2v_cos_u35 __attribute__((alias("_ZGVnN2v_cos")));
+EXPORT __typeof__(_ZGVnN2v_tan) _ZGVnN2v_tan_u35 __attribute__((alias("_ZGVnN2v_tan")));
+EXPORT __typeof__(_ZGVnN4v_sinf) _ZGVnN4v_sinf_u35 __attribute__((alias("_ZGVnN4v_sinf")));
+EXPORT __typeof__(_ZGVnN4v_sinf) _ZGVnN4v_fastsinf_u3500 __attribute__((alias("_ZGVnN4v_sinf")));
+EXPORT __typeof__(_ZGVnN4v_cosf) _ZGVnN4v_cosf_u35 __attribute__((alias("_ZGVnN4v_cosf")));
+EXPORT __typeof__(_ZGVnN4v_cosf) _ZGVnN4v_fastcosf_u3500 __attribute__((alias("_ZGVnN4v_cosf")));

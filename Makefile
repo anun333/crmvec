@@ -88,7 +88,7 @@ headercheck: crmvec.h crmvec-f16.c crmvec-scalar.c
 PORT    ?= 0
 PORTCC  ?= $(CC)
 PORTOBJ := $(if $(filter 1,$(PORT)),crmvec-port.o)
-crmvec-port.o: port/crmvec-port.c port/portable.h port/port-log.h port/port-exp.h port/port-expf.h port/port-sincos.h crmvec-rows-tab.h crmvec-exp-tab.h crmvec-sin-tab.h
+crmvec-port.o: port/crmvec-port.c port/portable.h port/port-log.h port/port-exp.h port/port-expf.h port/port-sincos.h port/port-sinf.h crmvec-rows-tab.h crmvec-exp-tab.h crmvec-sin-tab.h
 	$(PORTCC) -O3 -ffp-contract=off -mavx2 -mfma -fPIC -c -o $@ port/crmvec-port.c
 
 crmvec.o: crmvec.c $(HDR) $(PORTOBJ)
@@ -155,8 +155,9 @@ pownf-search: pownf-search.c crmvec-pownf-tab.h $(PWS)
 # cr_tan renamed to a counter inside crmvec.c only, to see which lanes go to it
 tan-poles: tan-poles.c tan-poles.h $(LIB) $(HDR) $(CR) libcrf16.a $(PORTOBJ)
 	$(CC) $(CFLAGS) $(FPV) -DCRMVEC_PORT=$(PORT) -mavx2 -mfma -Dcr_tan=cnt_tan -c -o tan-poles-crmvec.o crmvec.c
-	$(CC) $(CFLAGS) $(FP) -mavx2 -mfma -o $@ tan-poles.c tan-poles-crmvec.o $(PORTOBJ) crmvec-scalar.c crmvec-f16.c $(CR) libcrf16.a -lm
-	rm -f tan-poles-crmvec.o
+	$(if $(PORTOBJ),$(PORTCC) -O3 -ffp-contract=off -mavx2 -mfma -Dcr_tan=cnt_tan -c -o tan-poles-port.o port/crmvec-port.c)
+	$(CC) $(CFLAGS) $(FP) -mavx2 -mfma -o $@ tan-poles.c tan-poles-crmvec.o $(if $(PORTOBJ),tan-poles-port.o) crmvec-scalar.c crmvec-f16.c $(CR) libcrf16.a -lm
+	rm -f tan-poles-crmvec.o tan-poles-port.o
 # aarch64 (cross-built; checked under qemu-user): the same vector code, with
 # SIMDe standing in for the x86 intrinsics (crmvec-simde.h; libsimde-dev):
 # AdvSIMD entry points from crmvec-aarch64.c, SVE from crmvec-sve.c, under
@@ -169,7 +170,7 @@ A64CC   := $(CC)
 else
 A64CC   ?= aarch64-linux-gnu-gcc
 endif
-A64SRC  := $(LIB) crmvec-aarch64.c crmvec-sve.c $(HDR) $(CR) $(if $(filter 1,$(PORT)),port/crmvec-port-a64.c port/portable.h port/port-log.h port/port-exp.h port/port-expf.h port/port-sincos.h)
+A64SRC  := $(LIB) crmvec-aarch64.c crmvec-sve.c $(HDR) $(CR) $(if $(filter 1,$(PORT)),port/crmvec-port-a64.c port/portable.h port/port-log.h port/port-exp.h port/port-expf.h port/port-sincos.h port/port-sinf.h)
 A64OBJ  := $(A64)/crmvec.o $(A64)/scalar.o $(A64)/f16.o $(A64)/advsimd.o $(A64)/sve.o $(if $(filter 1,$(PORT)),$(A64)/port.o)
 aarch64: $(A64)/libmvec.so.1 $(A64)/libsleefgnuabi.so.3 $(A64)/aarch64-check
 

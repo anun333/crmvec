@@ -1,15 +1,17 @@
 /* generic-sincos.c: the portable double sin and cos (2026-09-28), built
    from port-sincos.h, the same code the library's PORT=1 files use:
    crmvec's sincos_dd/sincos_fast (CORE-MATH's cr_sin fast path, cos a
-   quarter turn along), two 128-row double-double tables read as rows.
-   Must be bit-identical to cr_sin and cr_cos on every input.
+   quarter turn along), two 128-row double-double tables read as rows, and
+   tan (crmvec's tan_fast) on the same core. Must be bit-identical to
+   cr_sin, cr_cos and cr_tan on every input.
 
-     generic-sincos verify [sin|cos] [N]   N random inputs of five kinds
+     generic-sincos verify [sin|cos|tan] [N]   N random inputs of five kinds
                                            (default 2^26) against CORE-MATH
      generic-sincos time [LIB...]          ns per element (sin), against the
                                            _ZGV sin entry points given
 
-   Build with -DSIN_EPS=0 as the control: verify must find differences. */
+   Build with -DSIN_EPS=0 (sin, cos) or -DTAN_SLACK=-1 (tan) as the control:
+   verify must find differences. */
 #include <dlfcn.h>
 #include <math.h>
 #include <stdio.h>
@@ -22,6 +24,7 @@
 
 __attribute__((noinline)) vd gsin(vd x) { return port_sin(x); }
 __attribute__((noinline)) vd gcos(vd x) { return port_cos(x); }
+__attribute__((noinline)) vd gtan(vd x) { return port_tan(x); }
 
 #ifdef GUARD
 /* the shipped entry point's shape, for a fair time: crmvec's two-add
@@ -62,7 +65,8 @@ static double input(uint64_t *s, int kind)
 int main(int argc, char **argv)
 {
   if (argc > 1 && !strcmp(argv[1], "verify")) {
-    int is_cos = argc > 2 && !strcmp(argv[2], "cos");
+    const char *fn = argc > 2 ? argv[2] : "sin";
+    int is_cos = !strcmp(fn, "cos"), is_tan = !strcmp(fn, "tan");
     long n = argc > 3 ? atol(argv[3]) : 1L << 26;
     unsigned long bad = 0, tot = 0;
     for (int kind = 0; kind < 5; kind++) {
@@ -71,14 +75,14 @@ int main(int argc, char **argv)
       for (long blk = 0; blk < n / ND; blk++) {
         uint64_t s = 0x9e3779b97f4a7c15ULL ^ ((uint64_t)kind << 56) ^ (uint64_t)blk * 0x2545F4914F6CDD1DULL;
         vd x, y; for (int i = 0; i < ND; i++) x[i] = input(&s, kind);
-        y = is_cos ? gcos(x) : gsin(x);
+        y = is_tan ? gtan(x) : is_cos ? gcos(x) : gsin(x);
         double ya[ND]; memcpy(ya, &y, VB);
-        for (int i = 0; i < ND; i++) { double w = is_cos ? cr_cos(x[i]) : cr_sin(x[i]); if (memcmp(&w, &ya[i], 8) && !(isnan(w) && isnan(ya[i]))) kb++; }
+        for (int i = 0; i < ND; i++) { double w = is_tan ? cr_tan(x[i]) : is_cos ? cr_cos(x[i]) : cr_sin(x[i]); if (memcmp(&w, &ya[i], 8) && !(isnan(w) && isnan(ya[i]))) kb++; }
       }
       printf("  kind %d: %lu of %ld differ\n", kind, kb, n / ND * ND);
       bad += kb; tot += n / ND * ND;
     }
-    printf("%s VB=%d (%d lanes): %lu of %lu differ from cr_%s%s\n", is_cos ? "cos" : "sin", VB, ND, bad, tot, is_cos ? "cos" : "sin", bad ? "" : " -- IDENTICAL on every input tried");
+    printf("%s VB=%d (%d lanes): %lu of %lu differ from cr_%s%s\n", fn, VB, ND, bad, tot, fn, bad ? "" : " -- IDENTICAL on every input tried");
     return bad != 0;
   }
   if (argc > 1 && !strcmp(argv[1], "time")) {

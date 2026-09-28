@@ -1011,8 +1011,12 @@ AVX2I static inline __m256d trig_family(__m128 xf, int shift, __m128i *redo)
     return finish8(xf, y0, y1, r0, r1, CR);                                           \
   }
 
+#if !CRMVEC_PORT
 TRIG_FAMILY(sinf, 0, cr_sinf)
 TRIG_FAMILY(cosf, 1, cr_cosf)
+#else   /* PORT=1: port/crmvec-port.c supplies them (port-sinf.h) */
+AVX2 __m256 _ZGVdN8v_sinf(__m256); AVX2 __m256 _ZGVdN8v_cosf(__m256);
+#endif
 
 /* ---- tanf (added 2026-09-26) ---------------------------------------- */
 
@@ -3659,6 +3663,7 @@ AVX2I static inline __m256d tan_fast(__m256d x, __m256d *redo)
   return left;
 }
 
+#if !CRMVEC_PORT   /* with PORT=1, port/crmvec-port.c supplies it (port-sincos.h) */
 AVX2 __m256d _ZGVdN4v_tan(__m256d x)
 {
   __m256d redo, y = tan_fast(x, &redo);
@@ -3668,6 +3673,9 @@ AVX2 __m256d _ZGVdN4v_tan(__m256d x)
   for (int i = 0; i < 4; i++) if (m >> i & 1) ys[i] = cr_tan(xs[i]);
   return _mm256_loadu_pd(ys);
 }
+#else
+AVX2 __m256d _ZGVdN4v_tan(__m256d);
+#endif
 
 /* ---- double pow (added 2026-09-26) ------------------------------------ */
 

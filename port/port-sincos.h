@@ -68,3 +68,38 @@ PORT_INLINE vd port_sincos(vd x, int is_cos)
 }
 PORT_INLINE vd port_sin(vd x) { return port_sincos(x, 0); }
 PORT_INLINE vd port_cos(vd x) { return port_sincos(x, 1); }
+
+/* tan (crmvec's tan_fast, its own bound; see crmvec.c): sin and cos from
+   the core above (two calls give the same bits as crmvec's sincos_dd2),
+   renormalized by TwoSum, the quotient as a double-double, and the test
+   qh + (ql -+ B|qh|) with B from both relative errors */
+double cr_tan(double);
+#ifndef TAN_SLACK
+#define TAN_SLACK 0x1p-40   /* the control rebuilds with -1 (B = 0) */
+#endif
+PORT_INLINE vd port_tan(vd x)
+{
+  const vl SIGN = splatl(INT64_MIN);
+  const vd E = splatd(SIN_EPS);
+  vd sh, sl, ch, cl; vl ok, ok2;
+  port_sincos_dd(x, 0, &sh, &sl, &ok);
+  port_sincos_dd(x, 1, &ch, &cl, &ok2);
+  { vd s_ = sh + sl, b_ = s_ - sh; sl = (sh - (s_ - b_)) + (sl - b_); sh = s_; }   /* TwoSum */
+  { vd s_ = ch + cl, b_ = s_ - ch; cl = (ch - (s_ - b_)) + (cl - b_); ch = s_; }
+  vd qh = sh / ch;
+  vd rem = fmad_v(-qh, ch, sh);                                    /* sh - qh ch, exact */
+  rem = (rem + sl) - qh * cl;
+  vd ql = rem / ch;
+  const vd SHRINK = splatd(1.0 - 0x1p-50);
+  vd ds = (vd)((vl)sh & ~SIGN) * SHRINK - E;
+  vd dc = (vd)((vl)ch & ~SIGN) * SHRINK - E;
+  vl usable = (ds > splatd(0.0)) & (dc > splatd(0.0));
+  vd B = E / ds + E / dc;
+  B = fmad_v(B, splatd(1.0 + TAN_SLACK), splatd(0x1p-95 * (1.0 + TAN_SLACK)));
+  vd b = B * (vd)((vl)qh & ~SIGN);
+  vd left = qh + (ql - b), right = qh + (ql + b);
+  vl good = (ok & ok2) & (usable & (left == right));
+  vl bad = ~good;
+  if (__builtin_expect(!anyl(bad), 1)) return left;
+  return port_sincos_finish(x, left, bad, cr_tan);
+}
