@@ -3390,11 +3390,18 @@ AVX2 __m256d _ZGVdN4v_asin(__m256d x)
 DOUBLE_FAST(asin, asin_fast, cr_asin)
 #endif
 DOUBLE_FAST(acos, acos_fast, cr_acos)
+#if !CRMVEC_PORT
 #if !CR_LOOP_SINH
 DOUBLE_FAST(sinh, sinh_fast, cr_sinh)
 #endif
 #if !CR_LOOP_COSH
 DOUBLE_FAST(cosh, cosh_fast, cr_cosh)
+#endif
+#else   /* PORT=1: port/crmvec-port.c supplies them (port-sinhcosh.h) */
+#if CR_LOOP_SINH || CR_LOOP_COSH
+#error "PORT=1 replaces sinh and cosh: keep CR_LOOP_SINH and CR_LOOP_COSH at 0"
+#endif
+AVX2 __m256d _ZGVdN4v_sinh(__m256d); AVX2 __m256d _ZGVdN4v_cosh(__m256d);
 #endif
 #if !CRMVEC_PORT
 DOUBLE_FAST(tanh, tanh_fast, cr_tanh)
