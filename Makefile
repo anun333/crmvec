@@ -8,7 +8,7 @@
 # own gcc builds use the flag); 33 of its 72 files compile differently.
 CC      ?= gcc
 .DEFAULT_GOAL := all
-VERSION := 0.1.0
+VERSION := 0.2.0
 # install locations (make install PREFIX=... DESTDIR=...): the libraries go
 # to a directory of their own, so that nothing replaces the system's
 # libmvec.so.1 until a program asks for it (crmvec-run, or the rpath that

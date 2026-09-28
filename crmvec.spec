@@ -11,7 +11,7 @@
 %global debug_package %{nil}
 
 Name:           crmvec
-Version:        0.1.0
+Version:        0.2.0
 Release:        1%{?dist}
 Summary:        Correctly rounded vector math (a drop-in libmvec)
 License:        MIT
@@ -52,7 +52,7 @@ make check
 %make_install PREFIX=%{_prefix} LIBDIR=%{_libdir}
 
 %files
-%license LICENSE
+%license LICENSE LICENSE.CORE-MATH
 %doc README.md
 %{_bindir}/crmvec-run
 %{_includedir}/crmvec.h
@@ -61,5 +61,11 @@ make check
 %{_libdir}/pkgconfig/crmvec.pc
 
 %changelog
+* Mon Sep 28 2026 anun333 <anun333@posteo.net> - 0.2.0-1
+- crmvec-simd.h: gcc reaches every function without -ffast-math
+- make check runs on aarch64; hypotf's rounding test has a control
+- PORT=1: 35 of the 52 functions from one portable source (off by default)
+- LICENSE.CORE-MATH: the vendored CORE-MATH files' notices
+
 * Sun Sep 27 2026 anun333 <anun333@posteo.net> - 0.1.0-1
 - First packaged version.

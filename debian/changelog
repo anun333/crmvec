@@ -1,3 +1,12 @@
+crmvec (0.2.0) unstable; urgency=medium
+
+  * crmvec-simd.h: gcc reaches every function without -ffast-math.
+  * make check runs on aarch64; hypotf's rounding test has a control.
+  * PORT=1: 35 of the 52 functions from one portable source (off by default).
+  * LICENSE.CORE-MATH: the vendored CORE-MATH files' notices.
+
+ -- anun333 <anun333@posteo.net>  Mon, 28 Sep 2026 06:00:00 -0500
+
 crmvec (0.1.0) unstable; urgency=medium
 
   * First packaged version.
