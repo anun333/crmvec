@@ -5,6 +5,9 @@ Correctly rounded vector math, as a drop-in replacement for:
 - SLEEF's `libsleefgnuabi.so.3` on aarch64;
 - SLEEF's RVV `libsleef.so.3` on riscv64 (checked under emulation).
 
+The latest release is 0.4.0. The riscv64 library is on `main` and not yet
+in a release.
+
 Its results are the correctly rounded ones, bit for bit the same as
 [CORE-MATH](https://core-math.gitlabpages.inria.fr/)'s.
 
@@ -39,7 +42,8 @@ first proposed (its current version adds only their SSE2 forms). A program
 that needs another `libmvec` symbol fails to link against this library,
 loudly, rather than falling back silently. With the AVX and AVX-512 forms,
 it has every name glibc 2.39's x86 `libmvec` exports except `sincos`, which
-gcc does not call.
+gcc does not call. The same 52 functions carry glibc's and SLEEF's names on
+aarch64, and SLEEF's RVV names on riscv64 (sections below).
 
 Also OpenCL's other correctly rounded functions, under their C23 names, in
 float and double, with SSE2 and AVX2 entry points on x86 and on aarch64:
@@ -79,7 +83,7 @@ make check                # a few minutes of the checks below; every verdict mus
 LD_LIBRARY_PATH=$PWD your-program
 ```
 
-Or install it (version 0.1.0):
+Or install it:
 
 ```
 make lib                  # the libraries only: a C compiler is enough (on aarch64 also libsimde-dev; builds libmvec.so.1 and libsleefgnuabi.so.3)
@@ -104,8 +108,9 @@ Packages, from this repository:
   provide `libmvec.so.1` to other packages.
 - **Nix** (`package.nix`, `nix-build`): built with nixpkgs 24.05 (gcc 13.2),
   and its library passes the checks.
-- **conda-forge** (`conda/recipe.yaml`): written, not yet submitted to
-  conda-forge.
+- **conda-forge** (`conda/recipe.yaml`): submitted as
+  [staged-recipes#34976](https://github.com/conda-forge/staged-recipes/pull/34976)
+  (version 0.4.0), waiting for review.
 
 All of them build without link-time optimization, and run `make clean`
 first, so a source tree holding an earlier build cannot ship it. The checks have run on
@@ -115,13 +120,15 @@ and CORE-MATH.
 The Debian, Fedora and Nix recipes also run `make check` on the library
 they package, as part of the build (Debian's `nocheck` skips it). Checked
 2026-09-27 on Debian amd64 (Ubuntu 24.04), Fedora 44 (gcc 16) and Nix
-(nixpkgs 24.05): every verdict passes.
+(nixpkgs 24.05): every verdict passes. That was version 0.1.0. The recipes
+now carry 0.4.0 and haven't been rebuilt since.
 
 Every push also runs `make check` on GitHub Actions
 (`.github/workflows/check.yml`), on an x86-64 runner and natively on an
-arm64 runner. On each it also prints the entry points' speed against
-glibc's: noisy, since the runners are shared, but the only aarch64 figures
-so far.
+arm64 runner (a Neoverse N2). The x86 job also builds the riscv64 library
+and checks it under qemu at two vector lengths. Both jobs print the entry
+points' speed against glibc's. The figures are noisy, since the runners are
+shared, but they are this README's only aarch64 timings.
 
 [PoCL](https://github.com/pocl/pocl) built with
 `ENABLE_HOST_CPU_VECTORIZE_LIBMVEC=ON` loads `libmvec.so.1` by its SONAME
@@ -173,7 +180,8 @@ vectorized. Add `-ffp-contract=off` if your own arithmetic must not be fused
 either. clang ignores the header and uses `-fveclib=libmvec`. Coverage then
 depends on LLVM's table: 10 of the 52 functions with clang 18, 28 with LLVM
 main, and all 52 with [llvm#223817](https://github.com/llvm/llvm-project/pull/223817)
-applied.
+applied. In that PR's current form, the 24 it adds are called only through
+their SSE2 (128-bit) entry points, even at `-mavx2`.
 
 Checked 2026-09-27:
 - **Coverage:** `simdcheck.sh`, part of `make check`. gcc 13 vectorizes all 52
@@ -401,15 +409,20 @@ earlier. Every result is still CORE-MATH's, bit for bit. `make PORT=0`
 builds the old route.
 
 `make aarch64` (needs `gcc-aarch64-linux-gnu` and `libsimde-dev`) builds
-`build-aarch64/libmvec.so.1` from the same `crmvec.c`, with
-[SIMDe](https://github.com/simd-everywhere/simde) supplying the x86
-intrinsics (`crmvec-simde.h`). It exports glibc's aarch64 names for all 26
-functions: AdvSIMD (`_ZGVnN2v_`, `_ZGVnN4v_`, with the vector calling
-convention glibc declares them with; `crmvec-aarch64.c`) and SVE
-(`_ZGVsMxv_`, masked, any vector length; `crmvec-sve.c`), 130 symbols,
-covering the 75 in glibc 2.39's aarch64 `libmvec`. The same library also
-exports the functions below that have no vector code yet, and all of
-SLEEF's names (next section): 718 symbols in all.
+`build-aarch64/libmvec.so.1`.
+- **Where the code comes from:** the 52 functions are the portable core
+  (below). The rest of the library is the same `crmvec.c` as on x86, with
+  [SIMDe](https://github.com/simd-everywhere/simde) supplying the x86
+  intrinsics (`crmvec-simde.h`). With `make PORT=0`, all of it comes from
+  there.
+- **glibc's names:** it exports glibc's aarch64 names for all 26
+  functions. These are AdvSIMD (`_ZGVnN2v_`, `_ZGVnN4v_`, with the vector
+  calling convention glibc declares them with; `crmvec-aarch64.c`) and SVE
+  (`_ZGVsMxv_`, masked, any vector length; `crmvec-sve.c`): 130 symbols,
+  covering the 75 in glibc 2.39's aarch64 `libmvec`.
+- **Everything else:** the same library also exports the functions below
+  that have no vector code yet, and all of SLEEF's names (next section).
+  That makes 718 vector-ABI symbols in all, plus `crmvec.h`'s functions.
 
 Two things had to be fixed in SIMDe's intrinsics for this, and both are in
 `crmvec-simde.h`. SIMDe computes its 256-bit fused multiply-adds as a
@@ -440,27 +453,36 @@ glibc's `libmvec`, give CORE-MATH's results with this library first on the
 library path (0 of 400,000 differ); with glibc's own, 33,871 differ. The
 dynamic linker prints "no version information available", because this
 library's symbols are unversioned; it binds them anyway. On riscv64 the
-same core gives the same bits (`port/port-build.sh`), but glibc has no
-riscv64 `libmvec` to stand in for.
+same core gives the same bits (`port/port-build.sh`). glibc has no riscv64
+`libmvec`, so there the library stands in for SLEEF's (see "Other CPUs:
+riscv64").
 
 **Through SIMDe it is slow.** On the Neoverse N2 (`nbench`, 2026-09-28, a
 shared runner), the AdvSIMD entry points built this way take 28 to 543 ns
 per element, against 0.7 to 6 for glibc's: `expf` 89 against 1.0, `log` 84
 against 2.4. Over the 30 functions glibc also has, that is 12 to 122 times
 slower (median 36), where on x86 the gap is about 3.3. The vector code
-reaches aarch64 through SIMDe, emulating 256-bit AVX2 on 128-bit NEON;
-that is the likely cause, not yet measured. This was every function's
-route before 0.3.0, and in 0.3.0 still that of 17 doubles. From 0.4.0
-every function has a portable version (next section), so the default
-aarch64 build no longer uses it; `make PORT=0` still builds it.
+reaches aarch64 through SIMDe, emulating 256-bit AVX2 on 128-bit NEON.
+The portable core's native NEON code for the same functions, on the same
+runner, is 2.3 to 19 times faster (below) and 2.1 to 9.8 times slower than
+glibc, so most of that gap was the route.
+- **History:** this route was every function's before 0.3.0, and in 0.3.0
+  it was still that of 17 doubles.
+- **Now:** from 0.4.0 every function has a portable version (next
+  section), so the default aarch64 build no longer uses this route for
+  them. `make PORT=0` still builds it.
 
 ### One portable source
 
-On aarch64 and riscv64 the vector code above comes through SIMDe, which is
-scalar on riscv64. `port/` holds the start of a rewrite in GCC/clang
-generic vector types, one source for every width. `port/portable.h` has
-the helpers the vector extensions lack (FMA, select, rounding, any-lane,
-table rows). All 52 functions are written:
+Through SIMDe, the x86 vector code reaches aarch64 slowly, and on riscv64
+SIMDe's code is scalar. `port/` holds a second implementation of all 52
+functions in GCC/clang generic vector types, one source for every width.
+- **aarch64:** the default (35 functions from 0.3.0, all 52 from 0.4.0).
+- **riscv64:** the whole library.
+- **x86:** optional (`make PORT=1`).
+
+`port/portable.h` has the helpers the vector extensions lack (FMA, select,
+rounding, any-lane, table rows). The functions:
 - **every float function (26):** `expf`, `exp2f`, `exp10f`, `logf`,
   `log2f`, `log10f`, `log1pf`, `powf`, `sinf`, `cosf`, `tanf`, `asinf`,
   `acosf`, `atanf`, `atan2f`, `expm1f`, `coshf`, `sinhf`, `tanhf`,
@@ -472,10 +494,10 @@ table rows). All 52 functions are written:
   `sinh`, `cosh`, `tanh`, `asinh`, `acosh`, `atanh`, `atan` (with
   CORE-MATH's second stage), `asin`, `acos`, `atan2`, `hypot` and `cbrt`.
 
-In the library they are the default on aarch64 from 0.3.0, in place of
-the SIMDe route. On x86, `make PORT=1` puts them in place of the
-intrinsics; by default it doesn't (below).
+How they were checked and timed:
 - **Correct everywhere tried:**
+  - all 52 on riscv64, under qemu at VLEN 128 to 1024, as the riscv64
+    library ("Other CPUs: riscv64");
   - the twenty-three one-argument floats match CORE-MATH on all 2^32
     inputs on x86 AVX2 (the exp family also SSE and clang), and on aarch64:
     - under qemu (NEON): the exp family, `sinf`, `cosf`, the hyperbolic
@@ -525,18 +547,6 @@ intrinsics; by default it doesn't (below).
 
   On x86 the portable core does not replace the intrinsics yet, which is
   why `PORT=1` is off by default.
-- **On aarch64 the gap is the point.** On a Neoverse N2 (GitHub's arm64
-  runner), this library's AdvSIMD entry points built through SIMDe are 12
-  to 122 times slower than glibc's (median 36). The portable NEON builds
-  are identical to CORE-MATH there, and much faster:
-
-  | N2, ns per element | portable | the SIMDe route | glibc |
-  |---|---|---|---|
-  | `log` | 7.03 | 84.8 | 2.37 |
-  | `exp` | 7.51 | 41.2 | 1.99 |
-
-  The portable core's NEON builds are native vector code; CI times them on
-  the same runner.
 
 **Inside the library:** on x86, `make PORT=1` builds
 `libmvec.so.1` with all 52 functions taken from the portable core
@@ -728,7 +738,8 @@ Checked under qemu (no riscv64 hardware yet):
   lengths under emulation. riscv64 is checked under emulation only, and not
   timed. The x86 vector paths need AVX2 and FMA; without them,
   the SSE2 entry points loop over scalar CORE-MATH.
-- Timed on one CPU, plus the busy, hired Zen 4 above.
+- Timed on one Zen 3 laptop CPU, a hired Zen 4 (below), and GitHub's
+  shared Neoverse N2 runners.
 - **The x86 library needs gcc** (13.3 here; the packages build it with gcc
   13.2 and 16). clang passes the 256-bit arguments of a `target("avx2")`
   function in memory unless the whole file is built with `-mavx`, silently.
@@ -762,10 +773,12 @@ Checked under qemu (no riscv64 hardware yet):
 The scalar functions, their tables, and the error analyses the vector paths
 rely on are [CORE-MATH](https://core-math.gitlabpages.inria.fr/)'s, by Alexei
 Sibidanov, Paul Zimmermann, Tom Hubrecht and others. Their files are
-included unmodified under their own MIT license and copyright notices (all
-165 are byte-identical to CORE-MATH's master branch at `6b84457`, still its
-latest commit on 2026-09-27), and
-the `crmvec-*-tab.h` headers copy their tables. Everything else is under the
+included unmodified under their own MIT license and copyright notices. All
+165 are byte-identical to CORE-MATH's master branch at `6b84457`
+(2026-09-25). On 2026-09-28 master changed three of them (double `hypot`,
+and the bfloat16 `cbrt` and `pow`), and this repository hasn't taken those
+changes yet. The
+`crmvec-*-tab.h` headers copy their tables. Everything else is under the
 MIT license in `LICENSE`.
 
 Written with the assistance of Claude Code (an AI tool); the results above
