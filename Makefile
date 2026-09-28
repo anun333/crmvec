@@ -59,7 +59,7 @@ all: lib $(A64)/aarch64-check
 lib: $(A64)/libmvec.so.1 $(A64)/libsleefgnuabi.so.3
 LIBS_BUILT = $(A64)/libmvec.so.1 $(A64)/libsleefgnuabi.so.3
 else
-all: libmvec.so.1 crtest libcrref.so bcheck cecheck lcheck hypot-midpoints tan-poles bbench ebench mpfrcheck pownf-search f16check headercheck
+all: libmvec.so.1 crtest libcrref.so bcheck cecheck lcheck hypot-midpoints hypotf-midpoints tan-poles bbench ebench mpfrcheck pownf-search f16check headercheck
 lib: libmvec.so.1
 LIBS_BUILT = libmvec.so.1
 endif
@@ -103,6 +103,11 @@ bcheck: bcheck.c
 
 hypot-midpoints: hypot-midpoints.c crmvec-avx2.o $(LIBC) $(HDR) $(CR) libcrf16.a
 	$(CC) $(CFLAGS) $(FP) -mavx2 -mfma -o $@ hypot-midpoints.c crmvec-avx2.o $(LIBC) $(CR) libcrf16.a -lm
+
+# hypotf on float pairs within 2^-50 of a midpoint, found by search (random
+# pairs never get there); a build with -DFBR_SCALE=0 must differ
+hypotf-midpoints: hypotf-midpoints.c crmvec-avx2.o $(LIBC) $(HDR) $(CR) libcrf16.a
+	$(CC) $(CFLAGS) $(FP) -mavx2 -mfma -fopenmp -o $@ hypotf-midpoints.c crmvec-avx2.o $(LIBC) $(CR) libcrf16.a -lm
 
 # the float functions of crmvec-lanes.h with vector code, on every input
 lcheck: lcheck.c
@@ -189,7 +194,7 @@ sleef-exports: $(A64)/libsleefgnuabi.so.3
 	 test ! -s $(A64)/missing.txt && test ! -s $(A64)/no-vpcs.txt
 
 clean:
-	rm -f check.log libmvec.so.1 crmvec.o crmvec-avx2.o crtest libcrref.so bcheck hypot-midpoints tan-poles bbench ebench mpfrcheck pownf-search libcrf16.a f16check cecheck lcheck
+	rm -f check.log libmvec.so.1 crmvec.o crmvec-avx2.o crtest libcrref.so bcheck hypot-midpoints hypotf-midpoints tan-poles bbench ebench mpfrcheck pownf-search libcrf16.a f16check cecheck lcheck
 	rm -rf $(A64) build-sleef build-f16
 
 # a few minutes of the checks, for users and packagers (the full list is the
@@ -198,7 +203,7 @@ clean:
 # checked only on CPUs that have them (elsewhere the checker itself would
 # fault). Needs libmpfr-dev, as `make` does.
 check: all
-	@set -e; v() { echo "$$1" | tee -a check.log | tail -1; echo "$$1" | tail -1 | grep -qE 'IDENTICAL|CORRECTLY ROUNDED|all four differ|ALL EXPORTED' || { echo "FAILED: $$2"; exit 1; }; }; \
+	@set -e; v() { echo "$$1" | tee -a check.log | tail -1; echo "$$1" | tail -1 | grep -qE 'IDENTICAL|CORRECTLY ROUNDED|all four differ|ALL EXPORTED|, 0 differ from cr_hypot' || { echo "FAILED: $$2"; exit 1; }; }; \
 	: > check.log; \
 	v "$$(./bcheck . 18)" bcheck; \
 	if grep -q ' avx ' /proc/cpuinfo; then v "$$(./cecheck c . 14)" "cecheck c"; else echo "cecheck c: skipped, no AVX"; fi; \
@@ -206,6 +211,8 @@ check: all
 	v "$$(./mpfrcheck 16 all)" "mpfrcheck, four rounding modes"; \
 	v "$$(./mpfrcheck controls)" "mpfrcheck controls"; \
 	v "$$(./crtest verify expf logf sinf)" "crtest verify (every input of expf, logf, sinf)"; \
+	v "$$(./hypot-midpoints)" "hypot-midpoints (double hypot on exact midpoints)"; \
+	v "$$(./hypotf-midpoints)" "hypotf-midpoints (float pairs near a midpoint, found by search)"; \
 	v "$$(./lcheck .)" "lcheck (every input of sinpif, cospif, tanpif, rsqrtf)"; \
 	v "$$(./f16check | tail -1)" "f16check"; \
 	v "$$(./simdcheck.sh $(CC) ./libmvec.so.1 2>&1)" "simdcheck (crmvec-simd.h: gcc vectorizes all 52 functions without -ffast-math)"; \

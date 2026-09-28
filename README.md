@@ -228,6 +228,7 @@ make check           # a few minutes of what follows, one verdict per line
 ./bcheck             # every SSE2 entry point of libmvec.so.1 against CORE-MATH
 ./emu-check.sh       # the same on an emulated Core 2 (qemu-x86_64 -cpu Conroe: no AVX)
 ./hypot-midpoints    # double hypot on inputs whose result is exactly halfway between two doubles
+./hypotf-midpoints   # hypotf on float pairs whose result lies within 2^-50 of a midpoint, found by search
 ./tan-poles          # double tan near its poles, where its error bound is tightest
 python3 sincos-tables.py crmvec-sin-tab.h   # the sin/cos table error, for every index (needs mpmath)
 python3 gen-row-tables.py | cmp - crmvec-rows-tab.h   # the row tables hold CORE-MATH's entries, bit for bit
@@ -298,7 +299,11 @@ without it. `tanf` has no such test; its exhaustive check is its only
 proof. For `hypot` and `hypotf`, random inputs never
 reach the cases their tests exist for. `hypot-midpoints` builds those cases
 for `hypot` from Pythagorean triples, and without the test 2,624 of its
-400,000 inputs come out wrong. `hypotf` has no such control yet.
+400,000 inputs come out wrong. `hypotf-midpoints` does the same for
+`hypotf` by search: pairs whose `hypot` lies within 2^-50 of a midpoint
+between two floats exist for every exponent difference from 1 to 12.
+Without the test, 1,094 of the 16,661 it finds come out wrong, and MPFR
+agrees with CORE-MATH on every one.
 
 Double precision can't be checked exhaustively. There, correctness rests on
 CORE-MATH's proofs (and, for `atan2`, its measurement), on the transcription
