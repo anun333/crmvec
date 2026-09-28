@@ -1,9 +1,11 @@
 # crmvec
 
-Correctly rounded vector math for x86-64 and aarch64 (checked natively on
-both): a drop-in replacement for glibc's `libmvec.so.1`, and
-on aarch64 for SLEEF's `libsleefgnuabi.so.3`, whose results are the
-correctly rounded ones, bit for bit the same as
+Correctly rounded vector math, as a drop-in replacement for:
+- glibc's `libmvec.so.1` on x86-64 and aarch64 (checked natively on both);
+- SLEEF's `libsleefgnuabi.so.3` on aarch64;
+- SLEEF's RVV `libsleef.so.3` on riscv64 (checked under emulation).
+
+Its results are the correctly rounded ones, bit for bit the same as
 [CORE-MATH](https://core-math.gitlabpages.inria.fr/)'s.
 
 glibc's vector functions are accurate to a few ulps, and different libraries
@@ -624,11 +626,52 @@ flag, aliases included (`make sleef-exports` checks this and the name
 list). The flag makes the dynamic linker bind calls to them eagerly, so a
 caller's vector registers survive lazy binding.
 
+## Other CPUs: riscv64
+
+On riscv64 the only vector math names a compiler calls are SLEEF's RVV
+ones.
+- **clang 20:** `-fveclib=SLEEF` turns a loop over any of the 52 functions
+  into a call to `Sleef_<f>dx_u10rvvm2` or `Sleef_<f>fx_u10rvvm2`, scalable
+  at LMUL 2 (`u15` for `erfc`, `u05` for `hypot`).
+- **glibc** has no riscv64 `libmvec`.
+- **gcc 13** makes no vector clones on riscv64.
+
+So `make riscv64` builds `build-riscv64/libsleef.so.3`, which answers those
+52 names from the portable core (`port/crmvec-port-rv64.c`), and nothing
+else.
+- **VLEN-agnostic:** each entry point runs the portable core over its
+  argument in fixed 128-bit blocks. RVV 1.0 guarantees VLEN >= 128, so one
+  build runs at any VLEN.
+- **Build requirements:** `gcc-riscv64-linux-gnu`, and clang 20 for the
+  port file (gcc 13 turns its generic vectors into scalar code on
+  riscv64). Don't add `-mrvv-vector-bits`: it fixes VLEN exactly, and code
+  built that way crashes at any other VLEN.
+
+```
+make riscv64
+qemu-riscv64 -cpu rv64,v=true,vlen=256 build-riscv64/rv64-check                # every entry point against CORE-MATH
+LD_LIBRARY_PATH=build-riscv64 qemu-riscv64 -L /usr/riscv64-linux-gnu \
+    -cpu rv64,v=true,vlen=256 build-riscv64/rv64-dropin                     # loops clang 20 vectorized, end to end
+```
+
+Checked under qemu (no riscv64 hardware yet):
+- **`rv64-check`:** every entry point matches CORE-MATH at VLEN 128, 256,
+  512 and 1024. At 128, 256 and 512 that is 163.6 million results in
+  round-to-nearest (raw bits, log-uniform and moderate inputs) and 30.7
+  million in the three other rounding modes, 0 differ. With the rounding tests' bounds
+  zeroed, it gets thousands wrong, and with the rounding mode ignored, it
+  fails in the other modes.
+- **`rv64-dropin`:** loops over all 52 functions, vectorized by clang 20,
+  give CORE-MATH's results through this library at VLEN 128, 256 and 512;
+  through the bounds-zeroed build, 682 differ.
+- **Not yet:** timing, and a comparison with SLEEF's own RVV build.
+
 ## Limits
 
 - Built and timed on x86-64. aarch64 is checked natively on one core type
   only (a Neoverse N2, 128-bit SVE, on GitHub's runners), and at other SVE
-  lengths under emulation. The x86 vector paths need AVX2 and FMA; without them,
+  lengths under emulation. riscv64 is checked under emulation only, and not
+  timed. The x86 vector paths need AVX2 and FMA; without them,
   the SSE2 entry points loop over scalar CORE-MATH.
 - Timed on one CPU, plus the busy, hired Zen 4 above.
 - **The x86 library needs gcc** (13.3 here; the packages build it with gcc

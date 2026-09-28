@@ -214,9 +214,52 @@ sleef-exports: $(A64)/libsleefgnuabi.so.3
 	 echo "SLEEF names: $$(grep -vc '^#' sleef-gnuabi-aarch64.txt); missing from $(notdir $<): $$(wc -l < $(A64)/missing.txt); exports without VARIANT_PCS: $$(wc -l < $(A64)/no-vpcs.txt) of $$(grep -c '^_ZGV[ns]' $(A64)/exports.txt)"; \
 	 test ! -s $(A64)/missing.txt && test ! -s $(A64)/no-vpcs.txt
 
+# riscv64 (added 2026-09-28): the only vector math names a compiler calls on
+# riscv64 are SLEEF's RVV ones (clang 20's -fveclib=SLEEF; glibc has no
+# riscv64 libmvec, gcc 13 makes no vector clones there), so crmvec there is
+# a libsleef.so.3 answering them from the portable core, VLEN-agnostic
+# (port/crmvec-port-rv64.c). The port file needs clang: gcc 13 lowers its
+# generic vectors to scalar code. Needs gcc-riscv64-linux-gnu and clang-20;
+# checked under qemu-riscv64 at several VLENs:
+#   make riscv64
+#   qemu-riscv64 -cpu rv64,v=true,vlen=256 build-riscv64/rv64-check
+#   LD_LIBRARY_PATH=build-riscv64 qemu-riscv64 -L /usr/riscv64-linux-gnu \
+#       -cpu rv64,v=true,vlen=256 build-riscv64/rv64-dropin
+RV64    := build-riscv64
+RVCC    ?= riscv64-linux-gnu-gcc
+RVCLANG ?= clang-20
+RVFLAGS := --target=riscv64-linux-gnu -march=rv64gcv -mabi=lp64d
+PORTHDR := port/portable.h $(wildcard port/port-*.h)
+riscv64: $(RV64)/libsleef.so.3 $(RV64)/rv64-check $(RV64)/rv64-dropin
+
+$(RV64)/port.o: port/crmvec-port-rv64.c $(PORTHDR) $(HDR)
+	mkdir -p $(RV64)
+	$(RVCLANG) $(RVFLAGS) -O3 -ffp-contract=off -fno-math-errno -fPIC -fvisibility=hidden -c -o $@ $<
+
+$(RV64)/libcr.a: $(CR)
+	mkdir -p $(RV64)/cr
+	for f in $(CR); do $(RVCC) $(CFLAGS) $(FP) -fPIC -fvisibility=hidden -c -o $(RV64)/cr/$$(echo $$f | tr / -).o $$f || exit 1; done
+	rm -f $@ && ar rcs $@ $(RV64)/cr/*.o
+
+$(RV64)/libsleef.so.3: $(RV64)/port.o $(RV64)/libcr.a
+	$(RVCC) -shared -fPIC -Wl,-soname,libsleef.so.3 -o $@ $(RV64)/port.o $(RV64)/libcr.a -lm
+
+# every Sleef_*rvvm2 entry point against scalar CORE-MATH (static, so
+# qemu-riscv64 runs it without a sysroot)
+$(RV64)/rv64-check: port/rv64-check.c $(RV64)/port.o $(RV64)/libcr.a
+	$(RVCLANG) $(RVFLAGS) -O2 -ffp-contract=off -c -o $(RV64)/rv64-check.o port/rv64-check.c
+	$(RVCC) -static -o $@ $(RV64)/rv64-check.o $(RV64)/port.o $(RV64)/libcr.a -lm
+
+# loops clang 20 vectorizes with -fveclib=SLEEF, against whichever
+# libsleef.so.3 the dynamic linker finds, and against CORE-MATH
+$(RV64)/rv64-dropin: port/rv64-dropin-loop.c port/rv64-dropin-main.c crmvec-functions.h $(RV64)/libsleef.so.3 $(RV64)/libcr.a
+	$(RVCLANG) $(RVFLAGS) -O3 -ffp-contract=off -fno-math-errno -fveclib=SLEEF -c -o $(RV64)/dropin-loop.o port/rv64-dropin-loop.c
+	$(RVCC) $(CFLAGS) $(FPV) -c -o $(RV64)/dropin-main.o port/rv64-dropin-main.c
+	$(RVCC) -o $@ $(RV64)/dropin-main.o $(RV64)/dropin-loop.o $(RV64)/libcr.a $(RV64)/libsleef.so.3 -lm
+
 clean:
 	rm -f check.log libmvec.so.1 crmvec.o crmvec-avx2.o crmvec-port.o crtest libcrref.so bcheck hypot-midpoints hypotf-midpoints tan-poles bbench ebench mpfrcheck pownf-search libcrf16.a f16check cecheck lcheck
-	rm -rf $(A64) build-sleef build-f16
+	rm -rf $(A64) $(RV64) build-sleef build-f16
 
 # a few minutes of the checks, for users and packagers (the full list is the
 # README's "Checking it"); each line must print a passing verdict, and the
@@ -269,4 +312,4 @@ endif
 print-sources:   # for the export script: every CORE-MATH source the build uses
 	@echo $(CR)
 
-.PHONY: all lib install headercheck check clean print-sources aarch64 sleef-exports
+.PHONY: all lib install headercheck check clean print-sources aarch64 sleef-exports riscv64
