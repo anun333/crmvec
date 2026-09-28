@@ -451,16 +451,16 @@ On aarch64 and riscv64 the vector code above comes through SIMDe, which is
 scalar on riscv64. `port/` holds the start of a rewrite in GCC/clang
 generic vector types, one source for every width. `port/portable.h` has
 the helpers the vector extensions lack (FMA, select, rounding, any-lane,
-table rows). Sixteen functions are written so far:
-- **float:** `expf`, `exp2f`, `exp10f`, `sinf`, `cosf`, `expm1f`, `coshf`,
-  `sinhf`, `tanhf`, `erff` and `erfcf`;
+table rows). Nineteen functions are written so far:
+- **float:** `expf`, `exp2f`, `exp10f`, `logf`, `log2f`, `log10f`, `sinf`,
+  `cosf`, `expm1f`, `coshf`, `sinhf`, `tanhf`, `erff` and `erfcf`;
 - **double:** `log` (a 363-row table), `exp` (two 64-row tables), and
   `sin`, `cos` and `tan` (two 128-row tables).
 
 With `PORT=1` (below) they replace the intrinsics in the library; by
 default they don't.
 - **Correct everywhere tried:**
-  - the eleven floats match CORE-MATH on all 2^32 inputs on x86 AVX2 (the
+  - the fourteen floats match CORE-MATH on all 2^32 inputs on x86 AVX2 (the
     exp family also SSE and clang), and on aarch64 NEON under qemu:
     - the exp family and `sinf`/`cosf` there;
     - the rest were still running there at the time of writing;
@@ -497,14 +497,14 @@ default they don't.
   runner.
 
 **Inside the library, as a prototype:** `make PORT=1` builds
-`libmvec.so.1` with those sixteen functions taken from the portable core
+`libmvec.so.1` with those nineteen functions taken from the portable core
 instead of the intrinsics (`port/crmvec-port.c`). Their SSE2, AVX and AVX-512 entry
 points follow, since they call the AVX2 core. The float three are checked on
 all 2^32 inputs through that build.
 `make PORT=1 PORTCC=clang` builds that file with clang: it is compiled for
 AVX2 as a whole, so clang's ABI problem (Limits) does not arise. `make
 check` passes on both builds. On aarch64, `make PORT=1` routes the same
-sixteen through the portable NEON code:
+nineteen through the portable NEON code:
 - the AdvSIMD entry points (`port/crmvec-port-a64.c`). On the N2:
   - `log` and `exp` take 6.6 and 7.3 ns per element, against 86 and 41
     through SIMDe;

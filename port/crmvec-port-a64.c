@@ -15,6 +15,7 @@
 #include "port-sinf.h"
 #include "port-hypf.h"
 #include "port-erff.h"
+#include "port-logf.h"
 #include <arm_neon.h>
 
 #define EXPORT __attribute__((visibility("default"), aarch64_vector_pcs))
@@ -89,6 +90,9 @@ PORT_F1(sinhf)
 PORT_F1(tanhf)
 PORT_F1(erff)
 PORT_F1(erfcf)
+PORT_F1(logf)
+PORT_F1(log2f)
+PORT_F1(log10f)
 EXPORT __typeof__(_ZGVnN4v_expf) _ZGVnN4v___expf_finite __attribute__((alias("_ZGVnN4v_expf")));
 EXPORT __typeof__(_ZGVnN4v_exp2f) _ZGVnN4v___exp2f_finite __attribute__((alias("_ZGVnN4v_exp2f")));
 EXPORT __typeof__(_ZGVnN4v_exp2f) _ZGVnN4v_exp2f_u35 __attribute__((alias("_ZGVnN4v_exp2f")));
@@ -124,3 +128,7 @@ EXPORT __typeof__(_ZGVnN4v_coshf) _ZGVnN4v_coshf_u35 __attribute__((alias("_ZGVn
 EXPORT __typeof__(_ZGVnN4v_sinhf) _ZGVnN4v___sinhf_finite __attribute__((alias("_ZGVnN4v_sinhf")));
 EXPORT __typeof__(_ZGVnN4v_sinhf) _ZGVnN4v_sinhf_u35 __attribute__((alias("_ZGVnN4v_sinhf")));
 EXPORT __typeof__(_ZGVnN4v_tanhf) _ZGVnN4v_tanhf_u35 __attribute__((alias("_ZGVnN4v_tanhf")));
+EXPORT __typeof__(_ZGVnN4v_logf) _ZGVnN4v___logf_finite __attribute__((alias("_ZGVnN4v_logf")));
+EXPORT __typeof__(_ZGVnN4v_logf) _ZGVnN4v_logf_u35 __attribute__((alias("_ZGVnN4v_logf")));
+EXPORT __typeof__(_ZGVnN4v_log2f) _ZGVnN4v_log2f_u35 __attribute__((alias("_ZGVnN4v_log2f")));
+EXPORT __typeof__(_ZGVnN4v_log10f) _ZGVnN4v___log10f_finite __attribute__((alias("_ZGVnN4v_log10f")));

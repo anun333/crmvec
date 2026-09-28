@@ -772,9 +772,16 @@ AVX2I static inline __m256d log_family(__m128 xf, double scale, __m128i *redo)
     return finish8(xf, y0, y1, r0, r1, CR);                                           \
   }
 
+#if !CRMVEC_PORT
 LOG_FAMILY(logf,   1.0,                  cr_logf)
 LOG_FAMILY(log2f,  0x1.71547652b82fep+0, cr_log2f)   /* log2(e)  */
 LOG_FAMILY(log10f, 0x1.bcb7b1526e50ep-2, cr_log10f)  /* log10(e) */
+#else   /* PORT=1: port/crmvec-port.c supplies them (port-logf.h) */
+#ifdef LOG_TB
+#error "PORT=1 replaces the float log family built on the default log_core_d: leave LOG_TB undefined"
+#endif
+AVX2 __m256 _ZGVdN8v_logf(__m256); AVX2 __m256 _ZGVdN8v_log2f(__m256); AVX2 __m256 _ZGVdN8v_log10f(__m256);
+#endif
 
 /* ---- trig (added 2026-09-26, the calibration run) -------------------- */
 
