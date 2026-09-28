@@ -5,8 +5,7 @@ Correctly rounded vector math, as a drop-in replacement for:
 - SLEEF's `libsleefgnuabi.so.3` on aarch64;
 - SLEEF's RVV `libsleef.so.3` on riscv64 (checked under emulation).
 
-The latest release is 0.4.0. The riscv64 library is on `main` and not yet
-in a release.
+The latest release is 0.5.0, the first with the riscv64 library.
 
 Its results are the correctly rounded ones, bit for bit the same as
 [CORE-MATH](https://core-math.gitlabpages.inria.fr/)'s.
@@ -121,7 +120,7 @@ The Debian, Fedora and Nix recipes also run `make check` on the library
 they package, as part of the build (Debian's `nocheck` skips it). Checked
 2026-09-27 on Debian amd64 (Ubuntu 24.04), Fedora 44 (gcc 16) and Nix
 (nixpkgs 24.05): every verdict passes. That was version 0.1.0. The recipes
-now carry 0.4.0 and haven't been rebuilt since.
+now carry 0.5.0 and haven't been rebuilt since.
 
 Every push also runs `make check` on GitHub Actions
 (`.github/workflows/check.yml`), on an x86-64 runner and natively on an

@@ -11,7 +11,7 @@
 %global debug_package %{nil}
 
 Name:           crmvec
-Version:        0.4.0
+Version:        0.5.0
 Release:        1%{?dist}
 Summary:        Correctly rounded vector math (a drop-in libmvec)
 License:        MIT
@@ -61,6 +61,14 @@ make check
 %{_libdir}/pkgconfig/crmvec.pc
 
 %changelog
+* Mon Sep 28 2026 anun333 <anun333@posteo.net> - 0.5.0-1
+- riscv64: make riscv64 cross-builds libsleef.so.3, a stand-in for SLEEF's
+  RVV library: all 86 names in LLVM's riscv64 SLEEF table and 8 of SLEEF's
+  own spellings, the 52 functions from the portable core (any VLEN), the
+  rest lane by lane; checked under qemu at VLEN 128 to 1024.
+- CORE-MATH updated to master a0fce68 (hypot; bfloat16 cbrt and pow, whose
+  undefined shifts are fixed); the same results.
+
 * Mon Sep 28 2026 anun333 <anun333@posteo.net> - 0.4.0-1
 - every function (all 52) in the portable core; on aarch64 none takes the
   SIMDe route by default any more: 3 to 38 ns per element on a Neoverse N2,
