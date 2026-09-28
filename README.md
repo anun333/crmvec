@@ -421,6 +421,36 @@ library's symbols are unversioned; it binds them anyway. On riscv64 the
 same core gives the same bits (`port/port-build.sh`), but glibc has no
 riscv64 `libmvec` to stand in for.
 
+### Toward one portable source (work in progress)
+
+On aarch64 and riscv64 the vector code above comes through SIMDe, which is
+scalar on riscv64. `port/` holds the start of a rewrite in GCC/clang
+generic vector types, one source for every width. `port/portable.h` has
+the helpers the vector extensions lack (FMA, select, rounding, any-lane,
+table rows). Two functions are written so far: `expf` and the double
+`log`, with a 363-row table. Neither is in the library yet.
+- **Correct everywhere tried:**
+  - `generic-expf` matches `cr_expf` on all 2^32 inputs on x86 SSE, AVX2
+    and AVX-512, aarch64 NEON and SVE, and riscv64 RVV;
+  - `generic-log` matches `cr_log` on 67 million inputs on x86 (gcc and
+    clang), and on 4 to 17 million under emulation on AVX-512, NEON, SVE
+    and RVV.
+- **Vector code on each:** the compiled objects show vector FMAs on every
+  target (vector-length-specific builds, e.g. 256-bit SVE and RVV).
+- **Speed, AVX2 on Zen 3, rounding-mode check included, ns per element:**
+
+  | `log` | ns |
+  |---|---|
+  | this library's hand-written intrinsics | 3.05 |
+  | portable, built by gcc | 2.99 |
+  | portable, built by clang | 2.50 |
+
+```
+gcc -O2 -ffp-contract=off -frounding-math -c log/log.c -o cr_log.o
+gcc -O3 -ffp-contract=off -fno-math-errno -fopenmp -mavx2 -mfma -DVB=32 port/generic-log.c cr_log.o -ldl -lm
+./a.out verify          # or: ./a.out time ./libmvec.so.1
+```
+
 ## As SLEEF's library (aarch64)
 
 clang's `-fveclib=SLEEF` on AArch64 calls the functions of SLEEF's GNU-ABI
