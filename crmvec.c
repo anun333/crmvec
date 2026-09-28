@@ -3845,6 +3845,7 @@ AVX2I static inline __m256d pow_fast(__m256d x, __m256d y, __m256d *redo)
   return rmax;
 }
 
+#if !CRMVEC_PORT
 AVX2 __m256d _ZGVdN4vv_pow(__m256d x, __m256d y)
 {
   __m256d redo, r = pow_fast(x, y, &redo);
@@ -3854,6 +3855,9 @@ AVX2 __m256d _ZGVdN4vv_pow(__m256d x, __m256d y)
   for (int i = 0; i < 4; i++) if (m >> i & 1) rs[i] = cr_pow(xs[i], ys[i]);
   return _mm256_loadu_pd(rs);
 }
+#else   /* PORT=1: port/crmvec-port.c supplies it (port-pow.h) */
+AVX2 __m256d _ZGVdN4vv_pow(__m256d, __m256d);
+#endif
 
 
 /* ---- completeness (added 2026-09-26) ---------------------------------- */

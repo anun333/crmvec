@@ -2,7 +2,7 @@
    PORT=1; added 2026-09-28). The AdvSIMD entry points of the functions in
    port/ (first double log and exp, then the rest as they were ported: every
    float function and the doubles sin, cos, tan, exp2, exp10, log2, log10,
-   erf, erfc and tanh), as NEON code from the same headers the spikes verify, in place of
+   erf, erfc, tanh and pow), as NEON code from the same headers the spikes verify, in place of
    crmvec-aarch64.c's route, which widens the lanes to a 256-bit SIMDe core.
    crmvec-aarch64.c marks its own entry points weak when PORT=1, so these
    are the ones linked, and so are SLEEF's names for them (re-declared here:
@@ -25,6 +25,7 @@
 #include "port-dfast.h"
 #include "port-erf.h"
 #include "port-tanh.h"
+#include "port-pow.h"
 #include <arm_neon.h>
 
 #define EXPORT __attribute__((visibility("default"), aarch64_vector_pcs))
@@ -141,6 +142,21 @@ PORT_D1(log10)
 PORT_D1(erf)
 PORT_D1(erfc)
 PORT_D1(tanh)
+/* the two-argument doubles (port-pow.h ...): 2 lanes, and their SVE blocks */
+#define PORT_D2(n)                                                                     \
+  EXPORT float64x2_t _ZGVnN2vv_##n(float64x2_t x, float64x2_t y)                       \
+  {                                                                                    \
+    if (__builtin_expect(crm_rn_a64(), 1)) return (float64x2_t)port_##n((vd)x, (vd)y); \
+    return (float64x2_t){cr_##n(x[0], y[0]), cr_##n(x[1], y[1])};                      \
+  }                                                                                    \
+  HIDDEN void crm_blk_##n(double *a, const double *b)                                  \
+  {                                                                                    \
+    vd x0, x1, y0, y1; memcpy(&x0, a, 16); memcpy(&x1, a + 2, 16); memcpy(&y0, b, 16); memcpy(&y1, b + 2, 16); \
+    if (__builtin_expect(crm_rn_a64(), 1)) { x0 = port_##n(x0, y0); x1 = port_##n(x1, y1); } \
+    else for (int i = 0; i < 2; i++) { x0[i] = cr_##n(x0[i], y0[i]); x1[i] = cr_##n(x1[i], y1[i]); } \
+    memcpy(a, &x0, 16); memcpy(a + 2, &x1, 16);                                        \
+  }
+PORT_D2(pow)
 EXPORT __typeof__(_ZGVnN2v_sin) _ZGVnN2v_sin_u35 __attribute__((alias("_ZGVnN2v_sin")));
 EXPORT __typeof__(_ZGVnN2v_cos) _ZGVnN2v_cos_u35 __attribute__((alias("_ZGVnN2v_cos")));
 EXPORT __typeof__(_ZGVnN2v_tan) _ZGVnN2v_tan_u35 __attribute__((alias("_ZGVnN2v_tan")));
@@ -151,6 +167,7 @@ EXPORT __typeof__(_ZGVnN2v_exp2) _ZGVnN2v_exp2_u35 __attribute__((alias("_ZGVnN2
 EXPORT __typeof__(_ZGVnN2v_log10) _ZGVnN2v___log10_finite __attribute__((alias("_ZGVnN2v_log10")));
 EXPORT __typeof__(_ZGVnN2v_log2) _ZGVnN2v_log2_u35 __attribute__((alias("_ZGVnN2v_log2")));
 EXPORT __typeof__(_ZGVnN2v_tanh) _ZGVnN2v_tanh_u35 __attribute__((alias("_ZGVnN2v_tanh")));
+EXPORT __typeof__(_ZGVnN2vv_pow) _ZGVnN2vv___pow_finite __attribute__((alias("_ZGVnN2vv_pow")));
 EXPORT __typeof__(_ZGVnN4v_sinf) _ZGVnN4v_sinf_u35 __attribute__((alias("_ZGVnN4v_sinf")));
 EXPORT __typeof__(_ZGVnN4v_sinf) _ZGVnN4v_fastsinf_u3500 __attribute__((alias("_ZGVnN4v_sinf")));
 EXPORT __typeof__(_ZGVnN4v_cosf) _ZGVnN4v_cosf_u35 __attribute__((alias("_ZGVnN4v_cosf")));
