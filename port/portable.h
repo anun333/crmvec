@@ -179,10 +179,19 @@ typedef int32_t vih __attribute__((vector_size(VB / 2)));
 #if defined(__aarch64__) && VB == 16 && !defined(__clang__) && !defined(PORT_NO_NEON_CVT)
 #define PORT_NEON_CVT 1
 #endif
+/* gcc 13 does the same on x86 at VB 32, more mildly: 4 floats widened 2 at
+   a time and stitched (vmovhlps, 2 vcvtps2pd, vinsertf128) where one
+   vcvtps2pd does it (2026-09-28: the float functions' extra lane moves
+   against crmvec.c's intrinsics, e.g. hypotf 13 against 6) */
+#if defined(__AVX__) && VB == 32 && !defined(PORT_NO_X86_CVT)
+#define PORT_X86_CVT 1
+#endif
 PORT_INLINE vd widen_fh(vfh a)
 {
 #ifdef PORT_NEON_CVT
   return (vd)vcvt_f64_f32((float32x2_t)a);
+#elif defined(PORT_X86_CVT)
+  return (vd)_mm256_cvtps_pd((__m128)a);
 #else
   return __builtin_convertvector(a, vd);
 #endif
@@ -191,6 +200,8 @@ PORT_INLINE vl widen_ih(vih a)
 {
 #ifdef PORT_NEON_CVT
   return (vl)vmovl_s32((int32x2_t)a);
+#elif defined(PORT_X86_CVT) && defined(__AVX2__)
+  return (vl)_mm256_cvtepi32_epi64((__m128i)a);
 #else
   return __builtin_convertvector(a, vl);
 #endif
@@ -201,6 +212,9 @@ PORT_INLINE void split_f(vf x, vd *lo, vd *hi)
 #ifdef PORT_NEON_CVT
   *lo = (vd)vcvt_f64_f32(vget_low_f32((float32x4_t)x));
   *hi = (vd)vcvt_high_f64_f32((float32x4_t)x);
+#elif defined(PORT_X86_CVT)
+  *lo = (vd)_mm256_cvtps_pd(_mm256_castps256_ps128((__m256)x));
+  *hi = (vd)_mm256_cvtps_pd(_mm256_extractf128_ps((__m256)x, 1));
 #else
   vfh l, h; memcpy(&l, &x, VB / 2); memcpy(&h, (char *)&x + VB / 2, VB / 2);
   *lo = widen_fh(l); *hi = widen_fh(h);
@@ -211,6 +225,8 @@ PORT_INLINE vf join_d(vd lo, vd hi)
 {
 #ifdef PORT_NEON_CVT
   return (vf)vcvt_high_f32_f64(vcvt_f32_f64((float64x2_t)lo), (float64x2_t)hi);
+#elif defined(PORT_X86_CVT)
+  return (vf)_mm256_insertf128_ps(_mm256_castps128_ps256(_mm256_cvtpd_ps((__m256d)lo)), _mm256_cvtpd_ps((__m256d)hi), 1);
 #else
   vfh l = __builtin_convertvector(lo, vfh), h = __builtin_convertvector(hi, vfh);
   vf y; memcpy(&y, &l, VB / 2); memcpy((char *)&y + VB / 2, &h, VB / 2); return y;
@@ -264,6 +280,44 @@ PORT_INLINE void rows4d(const double (*T)[4], vl idx, vd *c0, vd *c1, vd *c2, vd
   for (int i = 0; i < ND; i++) { const double *r = T[ix[i]]; a[i] = r[0]; b[i] = r[1]; c[i] = r[2]; d[i] = r[3]; }
   *c0 = a; *c1 = b; *c2 = c; *c3 = d;
 #endif
+}
+
+/* 4 consecutive columns of each lane's row, the row of lane i starting at
+   T + o[i]: whole blocks loaded per lane and transposed, as rows4d does */
+PORT_INLINE void rows4p(const double *T, const int64_t *o, vd *c0, vd *c1, vd *c2, vd *c3)
+{
+#if !defined(PORT_ROWS_LANES) && ND == 4
+  vd r0, r1, r2, r3;
+  memcpy(&r0, T + o[0], 32); memcpy(&r1, T + o[1], 32); memcpy(&r2, T + o[2], 32); memcpy(&r3, T + o[3], 32);
+  vd t0 = __builtin_shufflevector(r0, r1, 0, 4, 2, 6), t1 = __builtin_shufflevector(r0, r1, 1, 5, 3, 7);
+  vd t2 = __builtin_shufflevector(r2, r3, 0, 4, 2, 6), t3 = __builtin_shufflevector(r2, r3, 1, 5, 3, 7);
+  *c0 = __builtin_shufflevector(t0, t2, 0, 1, 4, 5); *c1 = __builtin_shufflevector(t1, t3, 0, 1, 4, 5);
+  *c2 = __builtin_shufflevector(t0, t2, 2, 3, 6, 7); *c3 = __builtin_shufflevector(t1, t3, 2, 3, 6, 7);
+#elif !defined(PORT_ROWS_LANES) && ND == 2
+  vd a0, a1, b0, b1;
+  memcpy(&a0, T + o[0], 16); memcpy(&a1, T + o[0] + 2, 16); memcpy(&b0, T + o[1], 16); memcpy(&b1, T + o[1] + 2, 16);
+  *c0 = __builtin_shufflevector(a0, b0, 0, 2); *c1 = __builtin_shufflevector(a0, b0, 1, 3);
+  *c2 = __builtin_shufflevector(a1, b1, 0, 2); *c3 = __builtin_shufflevector(a1, b1, 1, 3);
+#else
+  vd a, b, c, d;
+  for (int i = 0; i < ND; i++) { const double *r = T + o[i]; a[i] = r[0]; b[i] = r[1]; c[i] = r[2]; d[i] = r[3]; }
+  *c0 = a; *c1 = b; *c2 = c; *c3 = d;
+#endif
+}
+
+/* cc[0..K-1]: the first K columns of each lane's row of a table with S
+   doubles per row, row idx[i] for lane i (crmvec's LOAD_ROWS): 4-column
+   blocks by rows4p, any remainder column by column. The same values as
+   reading them one at a time, which is what the lane loop it replaces did:
+   in crmvec.c the change made erff 47% faster, erf 41% and asin, acos and
+   erfc 31-35% (2026-09-26), and the portable versions were that much
+   slower than the intrinsics until they had it (2026-09-28). */
+PORT_INLINE void rowsNd(const double *T, int64_t S, vl idx, vd *cc, int K)
+{
+  int64_t o[ND]; memcpy(o, &idx, VB);
+  for (int i = 0; i < ND; i++) o[i] *= S;
+  PORT_UNROLL for (int b = 0; b + 4 <= K; b += 4) rows4p(T + b, o, &cc[b], &cc[b + 1], &cc[b + 2], &cc[b + 3]);
+  PORT_UNROLL for (int k = K & ~3; k < K; k++) for (int i = 0; i < ND; i++) cc[k][i] = T[o[i] + k];
 }
 
 /* sqrt, correctly rounded (IEEE): clang's elementwise builtin, or a lane

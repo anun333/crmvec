@@ -41,9 +41,7 @@ PORT_INLINE void port_erf_core(vd z, vd *ho, vd *lo, vd *erro)
     vd vi = port_min(port_max(v - splatd(1.0), splatd(0.0)), splatd(93.0));
     vl row = (vl)(vi + splatd(0x1.8p52)) & splatl(127);
     vd w = (z - splatd(0.03125)) - splatd(0.0625) * v;
-    vd G[13];
-    { int64_t ix[ND]; memcpy(ix, &row, VB);
-      for (int k = 0; k < 13; k++) for (int i = 0; i < ND; i++) G[k][i] = ERF_C[ix[i]][k]; }
+    vd G[13]; rowsNd(&ERF_C[0][0], 13, row, G, 13);
     vd w2 = w * w, w4 = w2 * w2;
     vd d9 = fmad_v(G[12], w, G[11]), d7 = fmad_v(G[10], w, G[9]), d5 = fmad_v(G[8], w, G[7]);
     vd wc6 = w * G[6];
@@ -154,9 +152,7 @@ PORT_INLINE vd port_erfc_fast(vd x, vl *redo)
     vl ri = splatl(0);
     for (int t = 0; t < 6; t++) ri = ri - (ryh > splatd(THR[t]));
     ri = (vl)seld_v(ri < splatl(5), (vd)ri, (vd)splatl(5));        /* min(ri, 5) */
-    vd P[13];
-    { int64_t ix[ND]; memcpy(ix, &ri, VB);
-      for (int j = 0; j < 13; j++) for (int i = 0; i < ND; i++) P[j][i] = ERFC_T[ix[i]][j]; }
+    vd P[13]; rowsNd(&ERFC_T[0][0], 13, ri, P, 13);
     vd vh = ryh * ryh, vlo = fmad_v(ryh, ryh, -vh);
     vlo = fmad_v(ryh + ryh, ryl, vlo);
     vd zh = P[12];
