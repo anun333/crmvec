@@ -7,7 +7,7 @@
    (port-erff.h), logf, log2f and log10f (port-logf.h), powf (port-powf.h), and
    log1pf, asinhf, acoshf and atanhf (port-log1pf.h), cbrtf, atanf, asinf, acosf and atan2f
    (port-atanf.h), tanf and hypotf (port-tanf.h), and the doubles exp2, exp10, log2 and
-   log10 (port-dfast.h), all added 2026-09-28, under the internal
+   log10 (port-dfast.h) and erf and erfc (port-erf.h), all added 2026-09-28, under the internal
    names crmvec.c's guard wrappers call (crvi_log, crvi_exp, crvi_expf, ...;
    hidden by crmvec-exports.map). Every other entry point of these two functions (SSE2,
    AVX, AVX-512) calls these through crmvec.c, so all of them switch.
@@ -30,6 +30,7 @@
 #include "port-atanf.h"
 #include "port-tanf.h"
 #include "port-dfast.h"
+#include "port-erf.h"
 
 #if !defined(__AVX2__) || !defined(__FMA__)
 #error "crmvec-port.c is the AVX2 core: build it with -mavx2 -mfma"
@@ -65,6 +66,8 @@ vd crvi_exp2(vd x) { return port_exp2(x); }
 vd crvi_exp10(vd x) { return port_exp10(x); }
 vd crvi_log2(vd x) { return port_log2(x); }
 vd crvi_log10(vd x) { return port_log10(x); }
+vd crvi_erf(vd x) { return port_erf(x); }
+vd crvi_erfc(vd x) { return port_erfc(x); }
 vd crvi_sin(vd x) { return port_sin(x); }
 vd crvi_cos(vd x) { return port_cos(x); }
 vd crvi_tan(vd x) { return port_tan(x); }

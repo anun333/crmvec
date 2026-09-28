@@ -3393,8 +3393,12 @@ DOUBLE_FAST(tanh, tanh_fast, cr_tanh)
 DOUBLE_FAST(asinh, asinh_fast, cr_asinh)
 DOUBLE_FAST(acosh, acosh_fast, cr_acosh)
 DOUBLE_FAST(atanh, atanh_fast, cr_atanh)
+#if !CRMVEC_PORT
 DOUBLE_FAST(erf, erf_fast, cr_erf)
 DOUBLE_FAST(erfc, erfc_fast, cr_erfc)
+#else   /* PORT=1: port/crmvec-port.c supplies them (port-erf.h) */
+AVX2 __m256d _ZGVdN4v_erf(__m256d); AVX2 __m256d _ZGVdN4v_erfc(__m256d);
+#endif
 
 #if !CRMVEC_PORT   /* with PORT=1, port/crmvec-port.c supplies it */
 AVX2 __m256d _ZGVdN4v_exp(__m256d x)

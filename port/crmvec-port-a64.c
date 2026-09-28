@@ -1,8 +1,8 @@
 /* crmvec-port-a64.c: the portable core in the aarch64 library (built with
    PORT=1; added 2026-09-28). The AdvSIMD entry points of the functions in
    port/ (first double log and exp, then the rest as they were ported: every
-   float function and the doubles sin, cos, tan, exp2, exp10, log2 and
-   log10), as NEON code from the same headers the spikes verify, in place of
+   float function and the doubles sin, cos, tan, exp2, exp10, log2, log10,
+   erf and erfc), as NEON code from the same headers the spikes verify, in place of
    crmvec-aarch64.c's route, which widens the lanes to a 256-bit SIMDe core.
    crmvec-aarch64.c marks its own entry points weak when PORT=1, so these
    are the ones linked, and so are SLEEF's names for them (re-declared here:
@@ -23,6 +23,7 @@
 #include "port-atanf.h"
 #include "port-tanf.h"
 #include "port-dfast.h"
+#include "port-erf.h"
 #include <arm_neon.h>
 
 #define EXPORT __attribute__((visibility("default"), aarch64_vector_pcs))
@@ -136,6 +137,8 @@ PORT_D1(exp2)
 PORT_D1(exp10)
 PORT_D1(log2)
 PORT_D1(log10)
+PORT_D1(erf)
+PORT_D1(erfc)
 EXPORT __typeof__(_ZGVnN2v_sin) _ZGVnN2v_sin_u35 __attribute__((alias("_ZGVnN2v_sin")));
 EXPORT __typeof__(_ZGVnN2v_cos) _ZGVnN2v_cos_u35 __attribute__((alias("_ZGVnN2v_cos")));
 EXPORT __typeof__(_ZGVnN2v_tan) _ZGVnN2v_tan_u35 __attribute__((alias("_ZGVnN2v_tan")));
