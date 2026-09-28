@@ -451,15 +451,22 @@ On aarch64 and riscv64 the vector code above comes through SIMDe, which is
 scalar on riscv64. `port/` holds the start of a rewrite in GCC/clang
 generic vector types, one source for every width. `port/portable.h` has
 the helpers the vector extensions lack (FMA, select, rounding, any-lane,
-table rows). Three functions are written so far: `expf`, the double `log`
-(a 363-row table) and the double `exp` (two 64-row tables). None is in the
-library yet.
+table rows). Seven functions are written so far:
+- **float:** `expf`, `exp2f` and `exp10f`;
+- **double:** `log` (a 363-row table), `exp` (two 64-row tables), and `sin`
+  and `cos` (two 128-row tables).
+
+With `PORT=1` (below) they replace the intrinsics in the library; by
+default they don't.
 - **Correct everywhere tried:**
-  - `generic-expf` matches `cr_expf` on all 2^32 inputs on x86 SSE, AVX2
-    and AVX-512, aarch64 NEON and SVE, and riscv64 RVV;
+  - the three floats match CORE-MATH on all 2^32 inputs on x86 (SSE, AVX2,
+    gcc and clang), and `expf` also on AVX-512, aarch64 NEON and SVE, and
+    riscv64 RVV;
   - `generic-log` and `generic-exp` match `cr_log` and `cr_exp` on 67
     million inputs on x86 (gcc and clang), and on 4 to 17 million under
-    emulation on AVX-512, NEON, SVE and RVV.
+    emulation on AVX-512, NEON, SVE and RVV;
+  - `sin` and `cos` match on 21 million inputs each, including inputs near
+    multiples of pi/2, and on 2^31 random inputs each through the library.
 - **Vector code on each:** the compiled objects show vector FMAs on every
   target (vector-length-specific builds, e.g. 256-bit SVE and RVV).
 - **Speed, AVX2 on Zen 3, rounding-mode check included, ns per element**
@@ -486,15 +493,14 @@ library yet.
   runner.
 
 **Inside the library, as a prototype:** `make PORT=1` builds
-`libmvec.so.1` with five functions taken from the portable core instead of
-the intrinsics: the double `log` and `exp`, and the float `expf`, `exp2f`
-and `exp10f` (`port/crmvec-port.c`). Their SSE2, AVX and AVX-512 entry
+`libmvec.so.1` with those seven functions taken from the portable core
+instead of the intrinsics (`port/crmvec-port.c`). Their SSE2, AVX and AVX-512 entry
 points follow, since they call the AVX2 core. The float three are checked on
 all 2^32 inputs through that build.
 `make PORT=1 PORTCC=clang` builds that file with clang: it is compiled for
 AVX2 as a whole, so clang's ABI problem (Limits) does not arise. `make
 check` passes on both builds. On aarch64, `make PORT=1` routes the same
-five through the portable NEON code:
+seven through the portable NEON code:
 - the AdvSIMD entry points (`port/crmvec-port-a64.c`), where on the N2
   `log` and `exp` take 6.6 and 7.3 ns per element, against 86 and 41
   through SIMDe;

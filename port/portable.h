@@ -29,6 +29,7 @@ typedef float vf __attribute__((vector_size(VB)));
 typedef int32_t vi __attribute__((vector_size(VB)));
 typedef double vd __attribute__((vector_size(VB)));
 typedef int64_t vl __attribute__((vector_size(VB)));
+typedef uint64_t vu __attribute__((vector_size(VB)));   /* for shifts into or out of the sign bit */
 #define PORT_INLINE static inline __attribute__((always_inline))
 
 PORT_INLINE vf splatf(float c) { vf r; for (int i = 0; i < NF; i++) r[i] = c; return r; }
@@ -172,6 +173,29 @@ PORT_INLINE vf tab8f(const float *T, vi j)
   return (vf)_mm256_permutevar8x32_ps(_mm256_loadu_ps(T), (__m256i)j);
 #else
   vf r; for (int i = 0; i < NF; i++) r[i] = T[j[i]]; return r;
+#endif
+}
+
+/* all 4 columns of rows of 4 doubles (crmvec's rows4, for sin and cos's
+   two tables) */
+PORT_INLINE void rows4d(const double (*T)[4], vl idx, vd *c0, vd *c1, vd *c2, vd *c3)
+{
+#if !defined(PORT_ROWS_LANES) && ND == 4
+  vd r0, r1, r2, r3; int64_t ix[ND]; memcpy(ix, &idx, VB);
+  memcpy(&r0, T[ix[0]], 32); memcpy(&r1, T[ix[1]], 32); memcpy(&r2, T[ix[2]], 32); memcpy(&r3, T[ix[3]], 32);
+  vd t0 = __builtin_shufflevector(r0, r1, 0, 4, 2, 6), t1 = __builtin_shufflevector(r0, r1, 1, 5, 3, 7);
+  vd t2 = __builtin_shufflevector(r2, r3, 0, 4, 2, 6), t3 = __builtin_shufflevector(r2, r3, 1, 5, 3, 7);
+  *c0 = __builtin_shufflevector(t0, t2, 0, 1, 4, 5); *c1 = __builtin_shufflevector(t1, t3, 0, 1, 4, 5);
+  *c2 = __builtin_shufflevector(t0, t2, 2, 3, 6, 7); *c3 = __builtin_shufflevector(t1, t3, 2, 3, 6, 7);
+#elif !defined(PORT_ROWS_LANES) && ND == 2
+  vd a0, a1, b0, b1; int64_t ix[ND]; memcpy(ix, &idx, VB);
+  memcpy(&a0, T[ix[0]], 16); memcpy(&a1, T[ix[0]] + 2, 16); memcpy(&b0, T[ix[1]], 16); memcpy(&b1, T[ix[1]] + 2, 16);
+  *c0 = __builtin_shufflevector(a0, b0, 0, 2); *c1 = __builtin_shufflevector(a0, b0, 1, 3);
+  *c2 = __builtin_shufflevector(a1, b1, 0, 2); *c3 = __builtin_shufflevector(a1, b1, 1, 3);
+#else
+  vd a, b, c, d; int64_t ix[ND]; memcpy(ix, &idx, VB);
+  for (int i = 0; i < ND; i++) { const double *r = T[ix[i]]; a[i] = r[0]; b[i] = r[1]; c[i] = r[2]; d[i] = r[3]; }
+  *c0 = a; *c1 = b; *c2 = c; *c3 = d;
 #endif
 }
 

@@ -11,6 +11,7 @@
 #include "port-log.h"
 #include "port-exp.h"
 #include "port-expf.h"
+#include "port-sincos.h"
 #include <arm_neon.h>
 
 #define EXPORT __attribute__((visibility("default"), aarch64_vector_pcs))
@@ -82,3 +83,22 @@ EXPORT __typeof__(_ZGVnN4v_exp2f) _ZGVnN4v___exp2f_finite __attribute__((alias("
 EXPORT __typeof__(_ZGVnN4v_exp2f) _ZGVnN4v_exp2f_u35 __attribute__((alias("_ZGVnN4v_exp2f")));
 EXPORT __typeof__(_ZGVnN4v_exp10f) _ZGVnN4v___exp10f_finite __attribute__((alias("_ZGVnN4v_exp10f")));
 EXPORT __typeof__(_ZGVnN4v_exp10f) _ZGVnN4v_exp10f_u35 __attribute__((alias("_ZGVnN4v_exp10f")));
+
+/* the double sin and cos (port-sincos.h), with their blocks and SLEEF names */
+#define PORT_D1(n)                                                                     \
+  EXPORT float64x2_t _ZGVnN2v_##n(float64x2_t x)                                       \
+  {                                                                                    \
+    if (__builtin_expect(crm_rn_a64(), 1)) return (float64x2_t)port_##n((vd)x);        \
+    return (float64x2_t){cr_##n(x[0]), cr_##n(x[1])};                                  \
+  }                                                                                    \
+  HIDDEN void crm_blk_##n(double *a)                                                   \
+  {                                                                                    \
+    vd v0, v1; memcpy(&v0, a, 16); memcpy(&v1, a + 2, 16);                             \
+    if (__builtin_expect(crm_rn_a64(), 1)) { v0 = port_##n(v0); v1 = port_##n(v1); }   \
+    else for (int i = 0; i < 2; i++) { v0[i] = cr_##n(v0[i]); v1[i] = cr_##n(v1[i]); } \
+    memcpy(a, &v0, 16); memcpy(a + 2, &v1, 16);                                        \
+  }
+PORT_D1(sin)
+PORT_D1(cos)
+EXPORT __typeof__(_ZGVnN2v_sin) _ZGVnN2v_sin_u35 __attribute__((alias("_ZGVnN2v_sin")));
+EXPORT __typeof__(_ZGVnN2v_cos) _ZGVnN2v_cos_u35 __attribute__((alias("_ZGVnN2v_cos")));

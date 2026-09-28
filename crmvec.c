@@ -3577,8 +3577,12 @@ AVX2I static inline __m256d sincos_fast(__m256d x, int is_cos, __m256d *redo)
     for (int i = 0; i < 4; i++) if (m >> i & 1) ys[i] = CR(xs[i]);                    \
     return _mm256_loadu_pd(ys);                                                       \
   }
+#if !CRMVEC_PORT
 SINCOS(sin, 0, cr_sin)
 SINCOS(cos, 1, cr_cos)
+#else   /* PORT=1: port/crmvec-port.c supplies them (port-sincos.h) */
+AVX2 __m256d _ZGVdN4v_sin(__m256d); AVX2 __m256d _ZGVdN4v_cos(__m256d);
+#endif
 
 /* ---- double tan (added 2026-09-26): our own bound ------------------- */
 
