@@ -1,3 +1,10 @@
+crmvec (0.2.1) unstable; urgency=medium
+
+  * crmvec.h: CRMVEC_VERSION was left at 0.1.0 in 0.2.0, which failed
+    make check.
+
+ -- anun333 <anun333@posteo.net>  Mon, 28 Sep 2026 06:10:00 -0500
+
 crmvec (0.2.0) unstable; urgency=medium
 
   * crmvec-simd.h: gcc reaches every function without -ffast-math.

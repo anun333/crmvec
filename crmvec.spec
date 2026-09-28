@@ -11,7 +11,7 @@
 %global debug_package %{nil}
 
 Name:           crmvec
-Version:        0.2.0
+Version:        0.2.1
 Release:        1%{?dist}
 Summary:        Correctly rounded vector math (a drop-in libmvec)
 License:        MIT
@@ -61,6 +61,9 @@ make check
 %{_libdir}/pkgconfig/crmvec.pc
 
 %changelog
+* Mon Sep 28 2026 anun333 <anun333@posteo.net> - 0.2.1-1
+- crmvec.h: CRMVEC_VERSION was left at 0.1.0 in 0.2.0, which failed make check
+
 * Mon Sep 28 2026 anun333 <anun333@posteo.net> - 0.2.0-1
 - crmvec-simd.h: gcc reaches every function without -ffast-math
 - make check runs on aarch64; hypotf's rounding test has a control
