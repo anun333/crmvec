@@ -11,11 +11,6 @@ float cr_expm1f(float), cr_coshf(float), cr_sinhf(float), cr_tanhf(float);
 #endif
 #define BR_HYP 0x1p-34
 
-#ifndef PORT_VFH
-#define PORT_VFH
-typedef float vfh __attribute__((vector_size(VB / 2)));   /* half a vf: as many floats as vd has doubles */
-typedef int32_t vih __attribute__((vector_size(VB / 2)));
-#endif
 
 static const double PORT_C2[10] = {   /* 2^r = sum C2[i] r^i, Taylor, |r| <= 1/2 */
   0x1.0000000000000p+0, 0x1.62e42fefa39efp-1, 0x1.ebfbdff82c58fp-3, 0x1.c6b08d704a0c0p-5,
@@ -35,7 +30,7 @@ PORT_INLINE vl port_ambiguous(vd y, double br)
   const vd B = splatd(br * FBR_SCALE);
   vfh lo = __builtin_convertvector(fmad_v(-y, B, y), vfh);
   vfh hi = __builtin_convertvector(fmad_v(y, B, y), vfh);
-  return __builtin_convertvector((vih)(lo != hi), vl);
+  return widen_ih((vih)(lo != hi));
 }
 PORT_INLINE vl port_nonfinite(vd x) { return ((vl)x & splatl(0x7fffffffffffffffLL)) >= splatl(0x7ff0000000000000LL); }
 PORT_INLINE vd port_abs(vd x) { return (vd)((vl)x & splatl(0x7fffffffffffffffLL)); }
@@ -110,11 +105,9 @@ __attribute__((noinline, cold)) static vf port_half_finish(vf x, vf y, vl r0, vl
 #define PORT_FROM_HALF(NAME, HALF, CR)                                                  \
   PORT_INLINE vf port_##NAME(vf xf)                                                     \
   {                                                                                     \
-    vfh lo, hi; memcpy(&lo, &xf, VB / 2); memcpy(&hi, (char *)&xf + VB / 2, VB / 2);    \
-    vd x0 = __builtin_convertvector(lo, vd), x1 = __builtin_convertvector(hi, vd);      \
+    vd x0, x1; split_f(xf, &x0, &x1);                                                   \
     vl r0, r1; vd y0 = HALF(x0, &r0), y1 = HALF(x1, &r1);                               \
-    vfh f0 = __builtin_convertvector(y0, vfh), f1 = __builtin_convertvector(y1, vfh);   \
-    vf y; memcpy(&y, &f0, VB / 2); memcpy((char *)&y + VB / 2, &f1, VB / 2);            \
+    vf y = join_d(y0, y1);                                                              \
     if (__builtin_expect(!anyl(r0 | r1), 1)) return y;                                  \
     return port_half_finish(xf, y, r0, r1, CR);                                         \
   }

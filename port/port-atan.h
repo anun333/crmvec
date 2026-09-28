@@ -21,8 +21,14 @@ double cr_atan(double);
 /* _mm256_mul_epu32: the product of the low 32 bits of a and b, unsigned */
 PORT_INLINE vl port_mul_epu32(vl a, vl b)
 {
+#if defined(__aarch64__) && VB == 16 && !defined(__clang__) && !defined(PORT_NO_NEON_CVT)
+  /* NEON has no 64-bit vector multiply, and gcc 13 does this one lane by
+     lane in scalar registers; umull of the low halves is the same product */
+  return (vl)vmull_u32(vmovn_u64((uint64x2_t)a), vmovn_u64((uint64x2_t)b));
+#else
   const vu LO = (vu)splatl(0xffffffffLL);
   return (vl)(((vu)a & LO) * ((vu)b & LO));
+#endif
 }
 
 PORT_INLINE vd port_atan_fast3(vd x, vl *redo, vl *inr)

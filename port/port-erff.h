@@ -52,7 +52,7 @@ PORT_INLINE vd port_erfcf_half(vd x, vl *redo)
 {
   const vd ONE = splatd(1.0), MAGIC = splatd(0x1.8p52);
   vfh xh = __builtin_convertvector(x, vfh);                        /* exact: x came from a float */
-  vl u = __builtin_convertvector((vih)xh, vl);                     /* the float's bits, sign-extended */
+  vl u = widen_ih((vih)xh);                                        /* the float's bits, sign-extended */
   vl at = u & splatl(0x7fffffff);
   vd axd = port_abs(x), x2 = axd * axd;
   vl neg = u >> 63;                                                /* all ones if x < 0 */

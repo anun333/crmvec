@@ -157,6 +157,59 @@ PORT_INLINE void rows2d(const double (*T)[2], vl idx, vd *c0, vd *c1)
 /* (int32_t) a for integral a: truncation is then exact */
 PORT_INLINE vi cvtfi_v(vf a) { return __builtin_convertvector(a, vi); }
 
+/* Half a vf: as many floats (vfh) or int32s (vih) as vd has doubles. The
+   float functions compute in double on each half. On NEON (VB 16), gcc 13
+   converts these lane by lane through scalar registers and joins the halves
+   through the stack, where single instructions do it: fcvtl/fcvtl2 to widen,
+   fcvtn/fcvtn2 to narrow, sxtl to sign-extend (2026-09-28: 13-36 lane moves
+   in every float entry point). The same bits either way: widening is exact,
+   and fcvtn rounds as the conversion does, in the current mode. */
+#ifndef PORT_VFH
+#define PORT_VFH
+typedef float vfh __attribute__((vector_size(VB / 2)));
+typedef int32_t vih __attribute__((vector_size(VB / 2)));
+#endif
+#if defined(__aarch64__) && VB == 16 && !defined(__clang__) && !defined(PORT_NO_NEON_CVT)
+#define PORT_NEON_CVT 1
+#endif
+PORT_INLINE vd widen_fh(vfh a)
+{
+#ifdef PORT_NEON_CVT
+  return (vd)vcvt_f64_f32((float32x2_t)a);
+#else
+  return __builtin_convertvector(a, vd);
+#endif
+}
+PORT_INLINE vl widen_ih(vih a)
+{
+#ifdef PORT_NEON_CVT
+  return (vl)vmovl_s32((int32x2_t)a);
+#else
+  return __builtin_convertvector(a, vl);
+#endif
+}
+/* both halves of x, widened to double */
+PORT_INLINE void split_f(vf x, vd *lo, vd *hi)
+{
+#ifdef PORT_NEON_CVT
+  *lo = (vd)vcvt_f64_f32(vget_low_f32((float32x4_t)x));
+  *hi = (vd)vcvt_high_f64_f32((float32x4_t)x);
+#else
+  vfh l, h; memcpy(&l, &x, VB / 2); memcpy(&h, (char *)&x + VB / 2, VB / 2);
+  *lo = widen_fh(l); *hi = widen_fh(h);
+#endif
+}
+/* two double halves narrowed to float and joined, lo first */
+PORT_INLINE vf join_d(vd lo, vd hi)
+{
+#ifdef PORT_NEON_CVT
+  return (vf)vcvt_high_f32_f64(vcvt_f32_f64((float64x2_t)lo), (float64x2_t)hi);
+#else
+  vfh l = __builtin_convertvector(lo, vfh), h = __builtin_convertvector(hi, vfh);
+  vf y; memcpy(&y, &l, VB / 2); memcpy((char *)&y + VB / 2, &h, VB / 2); return y;
+#endif
+}
+
 /* T[j] for an 8-entry float table and j in 0..7: one permute under gcc
    (__builtin_shuffle: vpermps, SVE tbl, RVV vrgather); clang has no
    variable shuffle for generic vectors, so AVX2 gets its intrinsic and the
@@ -165,6 +218,13 @@ PORT_INLINE vf tab8f(const float *T, vi j)
 {
 #if !defined(__clang__) && NF == 8
   vf t; memcpy(&t, T, 32); return __builtin_shuffle(t, j);
+#elif defined(__aarch64__) && !defined(__clang__) && NF == 4 && !defined(PORT_NO_NEON_TBL)
+  /* gcc 13 lowers the two-table __builtin_shuffle below to a stack copy and
+     scalar loads per lane on NEON (2026-09-28); tbl with byte indices
+     4j..4j+3 is the same permutation */
+  uint8x16x2_t t = {{vld1q_u8((const uint8_t *)T), vld1q_u8((const uint8_t *)(T + 4))}};
+  uint32x4_t b = vmlaq_n_u32(vdupq_n_u32(0x03020100u), (uint32x4_t)j, 0x04040404u);
+  return (vf)vqtbl2q_u8(t, (uint8x16_t)b);
 #elif !defined(__clang__) && NF == 4
   vf t0, t1; memcpy(&t0, T, 16); memcpy(&t1, T + 4, 16); return __builtin_shuffle(t0, t1, j);
 #elif !defined(__clang__) && NF == 16
