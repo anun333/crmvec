@@ -486,14 +486,18 @@ library yet.
   runner.
 
 **Inside the library, as a prototype:** `make PORT=1` builds
-`libmvec.so.1` with the double `log` and `exp` taken from the portable core
-(`port/crmvec-port.c`) instead of the intrinsics; their SSE2, AVX and
-AVX-512 entry points follow, since they call the AVX2 core.
+`libmvec.so.1` with five functions taken from the portable core instead of
+the intrinsics: the double `log` and `exp`, and the float `expf`, `exp2f`
+and `exp10f` (`port/crmvec-port.c`). Their SSE2, AVX and AVX-512 entry
+points follow, since they call the AVX2 core. The float three are checked on
+all 2^32 inputs through that build.
 `make PORT=1 PORTCC=clang` builds that file with clang: it is compiled for
 AVX2 as a whole, so clang's ABI problem (Limits) does not arise. `make
-check` passes on both builds. On aarch64, `make PORT=1` routes `log` and
-`exp` through the portable NEON code:
-- the AdvSIMD entry points (`port/crmvec-port-a64.c`);
+check` passes on both builds. On aarch64, `make PORT=1` routes the same
+five through the portable NEON code:
+- the AdvSIMD entry points (`port/crmvec-port-a64.c`), where on the N2
+  `log` and `exp` take 6.6 and 7.3 ns per element, against 86 and 41
+  through SIMDe;
 - SLEEF's names for them;
 - the blocks the SVE entry points call.
 

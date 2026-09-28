@@ -10,6 +10,7 @@
 #include "portable.h"
 #include "port-log.h"
 #include "port-exp.h"
+#include "port-expf.h"
 #include <arm_neon.h>
 
 #define EXPORT __attribute__((visibility("default"), aarch64_vector_pcs))
@@ -54,3 +55,30 @@ HIDDEN void crm_blk_exp(double *a)
     v0 = port_exp(v0); v1 = port_exp(v1); memcpy(a, &v0, 16); memcpy(a + 2, &v1, 16);
   } else for (int i = 0; i < 4; i++) a[i] = cr_exp(a[i]);
 }
+
+/* the float exp family (port-expf.h): 4 lanes, and 2 lanes padded to 4 */
+#define PORT_F1(n)                                                                     \
+  EXPORT float32x4_t _ZGVnN4v_##n(float32x4_t x)                                       \
+  {                                                                                    \
+    if (__builtin_expect(crm_rn_a64(), 1)) return (float32x4_t)port_##n((vf)x);        \
+    return (float32x4_t){cr_##n(x[0]), cr_##n(x[1]), cr_##n(x[2]), cr_##n(x[3])};      \
+  }                                                                                    \
+  EXPORT float32x2_t _ZGVnN2v_##n(float32x2_t x)                                       \
+  {                                                                                    \
+    float32x4_t y = _ZGVnN4v_##n(vcombine_f32(x, x)); return vget_low_f32(y);          \
+  }                                                                                    \
+  HIDDEN void crm_blk_##n(float *a)                                                    \
+  {                                                                                    \
+    vf v0, v1; memcpy(&v0, a, 16); memcpy(&v1, a + 4, 16);                             \
+    if (__builtin_expect(crm_rn_a64(), 1)) { v0 = port_##n(v0); v1 = port_##n(v1); }   \
+    else for (int i = 0; i < 4; i++) { v0[i] = cr_##n(v0[i]); v1[i] = cr_##n(v1[i]); } \
+    memcpy(a, &v0, 16); memcpy(a + 4, &v1, 16);                                        \
+  }
+PORT_F1(expf)
+PORT_F1(exp2f)
+PORT_F1(exp10f)
+EXPORT __typeof__(_ZGVnN4v_expf) _ZGVnN4v___expf_finite __attribute__((alias("_ZGVnN4v_expf")));
+EXPORT __typeof__(_ZGVnN4v_exp2f) _ZGVnN4v___exp2f_finite __attribute__((alias("_ZGVnN4v_exp2f")));
+EXPORT __typeof__(_ZGVnN4v_exp2f) _ZGVnN4v_exp2f_u35 __attribute__((alias("_ZGVnN4v_exp2f")));
+EXPORT __typeof__(_ZGVnN4v_exp10f) _ZGVnN4v___exp10f_finite __attribute__((alias("_ZGVnN4v_exp10f")));
+EXPORT __typeof__(_ZGVnN4v_exp10f) _ZGVnN4v_exp10f_u35 __attribute__((alias("_ZGVnN4v_exp10f")));

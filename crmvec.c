@@ -605,6 +605,9 @@ AVX2I static inline __m256d exp_family(__m128 xf, double scale, __m128i *redo)
 #ifndef EXP10F_FL
 #define EXP10F_FL 1  /* 2026-09-26: -3%, proven on all 2^32 inputs */
 #endif
+#if CRMVEC_PORT && defined(EXPF_FL) && !EXPF_FL
+#error "PORT=1 replaces the float-lane expf: keep EXPF_FL at 1"
+#endif
 #ifndef EXPF_FL
 #define EXPF_FL 1   /* measured 2026-09-26: 9% faster than the double halves, proven on all 2^32 inputs */
 #endif
@@ -727,12 +730,19 @@ AVX2I static inline __m256 expf_fl_core(__m256i k, __m256 rh, __m256 rl, __m256 
     rh = _mm256_mul_ps(xh, F(0x1.26bb1c0000000p+1f));                                  \
     rl = _mm256_fmadd_ps(xh, F(-0x1.12aaba0000000p-25f), _mm256_fmsub_ps(xh, F(0x1.26bb1c0000000p+1f), rh)); \
     rl = _mm256_fmadd_ps(xl, F(0x1.26bb1c0000000p+1f), rl);
+#if !CRMVEC_PORT
 EXPF_FL_ENTRY(expf, cr_expf, -87.33f, 88.72f, EXPF_REDUCE)
 #if EXP2F_FL
 EXPF_FL_ENTRY(exp2f, cr_exp2f, -126.0f, 127.99f, EXP2F_REDUCE)
 #endif
 #if EXP10F_FL
 EXPF_FL_ENTRY(exp10f, cr_exp10f, -37.929f, 38.531f, EXP10F_REDUCE)
+#endif
+#else   /* PORT=1: port/crmvec-port.c supplies the three (port-expf.h) */
+#if !(EXP2F_FL && EXP10F_FL)
+#error "PORT=1 replaces the float-lane expf, exp2f and exp10f: keep EXP2F_FL and EXP10F_FL at 1"
+#endif
+AVX2 __m256 _ZGVdN8v_expf(__m256); AVX2 __m256 _ZGVdN8v_exp2f(__m256); AVX2 __m256 _ZGVdN8v_exp10f(__m256);
 #endif
 #undef F
 #undef RND

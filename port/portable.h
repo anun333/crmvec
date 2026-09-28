@@ -153,4 +153,26 @@ PORT_INLINE void rows2d(const double (*T)[2], vl idx, vd *c0, vd *c1)
 #endif
 }
 
+/* (int32_t) a for integral a: truncation is then exact */
+PORT_INLINE vi cvtfi_v(vf a) { return __builtin_convertvector(a, vi); }
+
+/* T[j] for an 8-entry float table and j in 0..7: one permute under gcc
+   (__builtin_shuffle: vpermps, SVE tbl, RVV vrgather); clang has no
+   variable shuffle for generic vectors, so AVX2 gets its intrinsic and the
+   rest a lane loop */
+PORT_INLINE vf tab8f(const float *T, vi j)
+{
+#if !defined(__clang__) && NF == 8
+  vf t; memcpy(&t, T, 32); return __builtin_shuffle(t, j);
+#elif !defined(__clang__) && NF == 4
+  vf t0, t1; memcpy(&t0, T, 16); memcpy(&t1, T + 4, 16); return __builtin_shuffle(t0, t1, j);
+#elif !defined(__clang__) && NF == 16
+  vf t; memcpy(&t, T, 32); memcpy((float *)&t + 8, T, 32); return __builtin_shuffle(t, j);
+#elif defined(__clang__) && defined(__AVX2__) && NF == 8
+  return (vf)_mm256_permutevar8x32_ps(_mm256_loadu_ps(T), (__m256i)j);
+#else
+  vf r; for (int i = 0; i < NF; i++) r[i] = T[j[i]]; return r;
+#endif
+}
+
 #endif
