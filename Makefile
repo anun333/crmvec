@@ -64,12 +64,13 @@ lib: libmvec.so.1
 LIBS_BUILT = libmvec.so.1
 endif
 
-install: lib crmvec.h crmvec.pc.in crmvec-run.in
+install: lib crmvec.h crmvec-simd.h crmvec.pc.in crmvec-run.in
 	install -d $(DESTDIR)$(CRMDIR) $(DESTDIR)$(INCDIR) $(DESTDIR)$(PKGDIR) $(DESTDIR)$(BINDIR)
 	install -m 755 $(LIBS_BUILT) $(DESTDIR)$(CRMDIR)/
 	ln -sf libmvec.so.1 $(DESTDIR)$(CRMDIR)/libmvec.so
 	[ ! -f $(DESTDIR)$(CRMDIR)/libsleefgnuabi.so.3 ] || ln -sf libsleefgnuabi.so.3 $(DESTDIR)$(CRMDIR)/libsleefgnuabi.so
 	install -m 644 crmvec.h $(DESTDIR)$(INCDIR)/crmvec.h
+	install -m 644 crmvec-simd.h $(DESTDIR)$(INCDIR)/crmvec-simd.h
 	sed -e 's|@CRMDIR@|$(CRMDIR)|g' -e 's|@INCDIR@|$(INCDIR)|g' -e 's|@VERSION@|$(VERSION)|g' crmvec.pc.in > $(DESTDIR)$(PKGDIR)/crmvec.pc
 	sed -e 's|@CRMDIR@|$(CRMDIR)|g' crmvec-run.in > $(DESTDIR)$(BINDIR)/crmvec-run
 	chmod 755 $(DESTDIR)$(BINDIR)/crmvec-run
@@ -197,7 +198,7 @@ clean:
 # checked only on CPUs that have them (elsewhere the checker itself would
 # fault). Needs libmpfr-dev, as `make` does.
 check: all
-	@set -e; v() { echo "$$1" | tee -a check.log | tail -1; echo "$$1" | tail -1 | grep -qE 'IDENTICAL|CORRECTLY ROUNDED|all four differ' || { echo "FAILED: $$2"; exit 1; }; }; \
+	@set -e; v() { echo "$$1" | tee -a check.log | tail -1; echo "$$1" | tail -1 | grep -qE 'IDENTICAL|CORRECTLY ROUNDED|all four differ|ALL EXPORTED' || { echo "FAILED: $$2"; exit 1; }; }; \
 	: > check.log; \
 	v "$$(./bcheck . 18)" bcheck; \
 	if grep -q ' avx ' /proc/cpuinfo; then v "$$(./cecheck c . 14)" "cecheck c"; else echo "cecheck c: skipped, no AVX"; fi; \
@@ -207,6 +208,7 @@ check: all
 	v "$$(./crtest verify expf logf sinf)" "crtest verify (every input of expf, logf, sinf)"; \
 	v "$$(./lcheck .)" "lcheck (every input of sinpif, cospif, tanpif, rsqrtf)"; \
 	v "$$(./f16check | tail -1)" "f16check"; \
+	v "$$(./simdcheck.sh $(CC) ./libmvec.so.1 2>&1)" "simdcheck (crmvec-simd.h: gcc vectorizes all 52 functions without -ffast-math)"; \
 	echo "make check: every verdict passed (details in check.log)"
 
 print-sources:   # for the export script: every CORE-MATH source the build uses

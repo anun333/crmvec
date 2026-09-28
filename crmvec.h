@@ -4,8 +4,10 @@
    Most of crmvec is called without this header: a compiler vectorizing
    sin(x) calls _ZGVdN4v_sin (gcc and clang, against glibc's libmvec
    names; clang -fveclib=SLEEF on aarch64, against SLEEF's), and crmvec
-   answers under those names, correctly rounded. What is declared here has
-   no such standard name:
+   answers under those names, correctly rounded. gcc does so only where
+   the vector variants are declared: glibc declares them only under
+   -ffast-math, and crmvec-simd.h declares them without it. What is
+   declared here has no such standard name:
 
    - half precision (IEEE binary16) and bfloat16 arrays, as uint16_t bit
      patterns, through CORE-MATH's correctly rounded functions;

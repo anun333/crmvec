@@ -126,6 +126,38 @@ mostly stays scalar, 47 of its 76 outputs came from this library
 the library the same way, under the same condition: only calls the compiler
 vectorized reach it.
 
+### Your own code, without `-ffast-math`
+
+gcc calls a vector library only where `<math.h>` declares the vector
+variants, and glibc declares them only under `-ffast-math`
+(`bits/math-vector.h`). But `-ffast-math` also lets gcc reorder sums, so
+the result then depends on the vector width, which is what correct rounding
+was meant to remove. `crmvec-simd.h` (installed beside `crmvec.h`) declares
+the 52 functions itself:
+
+```
+gcc -O3 -fno-math-errno -include crmvec-simd.h prog.c $(pkg-config --cflags --libs crmvec)
+clang -O3 -fveclib=libmvec -fno-math-errno prog.c $(pkg-config --cflags --libs crmvec)
+```
+
+`-fno-math-errno` is needed because a call that may set `errno` can't be
+vectorized. Add `-ffp-contract=off` if your own arithmetic must not be fused
+either. clang ignores the header and uses `-fveclib=libmvec`. Coverage then
+depends on LLVM's table: 10 of the 52 functions with clang 18, 28 with LLVM
+main, and all 52 with [llvm#223817](https://github.com/llvm/llvm-project/pull/223817)
+applied.
+
+Checked 2026-09-27:
+- **Coverage:** `simdcheck.sh`, part of `make check`. gcc 13 vectorizes all 52
+  functions with the header and none without it, at SSE2, AVX, AVX2 and
+  AVX-512 on x86-64 and AdvSIMD on aarch64. Every name it calls is exported
+  by this library.
+- **Results:** loops built this way give the correctly rounded result:
+  - **x86-64:** 0 of 4,194,304 `sin` and `expf` results differ from MPFR,
+    through gcc or clang 18. Through glibc's `libmvec`, 62% and 24% differ.
+  - **aarch64:** gcc's drop-in loops under qemu give 0 of 400,000 through this
+    library, and 33,871 through glibc's.
+
 ## How each function is made correct
 
 - **One-argument float functions**: vector code in double precision. A lane's
@@ -207,6 +239,7 @@ CRTEST_SMOOTH=1 ./crtest time   # the same, on inputs that vary smoothly along t
 ./mpfrcheck controls # four deliberately wrong versions, which it must catch
 ./lcheck             # sinpif cospif tanpif rsqrtf: all 2^32 inputs, both entry points
 ./f16check           # half and bfloat16: every input of every one-argument function, four modes, against MPFR
+./simdcheck.sh       # crmvec-simd.h: gcc vectorizes all 52 functions without -ffast-math, and this library exports every name it calls
 ./cecheck c          # the AVX entry points; `sde64 -spr -- ./cecheck e` for AVX-512 (Intel SDE)
 port/dropin-x86.sh   # loops gcc vectorized with -mavx and -mavx512f, against this library and glibc's
 CRTEST_ROUND=up ./crtest verify   # any check above in another rounding mode (also bcheck, cecheck, aarch64-check)

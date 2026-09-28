@@ -49,6 +49,7 @@ make clean
 %doc README.md
 %{_bindir}/crmvec-run
 %{_includedir}/crmvec.h
+%{_includedir}/crmvec-simd.h
 %{_libdir}/crmvec/
 %{_libdir}/pkgconfig/crmvec.pc
 
