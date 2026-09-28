@@ -669,6 +669,7 @@ make riscv64
 qemu-riscv64 -cpu rv64,v=true,vlen=256 build-riscv64/rv64-check                # every entry point against CORE-MATH or libm
 LD_LIBRARY_PATH=build-riscv64 qemu-riscv64 -L /usr/riscv64-linux-gnu \
     -cpu rv64,v=true,vlen=256 build-riscv64/rv64-dropin                     # loops clang 20 vectorized, end to end
+port/rv64-sleef.sh                                                          # the same, and rv64-lanedep, against SLEEF 3.9's library too
 ```
 
 Checked under qemu (no riscv64 hardware yet):
@@ -693,7 +694,18 @@ Checked under qemu (no riscv64 hardware yet):
   1024. Through the bounds-zeroed build 682 differ; with `lgamma` taken
   from glibc and `ldexp` reading its exponents in reverse lane order,
   80,258 differ.
-- **Not yet:** timing, and a comparison with SLEEF's own RVV build.
+- **Against SLEEF 3.9's own** (`port/rv64-sleef.sh`, Debian's riscv64
+  build, hash-pinned): 23,539 of the drop-in's 4,849,664 results differ
+  from CORE-MATH at VLEN 256, and 23,609 at VLEN 128.
+  - **Why the count moves with VLEN:** SLEEF's `sinf`, `cosf` and `tan`
+    give a lane a different result when another lane in its vector holds a
+    large value. `sinf(-0x1.4fca9ep+6)` is `-0x1.8906aap-1` (correctly
+    rounded) among small inputs, and `-0x1.8906a8p-1` beside 1e6.
+  - Both are within SLEEF's 1-ulp bound. But a loop's `y[i]` then depends
+    on the elements that share its vector, and so on the machine's VLEN.
+  - `rv64-lanedep` measures this directly: 611 of 61,440 `sinf` lanes
+    change at VLEN 256. crmvec: 0.
+- **Not yet:** timing.
 
 ## Limits
 
