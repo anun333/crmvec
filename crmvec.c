@@ -3389,7 +3389,11 @@ DOUBLE_FAST(sinh, sinh_fast, cr_sinh)
 #if !CR_LOOP_COSH
 DOUBLE_FAST(cosh, cosh_fast, cr_cosh)
 #endif
+#if !CRMVEC_PORT
 DOUBLE_FAST(tanh, tanh_fast, cr_tanh)
+#else   /* PORT=1: port/crmvec-port.c supplies it (port-tanh.h) */
+AVX2 __m256d _ZGVdN4v_tanh(__m256d);
+#endif
 DOUBLE_FAST(asinh, asinh_fast, cr_asinh)
 DOUBLE_FAST(acosh, acosh_fast, cr_acosh)
 DOUBLE_FAST(atanh, atanh_fast, cr_atanh)
