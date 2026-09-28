@@ -1615,10 +1615,17 @@ AVX2I static inline __m256d erfcf_half(__m128 xf, __m128i *redo)
 }
 
 float cr_erff(float), cr_erfcf(float);
+#if !CRMVEC_PORT
 #if !CR_LOOP_ERFF
 FLOAT_FROM_HALF(erff, erff_half, cr_erff)
 #endif
 FLOAT_FROM_HALF(erfcf, erfcf_half, cr_erfcf)
+#else   /* PORT=1: port/crmvec-port.c supplies them (port-erff.h) */
+#if CR_LOOP_ERFF
+#error "PORT=1 replaces erff: keep CR_LOOP_ERFF at 0"
+#endif
+AVX2 __m256 _ZGVdN8v_erff(__m256); AVX2 __m256 _ZGVdN8v_erfcf(__m256);
+#endif
 
 /* hypotf: x^2 and y^2 are exact in double, fma adds them with one rounding,
    and sqrt rounds once more: relative error < 2^-52 */

@@ -8,10 +8,11 @@
    every target, and the code must actually be vector code on each (read the
    disassembly, not the source).
 
-     generic-expf verify [expf|exp2f|exp10f|sinf|cosf|expm1f|coshf|sinhf|tanhf]
+     generic-expf verify [expf|exp2f|exp10f|sinf|cosf|expm1f|coshf|sinhf|tanhf|erff|erfcf]
                                                every float input against CORE-MATH
                                                (sinf, cosf: port-sinf.h; the hyperbolic four:
-                                               port-hypf.h; both added 2026-09-28)
+                                               port-hypf.h; erff, erfcf: port-erff.h;
+                                               all added 2026-09-28)
      generic-expf time [LIB...]                ns per element (expf), memory-bound,
                                                against the _ZGV expf entry points
                                                of the libraries given */
@@ -30,6 +31,7 @@
 #include "port-expf.h"
 #include "port-sinf.h"
 #include "port-hypf.h"
+#include "port-erff.h"
 
 __attribute__((noinline)) vf gexpf(vf x) { return port_expf(x); }
 __attribute__((noinline)) vf gexp2f(vf x) { return port_exp2f(x); }
@@ -40,6 +42,8 @@ __attribute__((noinline)) vf gexpm1f(vf x) { return port_expm1f(x); }
 __attribute__((noinline)) vf gcoshf(vf x) { return port_coshf(x); }
 __attribute__((noinline)) vf gsinhf(vf x) { return port_sinhf(x); }
 __attribute__((noinline)) vf gtanhf(vf x) { return port_tanhf(x); }
+__attribute__((noinline)) vf gerff(vf x) { return port_erff(x); }
+__attribute__((noinline)) vf gerfcf(vf x) { return port_erfcf(x); }
 
 #ifdef GUARD
 /* the shipped entry point's shape, for a fair time: crmvec's two-add
@@ -70,7 +74,8 @@ int main(int argc, char **argv)
     static const struct { const char *n; vf (*g)(vf); float (*cr)(float); } T[] = {
       {"expf", gexpf, cr_expf}, {"exp2f", gexp2f, cr_exp2f}, {"exp10f", gexp10f, cr_exp10f},
       {"sinf", gsinf, cr_sinf}, {"cosf", gcosf, cr_cosf}, {"expm1f", gexpm1f, cr_expm1f},
-      {"coshf", gcoshf, cr_coshf}, {"sinhf", gsinhf, cr_sinhf}, {"tanhf", gtanhf, cr_tanhf}};
+      {"coshf", gcoshf, cr_coshf}, {"sinhf", gsinhf, cr_sinhf}, {"tanhf", gtanhf, cr_tanhf},
+      {"erff", gerff, cr_erff}, {"erfcf", gerfcf, cr_erfcf}};
     int t = 0; while (t < (int)(sizeof T / sizeof T[0]) - 1 && strcmp(T[t].n, fn)) t++;
     if (strcmp(T[t].n, fn)) { fprintf(stderr, "unknown function %s\n", fn); return 2; }
     vf (*g)(vf) = T[t].g; float (*cr)(float) = T[t].cr;

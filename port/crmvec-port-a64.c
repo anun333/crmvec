@@ -14,6 +14,7 @@
 #include "port-sincos.h"
 #include "port-sinf.h"
 #include "port-hypf.h"
+#include "port-erff.h"
 #include <arm_neon.h>
 
 #define EXPORT __attribute__((visibility("default"), aarch64_vector_pcs))
@@ -86,6 +87,8 @@ PORT_F1(expm1f)
 PORT_F1(coshf)
 PORT_F1(sinhf)
 PORT_F1(tanhf)
+PORT_F1(erff)
+PORT_F1(erfcf)
 EXPORT __typeof__(_ZGVnN4v_expf) _ZGVnN4v___expf_finite __attribute__((alias("_ZGVnN4v_expf")));
 EXPORT __typeof__(_ZGVnN4v_exp2f) _ZGVnN4v___exp2f_finite __attribute__((alias("_ZGVnN4v_exp2f")));
 EXPORT __typeof__(_ZGVnN4v_exp2f) _ZGVnN4v_exp2f_u35 __attribute__((alias("_ZGVnN4v_exp2f")));
