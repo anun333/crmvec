@@ -1180,6 +1180,7 @@ AVX2I static inline __m256d powf_half(__m128 xf, __m128 yf, __m128i *redo)
   return rr;
 }
 
+#if !CRMVEC_PORT   /* with PORT=1, port/crmvec-port.c supplies it (port-powf.h) */
 AVX2 __m256 _ZGVdN8vv_powf(__m256 xf, __m256 yf)
 {
   __m128i r0, r1;
@@ -1197,6 +1198,9 @@ AVX2 __m256 _ZGVdN8vv_powf(__m256 xf, __m256 yf)
   for (int i = 0; i < 8; i++) if (rs[i]) fs[i] = cr_powf(xs[i], ys[i]);
   return _mm256_loadu_ps(fs);
 }
+#else
+AVX2 __m256 _ZGVdN8vv_powf(__m256, __m256);
+#endif
 
 /* ---- float functions for LLVM main and llvm#223817 (2026-09-26) ----- */
 

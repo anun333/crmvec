@@ -47,7 +47,7 @@ jobs:
           make clean >/dev/null && make -j"$(nproc)" PORT=1 PORTCC=clang >/dev/null
           make PORT=1 PORTCC=clang check
           echo "PORT=1 (clang) | PORT=0 | glibc:"
-          ./bbench ./libmvec.so.1 /tmp/libmvec-port0.so.1 /usr/lib/x86_64-linux-gnu/libmvec.so.1 | grep -E '^(fn|exp|log|expf|exp2f|exp10f|sin|cos|tan|sinf|cosf|expm1f|coshf|sinhf|tanhf|erff|erfcf|logf|log2f|log10f) '
+          ./bbench ./libmvec.so.1 /tmp/libmvec-port0.so.1 /usr/lib/x86_64-linux-gnu/libmvec.so.1 | grep -E '^(fn|exp|log|expf|exp2f|exp10f|sin|cos|tan|sinf|cosf|expm1f|coshf|sinhf|tanhf|erff|erfcf|logf|log2f|log10f|powf) '
       - name: Keep check.log
         if: always()
         uses: actions/upload-artifact@v4
@@ -89,7 +89,7 @@ jobs:
           make clean >/dev/null && make -j"$(nproc)" PORT=1 >/dev/null
           make PORT=1 check
           echo "PORT=1 | PORT=0 | glibc:"
-          build-aarch64/nbench build-aarch64/libmvec.so.1 /tmp/libmvec-port0.so.1 /usr/lib/aarch64-linux-gnu/libmvec.so.1 | grep -E '^(fn|exp|log|expf|exp2f|exp10f|sin|cos|tan|sinf|cosf|expm1f|coshf|sinhf|tanhf|erff|erfcf|logf|log2f|log10f) '
+          build-aarch64/nbench build-aarch64/libmvec.so.1 /tmp/libmvec-port0.so.1 /usr/lib/aarch64-linux-gnu/libmvec.so.1 | grep -E '^(fn|exp|log|expf|exp2f|exp10f|sin|cos|tan|sinf|cosf|expm1f|coshf|sinhf|tanhf|erff|erfcf|logf|log2f|log10f|powf) '
       - name: Keep check.log
         if: always()
         uses: actions/upload-artifact@v4

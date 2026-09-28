@@ -16,6 +16,7 @@
 #include "port-hypf.h"
 #include "port-erff.h"
 #include "port-logf.h"
+#include "port-powf.h"
 #include <arm_neon.h>
 
 #define EXPORT __attribute__((visibility("default"), aarch64_vector_pcs))
@@ -132,3 +133,23 @@ EXPORT __typeof__(_ZGVnN4v_logf) _ZGVnN4v___logf_finite __attribute__((alias("_Z
 EXPORT __typeof__(_ZGVnN4v_logf) _ZGVnN4v_logf_u35 __attribute__((alias("_ZGVnN4v_logf")));
 EXPORT __typeof__(_ZGVnN4v_log2f) _ZGVnN4v_log2f_u35 __attribute__((alias("_ZGVnN4v_log2f")));
 EXPORT __typeof__(_ZGVnN4v_log10f) _ZGVnN4v___log10f_finite __attribute__((alias("_ZGVnN4v_log10f")));
+
+/* powf (port-powf.h): two arguments, 4 lanes and 2 padded to 4 */
+EXPORT float32x4_t _ZGVnN4vv_powf(float32x4_t x, float32x4_t y)
+{
+  if (__builtin_expect(crm_rn_a64(), 1)) return (float32x4_t)port_powf((vf)x, (vf)y);
+  return (float32x4_t){cr_powf(x[0], y[0]), cr_powf(x[1], y[1]), cr_powf(x[2], y[2]), cr_powf(x[3], y[3])};
+}
+EXPORT float32x2_t _ZGVnN2vv_powf(float32x2_t x, float32x2_t y)
+{
+  float32x4_t r = _ZGVnN4vv_powf(vcombine_f32(x, x), vcombine_f32(y, y)); return vget_low_f32(r);
+}
+HIDDEN void crm_blk_powf(float *a, const float *b)
+{
+  vf x0, x1, y0, y1; memcpy(&x0, a, 16); memcpy(&x1, a + 4, 16); memcpy(&y0, b, 16); memcpy(&y1, b + 4, 16);
+  if (__builtin_expect(crm_rn_a64(), 1)) { x0 = port_powf(x0, y0); x1 = port_powf(x1, y1); }
+  else for (int i = 0; i < 4; i++) { x0[i] = cr_powf(x0[i], y0[i]); x1[i] = cr_powf(x1[i], y1[i]); }
+  memcpy(a, &x0, 16); memcpy(a + 4, &x1, 16);
+}
+EXPORT __typeof__(_ZGVnN4vv_powf) _ZGVnN4vv___powf_finite __attribute__((alias("_ZGVnN4vv_powf")));
+EXPORT __typeof__(_ZGVnN4vv_powf) _ZGVnN4vv_fastpowf_u3500 __attribute__((alias("_ZGVnN4vv_powf")));

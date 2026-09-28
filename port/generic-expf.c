@@ -14,6 +14,8 @@
                                                (sinf, cosf: port-sinf.h; the hyperbolic four:
                                                port-hypf.h; erff, erfcf: port-erff.h; the log family:
                                                port-logf.h; all added 2026-09-28)
+     generic-expf verify2 [N]                  powf on N random pairs of five kinds
+                                               (port-powf.h)
      generic-expf time [LIB...]                ns per element (expf), memory-bound,
                                                against the _ZGV expf entry points
                                                of the libraries given */
@@ -34,6 +36,7 @@
 #include "port-hypf.h"
 #include "port-erff.h"
 #include "port-logf.h"
+#include "port-powf.h"
 
 __attribute__((noinline)) vf gexpf(vf x) { return port_expf(x); }
 __attribute__((noinline)) vf gexp2f(vf x) { return port_exp2f(x); }
@@ -49,6 +52,7 @@ __attribute__((noinline)) vf gerfcf(vf x) { return port_erfcf(x); }
 __attribute__((noinline)) vf glogf(vf x) { return port_logf(x); }
 __attribute__((noinline)) vf glog2f(vf x) { return port_log2f(x); }
 __attribute__((noinline)) vf glog10f(vf x) { return port_log10f(x); }
+__attribute__((noinline)) vf gpowf(vf x, vf y) { return port_powf(x, y); }
 
 #ifdef GUARD
 /* the shipped entry point's shape, for a fair time: crmvec's two-add
@@ -99,6 +103,34 @@ int main(int argc, char **argv)
     }
     printf("%s VB=%d (%d lanes): %lu of 2^32 differ from cr_%s%s\n", fn, VB, NF, bad, fn, bad ? "" : " -- CORRECTLY ROUNDED on every input");
     if (bad) printf("first differing input: 0x%08lx\n", first - 1);
+    return bad != 0;
+  }
+  if (argc > 1 && !strcmp(argv[1], "verify2")) {   /* powf on random pairs of five kinds */
+    long n = argc > 2 ? atol(argv[2]) : 1L << 26;
+    unsigned long bad = 0, tot = 0;
+    for (int kind = 0; kind < 5; kind++) {
+      unsigned long kb = 0;
+#pragma omp parallel for reduction(+ : kb) schedule(static, 64)
+      for (long blk = 0; blk < n / NF; blk++) {
+        uint64_t s = 0x9e3779b97f4a7c15ULL ^ ((uint64_t)kind << 56) ^ (uint64_t)blk * 0x2545F4914F6CDD1DULL;
+        vf x, y;
+        for (int i = 0; i < NF; i++) {
+          s ^= s << 13; s ^= s >> 7; s ^= s << 17;
+          uint32_t a = (uint32_t)s, b = (uint32_t)(s >> 32); float fa, fb;
+          if (kind == 0) { a = 0x00800000u + a % (0x7f000000u); memcpy(&fa, &a, 4); fb = (float)((int32_t)b) * 0x1p-27f; }   /* x > 0 any, y in [-16,16] */
+          else if (kind == 1) { fa = (float)(a >> 8) * 0x1p-22f; fb = (float)((int32_t)b) * 0x1p-26f; }                      /* x in (0,4), y in [-32,32] */
+          else if (kind == 2) { fa = -(float)(a >> 8) * 0x1p-20f; fb = (float)((int32_t)b >> 24); }                          /* x < 0, y integer */
+          else if (kind == 3) { fa = 1.0f + (float)((int32_t)a) * 0x1p-43f; fb = (float)((int32_t)b) * 0x1p-9f; }             /* x near 1, |y| large */
+          else { memcpy(&fa, &a, 4); memcpy(&fb, &b, 4); }                                                                   /* any bits */
+          x[i] = fa; y[i] = fb;
+        }
+        vf r = gpowf(x, y); float ra[NF], xa[NF], ya[NF]; memcpy(ra, &r, VB); memcpy(xa, &x, VB); memcpy(ya, &y, VB);
+        for (int i = 0; i < NF; i++) { float w = cr_powf(xa[i], ya[i]); if (memcmp(&w, &ra[i], 4) && !(isnan(w) && isnan(ra[i]))) kb++; }
+      }
+      printf("  kind %d: %lu of %ld differ\n", kind, kb, n / NF * NF);
+      bad += kb; tot += n / NF * NF;
+    }
+    printf("powf VB=%d (%d lanes): %lu of %lu differ from cr_powf%s\n", VB, NF, bad, tot, bad ? "" : " -- IDENTICAL on every input tried");
     return bad != 0;
   }
   if (argc > 1 && !strcmp(argv[1], "time")) {
