@@ -117,14 +117,29 @@ when it compiles a kernel, so with this directory first on
 with no PoCL change and no rebuild. That holds for the 16 functions PoCL
 hands to the vectorizer: `sin` `cos` `tan` `exp` `log` `pow` `exp2` `exp10`
 `log2` `log10` `asin` `acos` `atan` `sinh` `cosh` `tanh` (the last six need an
-LLVM with the rows of #223817). PoCL computes the other ten itself and never
-calls `libmvec` for them. And it reaches a kernel only where PoCL vectorizes
-the call: where the work-item loop stays scalar, PoCL keeps its own
-builtins. In a test kernel that calls 36 different functions, whose loop
-mostly stays scalar, 47 of its 76 outputs came from this library
-(2026-09-27). Programs vectorized by gcc or clang against `libmvec` pick up
-the library the same way, under the same condition: only calls the compiler
-vectorized reach it.
+LLVM with the rows of #223817). PoCL never calls `libmvec` for the other
+ten.
+
+It reaches a kernel only where PoCL vectorizes the call. Where the
+work-item loop stays scalar, the call goes to the system's scalar libm
+instead: PoCL swaps its builtins for libm calls so that the vectorizer can
+find them. That covers the 16 except `exp` and `log`, and eight of the
+other ten. Measured 2026-09-27:
+- **The 36-call test kernel:** its loop mostly stays scalar, and 47 of its
+  76 outputs came from this library.
+- **The work-group size changes results.** Kernels with a single call,
+  through PoCL with this library, gave the same results at work-group
+  sizes 8, 13, 16 and 20, and different ones at size 1, where nothing is
+  vectorized: 1.9% of results, glibc 2.39's libm against this library.
+- **With glibc's `libmvec` it is worse:** sizes 1, 2 and 13 change about a
+  quarter of the results, and a group of 20 changes its last four
+  positions, the scalar remainder.
+- **Only a correctly rounded kernel library** (PoCL's builtins replaced by
+  CORE-MATH's) gave the same results at every size tried.
+
+Programs vectorized by gcc or clang against `libmvec` pick up the library
+the same way, under the same condition: only calls the compiler vectorized
+reach it.
 
 ### Your own code, without `-ffast-math`
 
