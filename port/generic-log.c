@@ -21,52 +21,11 @@
 #include <stdlib.h>
 #include <time.h>
 #include "portable.h"
-#include "../crmvec-rows-tab.h"   /* LOG_ROW: {LOG_INVERSE, LOG_INV[i][0], LOG_INV[i][1], 0} */
 
-double cr_log(double);
 
-#ifndef LOG_ERR
-#define LOG_ERR 0x1.b6p-69   /* CORE-MATH's proven bound */
-#endif
+#include "port-log.h"
 
-__attribute__((noinline, cold)) static vd finish(vd x, vd y, vl bad)
-{
-  for (int i = 0; i < ND; i++) if (bad[i]) y[i] = cr_log(x[i]);
-  return y;
-}
-
-__attribute__((noinline)) vd glog(vd x)
-{
-  const vl MANT = splatl(0xfffffffffffffLL);
-  vl u = (vl)x;
-  vl ok = (u > splatl(0x000fffffffffffffLL)) & (u < splatl(0x7ff0000000000000LL));   /* normal, positive, finite */
-  u = (vl)seld_v(ok, (vd)u, splatd(1.0));                                            /* others: 1, recomputed */
-  vl m = (u & MANT) | splatl(1LL << 52);
-  vl c = m > splatl(0x16a09e667f3bcdLL - 1);                                         /* -1 if x > sqrt 2 */
-  vl idx = (m >> (splatl(43) - c)) - splatl(362);                                    /* i - OFFSET */
-  vd vfr = (vd)((u & MANT) | splatl(0x3ff0000000000000LL));
-  vd y = seld_v(c, vfr * splatd(0.5), vfr);
-  vl e = ((u >> 52) - splatl(0x3ff)) - c;
-  vd ee = cvtld_v(e);                                                                /* (double) e, exact */
-  vd r, l1, l2;
-  rows3d(LOG_ROW, idx, &r, &l1, &l2);
-  vd z = fmad_v(r, y, splatd(-1.0));                                                 /* exact */
-  vd z2 = z * z;
-  vd p45 = fmad_v(splatd(-0x1.55362255e0f63p-3), z, splatd(0x1.999a14758b084p-3));
-  vd p23 = fmad_v(splatd(-0x1.0000000537df6p-2), z, splatd(0x1.555555554f4d8p-2));
-  vd ph = fmad_v(p45, z2, p23);
-  ph = fmad_v(ph, z, splatd(-0x1.ffffffffffffap-2));
-  ph = ph * z2;
-  vd a = fmad_v(ee, splatd(0x1.62e42fefa38p-1), l1);                                 /* fast_two_sum(h, l, a, z) */
-  vd h = a + z;
-  vd l = z - (h - a);
-  l = ph + (l + l2);
-  l = fmad_v(ee, splatd(0x1.ef35793c7673p-45), l);
-  vd left = h + (l - splatd(LOG_ERR)), right = h + (l + splatd(LOG_ERR));
-  vl bad = (left != right) | ~ok;
-  if (__builtin_expect(!anyl(bad), 1)) return left;
-  return finish(x, left, bad);
-}
+__attribute__((noinline)) vd glog(vd x) { return port_log(x); }
 
 #ifdef GUARD
 /* the shipped entry point's shape, for a fair time: crmvec's two-add
@@ -144,6 +103,19 @@ int main(int argc, char **argv)
       for (int p = 0; p < 8; p++) { double t0 = now();
         if (VB == 32) { __m256d (*g)(__m256d) = f; for (long i = 0; i < N; i += 4) _mm256_storeu_pd(y + i, g(_mm256_loadu_pd(x + i))); }
         else if (VB == 16) { __m128d (*g)(__m128d) = f; for (long i = 0; i < N; i += 2) _mm_storeu_pd(y + i, g(_mm_loadu_pd(x + i))); }
+        __asm__ volatile("" ::: "memory"); double t = now() - t0; if (p && t < best) best = t; }
+      printf("%-21.21s %8.3f ns/elem\n", strrchr(argv[l], '/') ? strrchr(argv[l], '/') + 1 : argv[l], best / N * 1e9);
+    }
+#elif defined(__aarch64__) && !defined(__clang__)
+    /* the AdvSIMD entry point (2 doubles), through the vector calling convention */
+    typedef __attribute__((aarch64_vector_pcs)) float64x2_t (*nf)(float64x2_t);
+    for (int l = 2; l < argc; l++) {
+      void *h = dlopen(argv[l], RTLD_NOW | RTLD_LOCAL); if (!h) { printf("VOID: %s\n", dlerror()); continue; }
+      void *f = dlsym(h, "_ZGVnN2v_log");
+      if (!f) { printf("%s: no _ZGVnN2v_log\n", argv[l]); continue; }
+      best = 1e9;
+      for (int p = 0; p < 8; p++) { double t0 = now();
+        for (long i = 0; i < N; i += 2) vst1q_f64(y + i, ((nf)f)(vld1q_f64(x + i)));
         __asm__ volatile("" ::: "memory"); double t = now() - t0; if (p && t < best) best = t; }
       printf("%-21.21s %8.3f ns/elem\n", strrchr(argv[l], '/') ? strrchr(argv[l], '/') + 1 : argv[l], best / N * 1e9);
     }

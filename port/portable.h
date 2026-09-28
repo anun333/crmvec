@@ -138,8 +138,10 @@ PORT_INLINE void rows2d(const double (*T)[2], vl idx, vd *c0, vd *c1)
   typedef double d2 __attribute__((vector_size(16)));
   d2 r0, r1, r2, r3; int64_t ix[ND]; memcpy(ix, &idx, VB);
   memcpy(&r0, T[ix[0]], 16); memcpy(&r1, T[ix[1]], 16); memcpy(&r2, T[ix[2]], 16); memcpy(&r3, T[ix[3]], 16);
-  vd a = __builtin_shufflevector(r0, r1, 0, 1, 2, 3), b = __builtin_shufflevector(r2, r3, 0, 1, 2, 3);
-  *c0 = __builtin_shufflevector(a, b, 0, 2, 4, 6); *c1 = __builtin_shufflevector(a, b, 1, 3, 5, 7);
+  /* rows 0 and 2 in one register, 1 and 3 in the other, so that one
+     in-lane unpack gives each column in lane order (crmvec's rows2) */
+  vd a = __builtin_shufflevector(r0, r2, 0, 1, 2, 3), b = __builtin_shufflevector(r1, r3, 0, 1, 2, 3);
+  *c0 = __builtin_shufflevector(a, b, 0, 4, 2, 6); *c1 = __builtin_shufflevector(a, b, 1, 5, 3, 7);
 #elif !defined(PORT_ROWS_LANES) && ND == 2
   vd r0, r1; int64_t ix[ND]; memcpy(ix, &idx, VB);
   memcpy(&r0, T[ix[0]], 16); memcpy(&r1, T[ix[1]], 16);

@@ -18,45 +18,11 @@
 #include <stdlib.h>
 #include <time.h>
 #include "portable.h"
-#include "../crmvec-exp-tab.h"   /* EXP_T0, EXP_T1: {lo, hi} rows */
 
-double cr_exp(double);
 
-#ifndef EXP_EPS
-#define EXP_EPS 1.64e-19   /* CORE-MATH's proven bound */
-#endif
+#include "port-exp.h"
 
-__attribute__((noinline, cold)) static vd finish(vd x, vd y, vl bad)
-{
-  for (int i = 0; i < ND; i++) if (bad[i]) y[i] = cr_exp(x[i]);
-  return y;
-}
-
-__attribute__((noinline)) vd gexp(vd x)
-{
-  vd ax = (vd)((vl)x & splatl(0x7fffffffffffffffLL));
-  vl ok = (x >= splatd(-0x1.6232bdd7abcd2p+9)) & (ax < splatd(0x1.62e42fefa39fp+9));
-  vd xs = seld_v(ok, x, splatd(0.0));                                          /* others: 0, recomputed */
-  vd t = roundd_v(xs * splatd(0x1.71547652b82fep+12));
-  vl jb = (vl)(t + splatd(0x1.8p52));                                          /* low 52 bits: 2^51 + jt */
-  vl i1 = jb & splatl(0x3f), i0 = (jb >> 6) & splatl(0x3f);
-  vd t0l, t0h, t1l, t1h;
-  rows2d(EXP_T0, i0, &t0l, &t0h);
-  rows2d(EXP_T1, i1, &t1l, &t1h);
-  /* muldd(t0h, t0l, t1h, t1l, &tl) */
-  vd th = t1h * t0h;
-  vd tl = ((t1h * t0l) + (t1l * t0h)) + fmad_v(t1h, t0h, -th);
-  vd dx = (xs - splatd(0x1.62e42ffp-13) * t) + splatd(0x1.718432a1b0e26p-47) * t;
-  vd dx2 = dx * dx;
-  vd p = (splatd(0x1p+0) + dx * splatd(0x1p-1)) + dx2 * (splatd(0x1.55555557e54ffp-3) + dx * splatd(0x1.55555553a12f4p-5));
-  vd fh = th, tx = th * dx, fl = tl + tx * p;
-  vd ub = fh + (fl + splatd(EXP_EPS)), lb = fh + (fl - splatd(EXP_EPS));
-  vl bad = (ub != lb) | ~ok;
-  vl sh = ((jb & splatl(0xfffffffffffffLL)) >> 12) << 52;                      /* as_ldexp(lb, jt >> 12) */
-  vd y = (vd)((vl)lb + sh);
-  if (__builtin_expect(!anyl(bad), 1)) return y;
-  return finish(x, y, bad);
-}
+__attribute__((noinline)) vd gexp(vd x) { return port_exp(x); }
 
 #ifdef GUARD
 /* the shipped entry point's shape, for a fair time: crmvec's two-add
@@ -134,6 +100,19 @@ int main(int argc, char **argv)
       for (int p = 0; p < 8; p++) { double t0 = now();
         if (VB == 32) { __m256d (*g)(__m256d) = f; for (long i = 0; i < N; i += 4) _mm256_storeu_pd(y + i, g(_mm256_loadu_pd(x + i))); }
         else if (VB == 16) { __m128d (*g)(__m128d) = f; for (long i = 0; i < N; i += 2) _mm_storeu_pd(y + i, g(_mm_loadu_pd(x + i))); }
+        __asm__ volatile("" ::: "memory"); double t = now() - t0; if (p && t < best) best = t; }
+      printf("%-21.21s %8.3f ns/elem\n", strrchr(argv[l], '/') ? strrchr(argv[l], '/') + 1 : argv[l], best / N * 1e9);
+    }
+#elif defined(__aarch64__) && !defined(__clang__)
+    /* the AdvSIMD entry point (2 doubles), through the vector calling convention */
+    typedef __attribute__((aarch64_vector_pcs)) float64x2_t (*nf)(float64x2_t);
+    for (int l = 2; l < argc; l++) {
+      void *h = dlopen(argv[l], RTLD_NOW | RTLD_LOCAL); if (!h) { printf("VOID: %s\n", dlerror()); continue; }
+      void *f = dlsym(h, "_ZGVnN2v_exp");
+      if (!f) { printf("%s: no _ZGVnN2v_exp\n", argv[l]); continue; }
+      best = 1e9;
+      for (int p = 0; p < 8; p++) { double t0 = now();
+        for (long i = 0; i < N; i += 2) vst1q_f64(y + i, ((nf)f)(vld1q_f64(x + i)));
         __asm__ volatile("" ::: "memory"); double t = now() - t0; if (p && t < best) best = t; }
       printf("%-21.21s %8.3f ns/elem\n", strrchr(argv[l], '/') ? strrchr(argv[l], '/') + 1 : argv[l], best / N * 1e9);
     }

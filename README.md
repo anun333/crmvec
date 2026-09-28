@@ -410,8 +410,9 @@ result, so they are replaced by C's `fma` per lane. The version Ubuntu 24.04
 ships (0.7.2) also has a `_mm_testz_si128` that is wrong on riscv64, fixed
 in SIMDe 0.8.2.
 
-Checked under `qemu-aarch64` (it times nothing, so there are no speed
-figures for aarch64):
+Checked under `qemu-aarch64`, and natively on a Neoverse N2 (GitHub's arm64
+runner, where `make check` passes: every entry point sampled, 4.9 million
+results, 0 differ from CORE-MATH):
 ```
 make aarch64
 qemu-aarch64 -cpu max,sve-default-vector-length=64 build-aarch64/aarch64-check sample   # every entry point, three input sets
@@ -433,6 +434,15 @@ library's symbols are unversioned; it binds them anyway. On riscv64 the
 same core gives the same bits (`port/port-build.sh`), but glibc has no
 riscv64 `libmvec` to stand in for.
 
+**It is slow on aarch64.** On the Neoverse N2 (`nbench`, 2026-09-28, a
+shared runner), the AdvSIMD entry points take 28 to 543 ns per element
+against 0.7 to 6 for glibc's: `expf` 89 against 1.0, `log` 84 against 2.4.
+Over the 30 functions glibc also has, that is 12 to 122 times slower
+(median 36), where on x86 the gap is about 3.3.
+The vector code reaches aarch64 through SIMDe, emulating 256-bit AVX2 on
+128-bit NEON. That is the likely cause, not yet measured. The portable
+core below is meant to replace this path.
+
 ### Toward one portable source (work in progress)
 
 On aarch64 and riscv64 the vector code above comes through SIMDe, which is
@@ -450,13 +460,30 @@ library yet.
     emulation on AVX-512, NEON, SVE and RVV.
 - **Vector code on each:** the compiled objects show vector FMAs on every
   target (vector-length-specific builds, e.g. 256-bit SVE and RVV).
-- **Speed, AVX2 on Zen 3, rounding-mode check included, ns per element:**
+- **Speed, AVX2 on Zen 3, rounding-mode check included, ns per element**
+  (the library as built from this tree):
 
   | | `log` | `exp` |
   |---|---|---|
-  | this library's hand-written intrinsics | 3.05 | 3.32 |
-  | portable, built by gcc | 2.99 | 3.51 (3.40 with per-lane row loads) |
-  | portable, built by clang | 2.50 | 2.50 |
+  | this library's hand-written intrinsics | 2.89-2.94 | 2.80-2.82 |
+  | portable, built by gcc | 2.98 | 3.10-3.12 |
+  | portable, built by clang | 2.49-2.50 | 2.51 |
+
+  An earlier version of this table compared against a build of this
+  library from 2026-09-26, which was slower (3.05 and 3.32).
+- **On aarch64 the gap is the point:** on a Neoverse N2 (GitHub's arm64
+  runner) this library's AdvSIMD entry points, which go through SIMDe, are
+  12 to 122 times slower than glibc's (median 36). The portable
+  core's NEON builds are native vector code; CI times them on the same
+  runner.
+
+**Inside the library, as a prototype:** `make PORT=1` builds
+`libmvec.so.1` with the double `log` and `exp` taken from the portable core
+(`port/crmvec-port.c`) instead of the intrinsics; their SSE2, AVX and
+AVX-512 entry points follow, since they call the AVX2 core.
+`make PORT=1 PORTCC=clang` builds that file with clang: it is compiled for
+AVX2 as a whole, so clang's ABI problem (Limits) does not arise. `make
+check` passes on both builds. Switching needs `make clean` first.
 
 ```
 gcc -O2 -ffp-contract=off -frounding-math -c log/log.c -o cr_log.o

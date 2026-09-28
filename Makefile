@@ -81,18 +81,28 @@ headercheck: crmvec.h crmvec-f16.c crmvec-scalar.c
 	$(CC) -fsyntax-only -Wall -include crmvec.h crmvec-scalar.c
 	@grep -q '"$(VERSION)"' crmvec.h || { echo "crmvec.h's CRMVEC_VERSION is not $(VERSION)"; exit 1; }
 
-crmvec.o: crmvec.c $(HDR)
-	$(CC) $(CFLAGS) $(FPV) -fPIC -c -o $@ crmvec.c
+# PORT=1 (a prototype, 2026-09-27 night): double log and exp come from the
+# portable core (port/crmvec-port.c, built with PORTCC, gcc or clang)
+# instead of crmvec.c's intrinsics. Switching needs `make clean`: the objects
+# do not record which way they were built.
+PORT    ?= 0
+PORTCC  ?= $(CC)
+PORTOBJ := $(if $(filter 1,$(PORT)),crmvec-port.o)
+crmvec-port.o: port/crmvec-port.c port/portable.h port/port-log.h port/port-exp.h crmvec-rows-tab.h crmvec-exp-tab.h
+	$(PORTCC) -O3 -ffp-contract=off -mavx2 -mfma -fPIC -c -o $@ port/crmvec-port.c
+
+crmvec.o: crmvec.c $(HDR) $(PORTOBJ)
+	$(CC) $(CFLAGS) $(FPV) -DCRMVEC_PORT=$(PORT) -fPIC -c -o $@ crmvec.c
 
 # for the checks built with -mavx2 (crtest, hypot-midpoints), as before
-crmvec-avx2.o: crmvec.c $(HDR)
-	$(CC) $(CFLAGS) $(FPV) -mavx2 -mfma -c -o $@ crmvec.c
+crmvec-avx2.o: crmvec.c $(HDR) $(PORTOBJ)
+	$(CC) $(CFLAGS) $(FPV) -DCRMVEC_PORT=$(PORT) -mavx2 -mfma -c -o $@ crmvec.c
 
 libmvec.so.1: crmvec.o $(LIBC) $(HDR) $(CR) libcrf16.a crmvec-exports.map
-	$(CC) $(CFLAGS) $(FP) -fPIC -shared -Wl,-soname,libmvec.so.1 -Wl,--version-script=crmvec-exports.map -o $@ crmvec.o $(LIBC) $(CR) libcrf16.a -lm
+	$(CC) $(CFLAGS) $(FP) -fPIC -shared -Wl,-soname,libmvec.so.1 -Wl,--version-script=crmvec-exports.map -o $@ crmvec.o $(PORTOBJ) $(LIBC) $(CR) libcrf16.a -lm
 
 crtest: crtest.c crtest-hard.h crmvec-avx2.o $(LIBC) $(HDR) $(CR) libcrf16.a
-	$(CC) $(CFLAGS) $(FP) -mavx2 -mfma -fopenmp -o $@ crtest.c crmvec-avx2.o $(LIBC) $(CR) libcrf16.a -lm -ldl
+	$(CC) $(CFLAGS) $(FP) -mavx2 -mfma -fopenmp -o $@ crtest.c crmvec-avx2.o $(PORTOBJ) $(LIBC) $(CR) libcrf16.a -lm -ldl
 
 libcrref.so: crref.c crmvec-scalar.c crmvec-pownf-tab.h $(CR)
 	$(CC) $(CFLAGS) $(FP) -fPIC -shared -fopenmp -o $@ crref.c crmvec-scalar.c $(CR) -lm
@@ -102,12 +112,12 @@ bcheck: bcheck.c
 	$(CC) $(CFLAGS) -o $@ bcheck.c -ldl -lm
 
 hypot-midpoints: hypot-midpoints.c crmvec-avx2.o $(LIBC) $(HDR) $(CR) libcrf16.a
-	$(CC) $(CFLAGS) $(FP) -mavx2 -mfma -o $@ hypot-midpoints.c crmvec-avx2.o $(LIBC) $(CR) libcrf16.a -lm
+	$(CC) $(CFLAGS) $(FP) -mavx2 -mfma -o $@ hypot-midpoints.c crmvec-avx2.o $(PORTOBJ) $(LIBC) $(CR) libcrf16.a -lm
 
 # hypotf on float pairs within 2^-50 of a midpoint, found by search (random
 # pairs never get there); a build with -DFBR_SCALE=0 must differ
 hypotf-midpoints: hypotf-midpoints.c crmvec-avx2.o $(LIBC) $(HDR) $(CR) libcrf16.a
-	$(CC) $(CFLAGS) $(FP) -mavx2 -mfma -fopenmp -o $@ hypotf-midpoints.c crmvec-avx2.o $(LIBC) $(CR) libcrf16.a -lm
+	$(CC) $(CFLAGS) $(FP) -mavx2 -mfma -fopenmp -o $@ hypotf-midpoints.c crmvec-avx2.o $(PORTOBJ) $(LIBC) $(CR) libcrf16.a -lm
 
 # the float functions of crmvec-lanes.h with vector code, on every input
 lcheck: lcheck.c
@@ -143,9 +153,9 @@ pownf-search: pownf-search.c crmvec-pownf-tab.h $(PWS)
 	$(CC) $(CFLAGS) $(FP) -fopenmp -o $@ pownf-search.c $(PWS) -lmpfr -lm
 
 # cr_tan renamed to a counter inside crmvec.c only, to see which lanes go to it
-tan-poles: tan-poles.c tan-poles.h $(LIB) $(HDR) $(CR) libcrf16.a
-	$(CC) $(CFLAGS) $(FPV) -mavx2 -mfma -Dcr_tan=cnt_tan -c -o tan-poles-crmvec.o crmvec.c
-	$(CC) $(CFLAGS) $(FP) -mavx2 -mfma -o $@ tan-poles.c tan-poles-crmvec.o crmvec-scalar.c crmvec-f16.c $(CR) libcrf16.a -lm
+tan-poles: tan-poles.c tan-poles.h $(LIB) $(HDR) $(CR) libcrf16.a $(PORTOBJ)
+	$(CC) $(CFLAGS) $(FPV) -DCRMVEC_PORT=$(PORT) -mavx2 -mfma -Dcr_tan=cnt_tan -c -o tan-poles-crmvec.o crmvec.c
+	$(CC) $(CFLAGS) $(FP) -mavx2 -mfma -o $@ tan-poles.c tan-poles-crmvec.o $(PORTOBJ) crmvec-scalar.c crmvec-f16.c $(CR) libcrf16.a -lm
 	rm -f tan-poles-crmvec.o
 # aarch64 (cross-built; checked under qemu-user): the same vector code, with
 # SIMDe standing in for the x86 intrinsics (crmvec-simde.h; libsimde-dev):
@@ -194,7 +204,7 @@ sleef-exports: $(A64)/libsleefgnuabi.so.3
 	 test ! -s $(A64)/missing.txt && test ! -s $(A64)/no-vpcs.txt
 
 clean:
-	rm -f check.log libmvec.so.1 crmvec.o crmvec-avx2.o crtest libcrref.so bcheck hypot-midpoints hypotf-midpoints tan-poles bbench ebench mpfrcheck pownf-search libcrf16.a f16check cecheck lcheck
+	rm -f check.log libmvec.so.1 crmvec.o crmvec-avx2.o crmvec-port.o crtest libcrref.so bcheck hypot-midpoints hypotf-midpoints tan-poles bbench ebench mpfrcheck pownf-search libcrf16.a f16check cecheck lcheck
 	rm -rf $(A64) build-sleef build-f16
 
 # a few minutes of the checks, for users and packagers (the full list is the

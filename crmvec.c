@@ -32,6 +32,9 @@
 
    cr_* are CORE-MATH's own C files (MIT), compiled alongside. */
 #if defined(__x86_64__) || defined(__i386__)
+#ifndef CRMVEC_PORT
+#define CRMVEC_PORT 0   /* 1: double log and exp from the portable core (port/crmvec-port.c) */
+#endif
 #include <immintrin.h>
 #else
 #include "crmvec-simde.h"   /* the same intrinsics, portable (aarch64, riscv64) */
@@ -3332,6 +3335,7 @@ DOUBLE_FAST(atanh, atanh_fast, cr_atanh)
 DOUBLE_FAST(erf, erf_fast, cr_erf)
 DOUBLE_FAST(erfc, erfc_fast, cr_erfc)
 
+#if !CRMVEC_PORT   /* with PORT=1, port/crmvec-port.c supplies it */
 AVX2 __m256d _ZGVdN4v_exp(__m256d x)
 {
   __m256d redo, y = exp_fast(x, &redo);
@@ -3342,6 +3346,9 @@ AVX2 __m256d _ZGVdN4v_exp(__m256d x)
   for (int i = 0; i < 4; i++) if (m >> i & 1) ys[i] = cr_exp(xs[i]);
   return _mm256_loadu_pd(ys);
 }
+#else
+AVX2 __m256d _ZGVdN4v_exp(__m256d);
+#endif
 
 
 /* ---- double log (added 2026-09-26) ----------------------------------- */
@@ -3403,6 +3410,7 @@ AVX2I static inline __m256d log_fast(__m256d x, __m256d *redo)
   return left;
 }
 
+#if !CRMVEC_PORT   /* with PORT=1, port/crmvec-port.c supplies it */
 AVX2 __m256d _ZGVdN4v_log(__m256d x)
 {
   __m256d redo, y = log_fast(x, &redo);
@@ -3413,6 +3421,9 @@ AVX2 __m256d _ZGVdN4v_log(__m256d x)
   for (int i = 0; i < 4; i++) if (m >> i & 1) ys[i] = cr_log(xs[i]);
   return _mm256_loadu_pd(ys);
 }
+#else
+AVX2 __m256d _ZGVdN4v_log(__m256d);
+#endif
 
 /* ---- double sin and cos (added 2026-09-26) ------------------------- */
 

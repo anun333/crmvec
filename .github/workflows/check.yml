@@ -28,6 +28,19 @@ jobs:
         run: ./ebench ./libmvec.so.1 /usr/lib/x86_64-linux-gnu/libmvec.so.1 || echo "no AVX-512 on this runner"
       - name: The AVX-512 entry points against CORE-MATH, where the runner has AVX-512
         run: if grep -qw avx512f /proc/cpuinfo; then ./cecheck e . 16; else echo "no AVX-512 on this runner"; fi
+      - name: The portable core (port/), checked and timed on this CPU (gcc and clang)
+        run: |
+          gcc -O2 -ffp-contract=off -frounding-math -c -o cr_log.o log/log.c
+          gcc -O2 -ffp-contract=off -frounding-math -c -o cr_exp.o exp.c
+          for f in log exp; do
+            gcc -O3 -ffp-contract=off -fno-math-errno -fopenmp -mavx2 -mfma -DVB=32 -o g$f port/generic-$f.c cr_$f.o -ldl -lm
+            gcc -O3 -ffp-contract=off -fno-math-errno -mavx2 -mfma -DVB=32 -DGUARD -o g$f-guard port/generic-$f.c cr_$f.o -ldl -lm
+            clang -O3 -ffp-contract=off -fno-math-errno -mavx2 -mfma -DVB=32 -DGUARD -o g$f-clang port/generic-$f.c cr_$f.o -ldl -lm
+            ./g$f verify 4194304 | tail -1
+            echo "$f (portable, with the rounding-mode check as shipped) against this library and glibc:"
+            ./g$f-guard time ./libmvec.so.1 /usr/lib/x86_64-linux-gnu/libmvec.so.1
+            ./g$f-clang time | sed 's/^generic/clang  /'
+          done
       - name: Keep check.log
         if: always()
         uses: actions/upload-artifact@v4
@@ -49,6 +62,20 @@ jobs:
         run: make check
       - name: Speed of the AdvSIMD entry points (a shared runner, so noisy)
         run: build-aarch64/nbench build-aarch64/libmvec.so.1 /usr/lib/aarch64-linux-gnu/libmvec.so.1
+      - name: The portable core (port/), checked and timed on this CPU
+        run: |
+          gcc -O2 -ffp-contract=off -frounding-math -c -o cr_log.o log/log.c
+          gcc -O2 -ffp-contract=off -frounding-math -c -o cr_exp.o exp.c
+          for f in log exp; do
+            gcc -O3 -ffp-contract=off -fno-math-errno -fopenmp -DVB=16 -o g$f port/generic-$f.c cr_$f.o -ldl -lm
+            gcc -O3 -ffp-contract=off -fno-math-errno -fopenmp -DVB=16 -march=armv8-a+sve -msve-vector-bits=128 -o g$f-sve port/generic-$f.c cr_$f.o -ldl -lm
+            ./g$f verify 4194304 | tail -1
+            ./g$f-sve verify 4194304 | tail -1
+            echo "$f, NEON build (the libraries' AdvSIMD entry points for comparison):"
+            ./g$f time build-aarch64/libmvec.so.1 /usr/lib/aarch64-linux-gnu/libmvec.so.1
+            echo "$f, SVE-128 build:"
+            ./g$f-sve time
+          done
       - name: Keep check.log
         if: always()
         uses: actions/upload-artifact@v4
