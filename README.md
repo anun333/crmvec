@@ -109,7 +109,7 @@ Packages, from this repository:
   and its library passes the checks.
 - **conda-forge** (`conda/recipe.yaml`): submitted as
   [staged-recipes#34976](https://github.com/conda-forge/staged-recipes/pull/34976)
-  (version 0.4.0), waiting for review.
+  (version 0.5.0), waiting for review.
 
 All of them build without link-time optimization, and run `make clean`
 first, so a source tree holding an earlier build cannot ship it. The checks have run on
