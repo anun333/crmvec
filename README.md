@@ -643,6 +643,11 @@ ones.
 - **clang 20:** `-fveclib=SLEEF` turns a loop over any of the 52 functions
   into a call to `Sleef_<f>dx_u10rvvm2` or `Sleef_<f>fx_u10rvvm2`, scalable
   at LMUL 2 (`u15` for `erfc`, `u05` for `hypot`).
+- **clang 22 and 23:** the same, except that loops over `fmod`, `modf` and
+  `sincos` call AArch64 names (`_ZGVsMxvv_fmod` and others), which no
+  riscv64 library defines, so those programs don't link, with this library
+  or SLEEF's
+  ([llvm#227119](https://github.com/llvm/llvm-project/issues/227119)).
 - **glibc** has no riscv64 `libmvec`.
 - **gcc 13** makes no vector clones on riscv64.
 
