@@ -199,4 +199,16 @@ PORT_INLINE void rows4d(const double (*T)[4], vl idx, vd *c0, vd *c1, vd *c2, vd
 #endif
 }
 
+/* sqrt, correctly rounded (IEEE): clang's elementwise builtin, or a lane
+   loop over the scalar builtin that gcc turns into one vector sqrt when
+   built with -fno-math-errno (the port files are) */
+PORT_INLINE vd sqrtd_v(vd a)
+{
+#if defined(__clang__)
+  return __builtin_elementwise_sqrt(a);
+#else
+  vd r; for (int i = 0; i < ND; i++) r[i] = __builtin_sqrt(a[i]); return r;
+#endif
+}
+
 #endif

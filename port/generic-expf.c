@@ -9,7 +9,7 @@
    disassembly, not the source).
 
      generic-expf verify [expf|exp2f|exp10f|sinf|cosf|expm1f|coshf|sinhf|tanhf|erff|erfcf|
-                                                logf|log2f|log10f]
+                                                logf|log2f|log10f|log1pf|asinhf|acoshf|atanhf]
                                                every float input against CORE-MATH
                                                (sinf, cosf: port-sinf.h; the hyperbolic four:
                                                port-hypf.h; erff, erfcf: port-erff.h; the log family:
@@ -37,6 +37,7 @@
 #include "port-erff.h"
 #include "port-logf.h"
 #include "port-powf.h"
+#include "port-log1pf.h"
 
 __attribute__((noinline)) vf gexpf(vf x) { return port_expf(x); }
 __attribute__((noinline)) vf gexp2f(vf x) { return port_exp2f(x); }
@@ -53,6 +54,10 @@ __attribute__((noinline)) vf glogf(vf x) { return port_logf(x); }
 __attribute__((noinline)) vf glog2f(vf x) { return port_log2f(x); }
 __attribute__((noinline)) vf glog10f(vf x) { return port_log10f(x); }
 __attribute__((noinline)) vf gpowf(vf x, vf y) { return port_powf(x, y); }
+__attribute__((noinline)) vf glog1pf(vf x) { return port_log1pf(x); }
+__attribute__((noinline)) vf gasinhf(vf x) { return port_asinhf(x); }
+__attribute__((noinline)) vf gacoshf(vf x) { return port_acoshf(x); }
+__attribute__((noinline)) vf gatanhf(vf x) { return port_atanhf(x); }
 
 #ifdef GUARD
 /* the shipped entry point's shape, for a fair time: crmvec's two-add
@@ -85,7 +90,8 @@ int main(int argc, char **argv)
       {"sinf", gsinf, cr_sinf}, {"cosf", gcosf, cr_cosf}, {"expm1f", gexpm1f, cr_expm1f},
       {"coshf", gcoshf, cr_coshf}, {"sinhf", gsinhf, cr_sinhf}, {"tanhf", gtanhf, cr_tanhf},
       {"erff", gerff, cr_erff}, {"erfcf", gerfcf, cr_erfcf}, {"logf", glogf, cr_logf},
-      {"log2f", glog2f, cr_log2f}, {"log10f", glog10f, cr_log10f}};
+      {"log2f", glog2f, cr_log2f}, {"log10f", glog10f, cr_log10f}, {"log1pf", glog1pf, cr_log1pf},
+      {"asinhf", gasinhf, cr_asinhf}, {"acoshf", gacoshf, cr_acoshf}, {"atanhf", gatanhf, cr_atanhf}};
     int t = 0; while (t < (int)(sizeof T / sizeof T[0]) - 1 && strcmp(T[t].n, fn)) t++;
     if (strcmp(T[t].n, fn)) { fprintf(stderr, "unknown function %s\n", fn); return 2; }
     vf (*g)(vf) = T[t].g; float (*cr)(float) = T[t].cr;

@@ -17,6 +17,7 @@
 #include "port-erff.h"
 #include "port-logf.h"
 #include "port-powf.h"
+#include "port-log1pf.h"
 #include <arm_neon.h>
 
 #define EXPORT __attribute__((visibility("default"), aarch64_vector_pcs))
@@ -94,6 +95,10 @@ PORT_F1(erfcf)
 PORT_F1(logf)
 PORT_F1(log2f)
 PORT_F1(log10f)
+PORT_F1(log1pf)
+PORT_F1(asinhf)
+PORT_F1(acoshf)
+PORT_F1(atanhf)
 EXPORT __typeof__(_ZGVnN4v_expf) _ZGVnN4v___expf_finite __attribute__((alias("_ZGVnN4v_expf")));
 EXPORT __typeof__(_ZGVnN4v_exp2f) _ZGVnN4v___exp2f_finite __attribute__((alias("_ZGVnN4v_exp2f")));
 EXPORT __typeof__(_ZGVnN4v_exp2f) _ZGVnN4v_exp2f_u35 __attribute__((alias("_ZGVnN4v_exp2f")));
@@ -153,3 +158,5 @@ HIDDEN void crm_blk_powf(float *a, const float *b)
 }
 EXPORT __typeof__(_ZGVnN4vv_powf) _ZGVnN4vv___powf_finite __attribute__((alias("_ZGVnN4vv_powf")));
 EXPORT __typeof__(_ZGVnN4vv_powf) _ZGVnN4vv_fastpowf_u3500 __attribute__((alias("_ZGVnN4vv_powf")));
+EXPORT __typeof__(_ZGVnN4v_acoshf) _ZGVnN4v___acoshf_finite __attribute__((alias("_ZGVnN4v_acoshf")));
+EXPORT __typeof__(_ZGVnN4v_atanhf) _ZGVnN4v___atanhf_finite __attribute__((alias("_ZGVnN4v_atanhf")));

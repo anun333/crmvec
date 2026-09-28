@@ -88,8 +88,8 @@ headercheck: crmvec.h crmvec-f16.c crmvec-scalar.c
 PORT    ?= 0
 PORTCC  ?= $(CC)
 PORTOBJ := $(if $(filter 1,$(PORT)),crmvec-port.o)
-crmvec-port.o: port/crmvec-port.c port/portable.h port/port-log.h port/port-exp.h port/port-expf.h port/port-sincos.h port/port-sinf.h port/port-hypf.h port/port-erff.h port/port-logf.h port/port-powf.h crmvec-powf-tab.h crmvec-erff-tab.h crmvec-erfcf-tab.h crmvec-rows-tab.h crmvec-exp-tab.h crmvec-sin-tab.h
-	$(PORTCC) -O3 -ffp-contract=off -mavx2 -mfma -fPIC -c -o $@ port/crmvec-port.c
+crmvec-port.o: port/crmvec-port.c port/portable.h port/port-log.h port/port-exp.h port/port-expf.h port/port-sincos.h port/port-sinf.h port/port-hypf.h port/port-erff.h port/port-logf.h port/port-powf.h port/port-log1pf.h crmvec-powf-tab.h crmvec-erff-tab.h crmvec-erfcf-tab.h crmvec-rows-tab.h crmvec-exp-tab.h crmvec-sin-tab.h
+	$(PORTCC) -O3 -ffp-contract=off -fno-math-errno -mavx2 -mfma -fPIC -c -o $@ port/crmvec-port.c
 
 crmvec.o: crmvec.c $(HDR) $(PORTOBJ)
 	$(CC) $(CFLAGS) $(FPV) -DCRMVEC_PORT=$(PORT) -fPIC -c -o $@ crmvec.c
@@ -155,7 +155,7 @@ pownf-search: pownf-search.c crmvec-pownf-tab.h $(PWS)
 # cr_tan renamed to a counter inside crmvec.c only, to see which lanes go to it
 tan-poles: tan-poles.c tan-poles.h $(LIB) $(HDR) $(CR) libcrf16.a $(PORTOBJ)
 	$(CC) $(CFLAGS) $(FPV) -DCRMVEC_PORT=$(PORT) -mavx2 -mfma -Dcr_tan=cnt_tan -c -o tan-poles-crmvec.o crmvec.c
-	$(if $(PORTOBJ),$(PORTCC) -O3 -ffp-contract=off -mavx2 -mfma -Dcr_tan=cnt_tan -c -o tan-poles-port.o port/crmvec-port.c)
+	$(if $(PORTOBJ),$(PORTCC) -O3 -ffp-contract=off -fno-math-errno -mavx2 -mfma -Dcr_tan=cnt_tan -c -o tan-poles-port.o port/crmvec-port.c)
 	$(CC) $(CFLAGS) $(FP) -mavx2 -mfma -o $@ tan-poles.c tan-poles-crmvec.o $(if $(PORTOBJ),tan-poles-port.o) crmvec-scalar.c crmvec-f16.c $(CR) libcrf16.a -lm
 	rm -f tan-poles-crmvec.o tan-poles-port.o
 # aarch64 (cross-built; checked under qemu-user): the same vector code, with
@@ -170,7 +170,7 @@ A64CC   := $(CC)
 else
 A64CC   ?= aarch64-linux-gnu-gcc
 endif
-A64SRC  := $(LIB) crmvec-aarch64.c crmvec-sve.c $(HDR) $(CR) $(if $(filter 1,$(PORT)),port/crmvec-port-a64.c port/portable.h port/port-log.h port/port-exp.h port/port-expf.h port/port-sincos.h port/port-sinf.h port/port-hypf.h port/port-erff.h port/port-logf.h port/port-powf.h)
+A64SRC  := $(LIB) crmvec-aarch64.c crmvec-sve.c $(HDR) $(CR) $(if $(filter 1,$(PORT)),port/crmvec-port-a64.c port/portable.h port/port-log.h port/port-exp.h port/port-expf.h port/port-sincos.h port/port-sinf.h port/port-hypf.h port/port-erff.h port/port-logf.h port/port-powf.h port/port-log1pf.h)
 A64OBJ  := $(A64)/crmvec.o $(A64)/scalar.o $(A64)/f16.o $(A64)/advsimd.o $(A64)/sve.o $(if $(filter 1,$(PORT)),$(A64)/port.o)
 aarch64: $(A64)/libmvec.so.1 $(A64)/libsleefgnuabi.so.3 $(A64)/aarch64-check
 
@@ -182,7 +182,7 @@ $(A64OBJ) &: $(A64SRC) $(F16SRC)
 	rm -rf $(A64)/f16src && mkdir -p $(A64)/f16src && for f in $(F16SRC); do $(A64CC) $(CFLAGS) $(FP) -fPIC -fvisibility=hidden -c -o $(A64)/f16src/$$(echo $$f | tr / -).o $$f || exit 1; done
 	rm -f $(A64)/libcrf16.a && ar rcs $(A64)/libcrf16.a $(A64)/f16src/*.o
 	$(A64CC) $(CFLAGS) $(FP) -DCRMVEC_PORT=$(PORT) -fPIC -fvisibility=hidden -c -o $(A64)/advsimd.o crmvec-aarch64.c
-	$(if $(filter 1,$(PORT)),$(A64CC) -O3 -ffp-contract=off -fPIC -fvisibility=hidden -c -o $(A64)/port.o port/crmvec-port-a64.c)
+	$(if $(filter 1,$(PORT)),$(A64CC) -O3 -ffp-contract=off -fno-math-errno -fPIC -fvisibility=hidden -c -o $(A64)/port.o port/crmvec-port-a64.c)
 	$(A64CC) $(CFLAGS) $(FP) -fPIC -fvisibility=hidden -march=armv8-a+sve -c -o $(A64)/sve.o crmvec-sve.c
 
 $(A64)/libmvec.so.1 $(A64)/libsleefgnuabi.so.3: $(A64OBJ) $(CR)

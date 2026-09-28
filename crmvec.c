@@ -1370,10 +1370,15 @@ AVX2I static inline __m256d atanhf_half(__m128 xf, __m128i *redo)
 }
 
 float cr_log1pf(float), cr_asinhf(float), cr_acoshf(float), cr_atanhf(float);
+#if !CRMVEC_PORT
 FLOAT_FROM_HALF(log1pf, log1pf_half, cr_log1pf)
 FLOAT_FROM_HALF(asinhf, asinhf_half, cr_asinhf)
 FLOAT_FROM_HALF(acoshf, acoshf_half, cr_acoshf)
 FLOAT_FROM_HALF(atanhf, atanhf_half, cr_atanhf)
+#else   /* PORT=1: port/crmvec-port.c supplies them (port-log1pf.h) */
+AVX2 __m256 _ZGVdN8v_log1pf(__m256); AVX2 __m256 _ZGVdN8v_asinhf(__m256);
+AVX2 __m256 _ZGVdN8v_acoshf(__m256); AVX2 __m256 _ZGVdN8v_atanhf(__m256);
+#endif
 
 /* cbrtf: |x| = m 2^(3k), m in [1, 8); a degree-3 start (6 bits), then four
    Newton steps y <- (2y + m/y^2)/3, far past double precision */
