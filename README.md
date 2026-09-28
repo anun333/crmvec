@@ -441,7 +441,9 @@ Over the 30 functions glibc also has, that is 12 to 122 times slower
 (median 36), where on x86 the gap is about 3.3.
 The vector code reaches aarch64 through SIMDe, emulating 256-bit AVX2 on
 128-bit NEON. That is the likely cause, not yet measured. The portable
-core below is meant to replace this path.
+core below is meant to replace this path, and on the same N2 its NEON
+`log` and `exp` take 7.0 and 7.5 ns per element (glibc: 2.4 and 2.0),
+identical to CORE-MATH on 16.8 million inputs each.
 
 ### Toward one portable source (work in progress)
 
@@ -471,9 +473,15 @@ library yet.
 
   An earlier version of this table compared against a build of this
   library from 2026-09-26, which was slower (3.05 and 3.32).
-- **On aarch64 the gap is the point:** on a Neoverse N2 (GitHub's arm64
-  runner) this library's AdvSIMD entry points, which go through SIMDe, are
-  12 to 122 times slower than glibc's (median 36). The portable
+- **On aarch64 the gap is the point.** On a Neoverse N2 (GitHub's arm64
+  runner), this library's AdvSIMD entry points go through SIMDe and are 12
+  to 122 times slower than glibc's (median 36). The portable NEON builds
+  are identical to CORE-MATH there, and much faster:
+
+  | N2, ns per element | portable | this library now | glibc |
+  |---|---|---|---|
+  | `log` | 7.03 | 84.8 | 2.37 |
+  | `exp` | 7.51 | 41.2 | 1.99 | The portable
   core's NEON builds are native vector code; CI times them on the same
   runner.
 
@@ -483,7 +491,15 @@ library yet.
 AVX-512 entry points follow, since they call the AVX2 core.
 `make PORT=1 PORTCC=clang` builds that file with clang: it is compiled for
 AVX2 as a whole, so clang's ABI problem (Limits) does not arise. `make
-check` passes on both builds. Switching needs `make clean` first.
+check` passes on both builds. On aarch64, `make PORT=1` routes `log` and
+`exp` through the portable NEON code:
+- the AdvSIMD entry points (`port/crmvec-port-a64.c`);
+- SLEEF's names for them;
+- the blocks the SVE entry points call.
+
+`aarch64-check` passes on that build under qemu, at SVE lengths of 128,
+256 and 512 bits and in all four rounding modes. Switching needs `make
+clean` first.
 
 ```
 gcc -O2 -ffp-contract=off -frounding-math -c log/log.c -o cr_log.o

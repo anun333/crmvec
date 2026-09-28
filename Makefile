@@ -169,8 +169,8 @@ A64CC   := $(CC)
 else
 A64CC   ?= aarch64-linux-gnu-gcc
 endif
-A64SRC  := $(LIB) crmvec-aarch64.c crmvec-sve.c $(HDR) $(CR)
-A64OBJ  := $(A64)/crmvec.o $(A64)/scalar.o $(A64)/f16.o $(A64)/advsimd.o $(A64)/sve.o
+A64SRC  := $(LIB) crmvec-aarch64.c crmvec-sve.c $(HDR) $(CR) $(if $(filter 1,$(PORT)),port/crmvec-port-a64.c port/portable.h port/port-log.h port/port-exp.h)
+A64OBJ  := $(A64)/crmvec.o $(A64)/scalar.o $(A64)/f16.o $(A64)/advsimd.o $(A64)/sve.o $(if $(filter 1,$(PORT)),$(A64)/port.o)
 aarch64: $(A64)/libmvec.so.1 $(A64)/libsleefgnuabi.so.3 $(A64)/aarch64-check
 
 $(A64OBJ) &: $(A64SRC) $(F16SRC)
@@ -180,7 +180,8 @@ $(A64OBJ) &: $(A64SRC) $(F16SRC)
 	$(A64CC) $(CFLAGS) $(FP) -fPIC -fvisibility=hidden -c -o $(A64)/f16.o crmvec-f16.c
 	rm -rf $(A64)/f16src && mkdir -p $(A64)/f16src && for f in $(F16SRC); do $(A64CC) $(CFLAGS) $(FP) -fPIC -fvisibility=hidden -c -o $(A64)/f16src/$$(echo $$f | tr / -).o $$f || exit 1; done
 	rm -f $(A64)/libcrf16.a && ar rcs $(A64)/libcrf16.a $(A64)/f16src/*.o
-	$(A64CC) $(CFLAGS) $(FP) -fPIC -fvisibility=hidden -c -o $(A64)/advsimd.o crmvec-aarch64.c
+	$(A64CC) $(CFLAGS) $(FP) -DCRMVEC_PORT=$(PORT) -fPIC -fvisibility=hidden -c -o $(A64)/advsimd.o crmvec-aarch64.c
+	$(if $(filter 1,$(PORT)),$(A64CC) -O3 -ffp-contract=off -fPIC -fvisibility=hidden -c -o $(A64)/port.o port/crmvec-port-a64.c)
 	$(A64CC) $(CFLAGS) $(FP) -fPIC -fvisibility=hidden -march=armv8-a+sve -c -o $(A64)/sve.o crmvec-sve.c
 
 $(A64)/libmvec.so.1 $(A64)/libsleefgnuabi.so.3: $(A64OBJ) $(CR)

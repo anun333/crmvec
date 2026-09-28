@@ -12,8 +12,21 @@
 /* the AdvSIMD vector function ABI: exported, and with the vector procedure
    call standard (more SIMD registers callee-saved), as glibc's
    <bits/math-vector.h> declares these names; a vectorized caller relies on it */
+#ifndef CRMVEC_PORT
+#define CRMVEC_PORT 0
+#endif
+#if CRMVEC_PORT
+/* PORT=1: port/crmvec-port-a64.c defines _ZGVnN2v_log and _ZGVnN2v_exp;
+   these become the weak fallbacks */
+#define EXPORT __attribute__((visibility("default"), aarch64_vector_pcs, weak))
+#else
 #define EXPORT __attribute__((visibility("default"), aarch64_vector_pcs))
+#endif
+#if CRMVEC_PORT
+#define HIDDEN __attribute__((visibility("hidden"), weak))   /* port/crmvec-port-a64.c overrides log and exp */
+#else
 #define HIDDEN __attribute__((visibility("hidden")))
+#endif
 /* one block of the core in place, through plain pointers, for crmvec-sve.c
    (compiled for SVE, where SIMDe's types need not match these) */
 #define BLK_F1(n) HIDDEN void crm_blk_##n(float *a) { _mm256_storeu_ps(a, _ZGVdN8v_##n(_mm256_loadu_ps(a))); }
