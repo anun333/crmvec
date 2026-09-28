@@ -1,11 +1,13 @@
 /* crmvec-port-a64.c: the portable core in the aarch64 library (built with
-   PORT=1; added 2026-09-28). The AdvSIMD entry points of double log and exp,
-   _ZGVnN2v_log and _ZGVnN2v_exp, as 2-lane NEON code from the same headers
-   the spikes verify, in place of crmvec-aarch64.c's route, which widens the
-   two lanes to a 4-double SIMDe core. crmvec-aarch64.c marks its own
-   entry points weak when PORT=1, so these are the ones linked, and so are
-   SLEEF's names for them and the 4-double blocks the SVE entry points call
-   (crm_blk_log, crm_blk_exp). */
+   PORT=1; added 2026-09-28). The AdvSIMD entry points of the functions in
+   port/ (first double log and exp, then the rest as they were ported: every
+   float function and the doubles sin, cos, tan, exp2, exp10, log2 and
+   log10), as NEON code from the same headers the spikes verify, in place of
+   crmvec-aarch64.c's route, which widens the lanes to a 256-bit SIMDe core.
+   crmvec-aarch64.c marks its own entry points weak when PORT=1, so these
+   are the ones linked, and so are SLEEF's names for them (re-declared here:
+   an alias binds to the definition in its own file) and the blocks the SVE
+   entry points call (crm_blk_*). */
 #define VB 16
 #include "portable.h"
 #include "port-log.h"
@@ -18,6 +20,9 @@
 #include "port-logf.h"
 #include "port-powf.h"
 #include "port-log1pf.h"
+#include "port-atanf.h"
+#include "port-tanf.h"
+#include "port-dfast.h"
 #include <arm_neon.h>
 
 #define EXPORT __attribute__((visibility("default"), aarch64_vector_pcs))
@@ -99,6 +104,11 @@ PORT_F1(log1pf)
 PORT_F1(asinhf)
 PORT_F1(acoshf)
 PORT_F1(atanhf)
+PORT_F1(cbrtf)
+PORT_F1(atanf)
+PORT_F1(asinf)
+PORT_F1(acosf)
+PORT_F1(tanf)
 EXPORT __typeof__(_ZGVnN4v_expf) _ZGVnN4v___expf_finite __attribute__((alias("_ZGVnN4v_expf")));
 EXPORT __typeof__(_ZGVnN4v_exp2f) _ZGVnN4v___exp2f_finite __attribute__((alias("_ZGVnN4v_exp2f")));
 EXPORT __typeof__(_ZGVnN4v_exp2f) _ZGVnN4v_exp2f_u35 __attribute__((alias("_ZGVnN4v_exp2f")));
@@ -122,9 +132,19 @@ EXPORT __typeof__(_ZGVnN4v_exp10f) _ZGVnN4v_exp10f_u35 __attribute__((alias("_ZG
 PORT_D1(sin)
 PORT_D1(cos)
 PORT_D1(tan)
+PORT_D1(exp2)
+PORT_D1(exp10)
+PORT_D1(log2)
+PORT_D1(log10)
 EXPORT __typeof__(_ZGVnN2v_sin) _ZGVnN2v_sin_u35 __attribute__((alias("_ZGVnN2v_sin")));
 EXPORT __typeof__(_ZGVnN2v_cos) _ZGVnN2v_cos_u35 __attribute__((alias("_ZGVnN2v_cos")));
 EXPORT __typeof__(_ZGVnN2v_tan) _ZGVnN2v_tan_u35 __attribute__((alias("_ZGVnN2v_tan")));
+EXPORT __typeof__(_ZGVnN2v_exp10) _ZGVnN2v___exp10_finite __attribute__((alias("_ZGVnN2v_exp10")));
+EXPORT __typeof__(_ZGVnN2v_exp10) _ZGVnN2v_exp10_u35 __attribute__((alias("_ZGVnN2v_exp10")));
+EXPORT __typeof__(_ZGVnN2v_exp2) _ZGVnN2v___exp2_finite __attribute__((alias("_ZGVnN2v_exp2")));
+EXPORT __typeof__(_ZGVnN2v_exp2) _ZGVnN2v_exp2_u35 __attribute__((alias("_ZGVnN2v_exp2")));
+EXPORT __typeof__(_ZGVnN2v_log10) _ZGVnN2v___log10_finite __attribute__((alias("_ZGVnN2v_log10")));
+EXPORT __typeof__(_ZGVnN2v_log2) _ZGVnN2v_log2_u35 __attribute__((alias("_ZGVnN2v_log2")));
 EXPORT __typeof__(_ZGVnN4v_sinf) _ZGVnN4v_sinf_u35 __attribute__((alias("_ZGVnN4v_sinf")));
 EXPORT __typeof__(_ZGVnN4v_sinf) _ZGVnN4v_fastsinf_u3500 __attribute__((alias("_ZGVnN4v_sinf")));
 EXPORT __typeof__(_ZGVnN4v_cosf) _ZGVnN4v_cosf_u35 __attribute__((alias("_ZGVnN4v_cosf")));
@@ -160,3 +180,35 @@ EXPORT __typeof__(_ZGVnN4vv_powf) _ZGVnN4vv___powf_finite __attribute__((alias("
 EXPORT __typeof__(_ZGVnN4vv_powf) _ZGVnN4vv_fastpowf_u3500 __attribute__((alias("_ZGVnN4vv_powf")));
 EXPORT __typeof__(_ZGVnN4v_acoshf) _ZGVnN4v___acoshf_finite __attribute__((alias("_ZGVnN4v_acoshf")));
 EXPORT __typeof__(_ZGVnN4v_atanhf) _ZGVnN4v___atanhf_finite __attribute__((alias("_ZGVnN4v_atanhf")));
+
+/* atan2f (port-atanf.h) and hypotf (port-tanf.h), as powf */
+#define PORT_F2(n)                                                                       \
+  EXPORT float32x4_t _ZGVnN4vv_##n(float32x4_t x, float32x4_t y)                         \
+  {                                                                                      \
+    if (__builtin_expect(crm_rn_a64(), 1)) return (float32x4_t)port_##n((vf)x, (vf)y);   \
+    return (float32x4_t){cr_##n(x[0], y[0]), cr_##n(x[1], y[1]), cr_##n(x[2], y[2]), cr_##n(x[3], y[3])}; \
+  }                                                                                      \
+  EXPORT float32x2_t _ZGVnN2vv_##n(float32x2_t x, float32x2_t y)                         \
+  {                                                                                      \
+    float32x4_t r = _ZGVnN4vv_##n(vcombine_f32(x, x), vcombine_f32(y, y)); return vget_low_f32(r); \
+  }                                                                                      \
+  HIDDEN void crm_blk_##n(float *a, const float *b)                                      \
+  {                                                                                      \
+    vf x0, x1, y0, y1; memcpy(&x0, a, 16); memcpy(&x1, a + 4, 16); memcpy(&y0, b, 16); memcpy(&y1, b + 4, 16); \
+    if (__builtin_expect(crm_rn_a64(), 1)) { x0 = port_##n(x0, y0); x1 = port_##n(x1, y1); } \
+    else for (int i = 0; i < 4; i++) { x0[i] = cr_##n(x0[i], y0[i]); x1[i] = cr_##n(x1[i], y1[i]); } \
+    memcpy(a, &x0, 16); memcpy(a + 4, &x1, 16);                                          \
+  }
+PORT_F2(atan2f)
+PORT_F2(hypotf)
+EXPORT __typeof__(_ZGVnN4v_acosf) _ZGVnN4v___acosf_finite __attribute__((alias("_ZGVnN4v_acosf")));
+EXPORT __typeof__(_ZGVnN4v_acosf) _ZGVnN4v_acosf_u35 __attribute__((alias("_ZGVnN4v_acosf")));
+EXPORT __typeof__(_ZGVnN4v_asinf) _ZGVnN4v___asinf_finite __attribute__((alias("_ZGVnN4v_asinf")));
+EXPORT __typeof__(_ZGVnN4v_asinf) _ZGVnN4v_asinf_u35 __attribute__((alias("_ZGVnN4v_asinf")));
+EXPORT __typeof__(_ZGVnN4v_atanf) _ZGVnN4v_atanf_u35 __attribute__((alias("_ZGVnN4v_atanf")));
+EXPORT __typeof__(_ZGVnN4v_cbrtf) _ZGVnN4v_cbrtf_u35 __attribute__((alias("_ZGVnN4v_cbrtf")));
+EXPORT __typeof__(_ZGVnN4vv_atan2f) _ZGVnN4vv___atan2f_finite __attribute__((alias("_ZGVnN4vv_atan2f")));
+EXPORT __typeof__(_ZGVnN4vv_atan2f) _ZGVnN4vv_atan2f_u35 __attribute__((alias("_ZGVnN4vv_atan2f")));
+EXPORT __typeof__(_ZGVnN4v_tanf) _ZGVnN4v_tanf_u35 __attribute__((alias("_ZGVnN4v_tanf")));
+EXPORT __typeof__(_ZGVnN4vv_hypotf) _ZGVnN4vv___hypotf_finite __attribute__((alias("_ZGVnN4vv_hypotf")));
+EXPORT __typeof__(_ZGVnN4vv_hypotf) _ZGVnN4vv_hypotf_u35 __attribute__((alias("_ZGVnN4vv_hypotf")));

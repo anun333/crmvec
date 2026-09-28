@@ -451,24 +451,31 @@ On aarch64 and riscv64 the vector code above comes through SIMDe, which is
 scalar on riscv64. `port/` holds the start of a rewrite in GCC/clang
 generic vector types, one source for every width. `port/portable.h` has
 the helpers the vector extensions lack (FMA, select, rounding, any-lane,
-table rows). Twenty-four functions are written so far:
-- **float:** `expf`, `exp2f`, `exp10f`, `logf`, `log2f`, `log10f`,
-  `log1pf`, `powf`, `sinf`, `cosf`, `expm1f`, `coshf`, `sinhf`, `tanhf`,
-  `asinhf`, `acoshf`, `atanhf`, `erff` and `erfcf`;
-- **double:** `log` (a 363-row table), `exp` (two 64-row tables), and
-  `sin`, `cos` and `tan` (two 128-row tables).
+table rows). Thirty-five of the 52 functions are written so far:
+- **every float function (26):** `expf`, `exp2f`, `exp10f`, `logf`,
+  `log2f`, `log10f`, `log1pf`, `powf`, `sinf`, `cosf`, `tanf`, `asinf`,
+  `acosf`, `atanf`, `atan2f`, `expm1f`, `coshf`, `sinhf`, `tanhf`,
+  `asinhf`, `acoshf`, `atanhf`, `cbrtf`, `hypotf`, `erff` and `erfcf`;
+- **double (9):** `log` (a 363-row table), `exp` (two 64-row tables),
+  `sin`, `cos` and `tan` (two 128-row tables), and `exp2`, `exp10`, `log2`
+  and `log10` (CORE-MATH's fast paths, on the same kind of tables).
 
 With `PORT=1` (below) they replace the intrinsics in the library; by
 default they don't.
 - **Correct everywhere tried:**
-  - the eighteen one-argument floats match CORE-MATH on all 2^32 inputs on
-    x86 AVX2 (the exp family also SSE and clang), and on aarch64 NEON under
-    qemu:
-    - the exp family, `sinf`, `cosf` and the hyperbolic four there;
-    - the rest were still running there at the time of writing;
+  - the twenty-three one-argument floats match CORE-MATH on all 2^32
+    inputs on x86 AVX2 (the exp family also SSE and clang), and on aarch64:
+    - under qemu (NEON): the exp family, `sinf`, `cosf`, the hyperbolic
+      four, `cbrtf` and `atanf`;
+    - CI now runs all twenty-three natively on its Neoverse N2;
     - `expf` also on AVX-512, SVE and RVV;
-  - `powf` matches on 2^30 random pairs and 1,600 special pairs through the
-    library, and fails that check with its rounding test switched off;
+  - `powf`, `atan2f` and `hypotf` match on 2^30 random pairs and 1,600
+    special pairs each through the library. With the rounding test switched
+    off, `powf` fails that check and `hypotf` fails its midpoint search
+    (1,129 of 16,503 wrong);
+  - `exp2`, `exp10`, `log2` and `log10` match on 2^31 random inputs each
+    through the library. With CORE-MATH's error bounds zeroed, 134 to 44,078
+    of them come out wrong;
   - `generic-log` and `generic-exp` match `cr_log` and `cr_exp` on 67
     million inputs on x86 (gcc and clang), and on 4 to 17 million under
     emulation on AVX-512, NEON, SVE and RVV;
@@ -491,7 +498,8 @@ default they don't.
 - **x86 floats:** built by clang, the portable core is faster than the
   intrinsics for `sinf` and `cosf` and the doubles, but so far slower (by
   3-27%) for the float exp family, `coshf`, `sinhf` and `erff` (CI's
-  shared EPYC runner).
+  shared EPYC runner, timed through the SSE2 entry points, which reach the
+  AVX2 core for these functions).
 - **On aarch64 the gap is the point.** On a Neoverse N2 (GitHub's arm64
   runner), this library's AdvSIMD entry points go through SIMDe and are 12
   to 122 times slower than glibc's (median 36). The portable NEON builds
@@ -500,19 +508,23 @@ default they don't.
   | N2, ns per element | portable | this library now | glibc |
   |---|---|---|---|
   | `log` | 7.03 | 84.8 | 2.37 |
-  | `exp` | 7.51 | 41.2 | 1.99 | The portable
-  core's NEON builds are native vector code; CI times them on the same
-  runner.
+  | `exp` | 7.51 | 41.2 | 1.99 |
+
+  The portable core's NEON builds are native vector code; CI times them on
+  the same runner.
 
 **Inside the library, as a prototype:** `make PORT=1` builds
-`libmvec.so.1` with those twenty-four functions taken from the portable core
-instead of the intrinsics (`port/crmvec-port.c`). Their SSE2, AVX and AVX-512 entry
-points follow, since they call the AVX2 core. The float three are checked on
-all 2^32 inputs through that build.
+`libmvec.so.1` with those thirty-five functions taken from the portable core
+instead of the intrinsics (`port/crmvec-port.c`). Their AVX and AVX-512 entry
+points follow, since they call the AVX2 core. The SSE2 ones follow only where
+`crmvec-bvec.h` sends them to that core; the rest call CORE-MATH per lane
+on either build, so SSE2 timings (`bbench`) cannot tell the two apart for
+those functions. The one-argument floats are checked on all 2^32 inputs
+through that build.
 `make PORT=1 PORTCC=clang` builds that file with clang: it is compiled for
 AVX2 as a whole, so clang's ABI problem (Limits) does not arise. `make
 check` passes on both builds. On aarch64, `make PORT=1` routes the same
-twenty-four through the portable NEON code:
+thirty-five through the portable NEON code:
 - the AdvSIMD entry points (`port/crmvec-port-a64.c`). On the N2:
   - `log` and `exp` take 6.6 and 7.3 ns per element, against 86 and 41
     through SIMDe;

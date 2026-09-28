@@ -9,13 +9,17 @@
    disassembly, not the source).
 
      generic-expf verify [expf|exp2f|exp10f|sinf|cosf|expm1f|coshf|sinhf|tanhf|erff|erfcf|
-                                                logf|log2f|log10f|log1pf|asinhf|acoshf|atanhf]
+                                                logf|log2f|log10f|log1pf|asinhf|acoshf|atanhf|
+                                                cbrtf|atanf|asinf|acosf|tanf]
                                                every float input against CORE-MATH
                                                (sinf, cosf: port-sinf.h; the hyperbolic four:
                                                port-hypf.h; erff, erfcf: port-erff.h; the log family:
-                                               port-logf.h; all added 2026-09-28)
-     generic-expf verify2 [N]                  powf on N random pairs of five kinds
-                                               (port-powf.h)
+                                               port-logf.h; the atan group: port-atanf.h;
+                                               tanf: port-tanf.h; all added 2026-09-28)
+     generic-expf verify2 [N] [powf|atan2f|hypotf]
+                                               a two-argument function on N random pairs
+                                               of five kinds (port-powf.h, port-atanf.h,
+                                               port-tanf.h)
      generic-expf time [LIB...]                ns per element (expf), memory-bound,
                                                against the _ZGV expf entry points
                                                of the libraries given */
@@ -38,6 +42,8 @@
 #include "port-logf.h"
 #include "port-powf.h"
 #include "port-log1pf.h"
+#include "port-atanf.h"
+#include "port-tanf.h"
 
 __attribute__((noinline)) vf gexpf(vf x) { return port_expf(x); }
 __attribute__((noinline)) vf gexp2f(vf x) { return port_exp2f(x); }
@@ -58,6 +64,13 @@ __attribute__((noinline)) vf glog1pf(vf x) { return port_log1pf(x); }
 __attribute__((noinline)) vf gasinhf(vf x) { return port_asinhf(x); }
 __attribute__((noinline)) vf gacoshf(vf x) { return port_acoshf(x); }
 __attribute__((noinline)) vf gatanhf(vf x) { return port_atanhf(x); }
+__attribute__((noinline)) vf gcbrtf(vf x) { return port_cbrtf(x); }
+__attribute__((noinline)) vf gatanf(vf x) { return port_atanf(x); }
+__attribute__((noinline)) vf gasinf(vf x) { return port_asinf(x); }
+__attribute__((noinline)) vf gacosf(vf x) { return port_acosf(x); }
+__attribute__((noinline)) vf gatan2f(vf y, vf x) { return port_atan2f(y, x); }
+__attribute__((noinline)) vf gtanf(vf x) { return port_tanf(x); }
+__attribute__((noinline)) vf ghypotf(vf x, vf y) { return port_hypotf(x, y); }
 
 #ifdef GUARD
 /* the shipped entry point's shape, for a fair time: crmvec's two-add
@@ -91,7 +104,9 @@ int main(int argc, char **argv)
       {"coshf", gcoshf, cr_coshf}, {"sinhf", gsinhf, cr_sinhf}, {"tanhf", gtanhf, cr_tanhf},
       {"erff", gerff, cr_erff}, {"erfcf", gerfcf, cr_erfcf}, {"logf", glogf, cr_logf},
       {"log2f", glog2f, cr_log2f}, {"log10f", glog10f, cr_log10f}, {"log1pf", glog1pf, cr_log1pf},
-      {"asinhf", gasinhf, cr_asinhf}, {"acoshf", gacoshf, cr_acoshf}, {"atanhf", gatanhf, cr_atanhf}};
+      {"asinhf", gasinhf, cr_asinhf}, {"acoshf", gacoshf, cr_acoshf}, {"atanhf", gatanhf, cr_atanhf},
+      {"cbrtf", gcbrtf, cr_cbrtf}, {"atanf", gatanf, cr_atanf}, {"asinf", gasinf, cr_asinf}, {"acosf", gacosf, cr_acosf},
+      {"tanf", gtanf, cr_tanf}};
     int t = 0; while (t < (int)(sizeof T / sizeof T[0]) - 1 && strcmp(T[t].n, fn)) t++;
     if (strcmp(T[t].n, fn)) { fprintf(stderr, "unknown function %s\n", fn); return 2; }
     vf (*g)(vf) = T[t].g; float (*cr)(float) = T[t].cr;
@@ -111,8 +126,13 @@ int main(int argc, char **argv)
     if (bad) printf("first differing input: 0x%08lx\n", first - 1);
     return bad != 0;
   }
-  if (argc > 1 && !strcmp(argv[1], "verify2")) {   /* powf on random pairs of five kinds */
+  if (argc > 1 && !strcmp(argv[1], "verify2")) {   /* powf or atan2f on random pairs of five kinds */
     long n = argc > 2 ? atol(argv[2]) : 1L << 26;
+    const char *fn2 = argc > 3 ? argv[3] : "powf";
+    int at2 = !strcmp(fn2, "atan2f"), hy = !strcmp(fn2, "hypotf");
+    if (!at2 && !hy && strcmp(fn2, "powf")) { fprintf(stderr, "unknown function %s\n", fn2); return 2; }
+    vf (*g2)(vf, vf) = at2 ? gatan2f : hy ? ghypotf : gpowf;
+    float (*cr2)(float, float) = at2 ? cr_atan2f : hy ? cr_hypotf : cr_powf;
     unsigned long bad = 0, tot = 0;
     for (int kind = 0; kind < 5; kind++) {
       unsigned long kb = 0;
@@ -130,13 +150,14 @@ int main(int argc, char **argv)
           else { memcpy(&fa, &a, 4); memcpy(&fb, &b, 4); }                                                                   /* any bits */
           x[i] = fa; y[i] = fb;
         }
-        vf r = gpowf(x, y); float ra[NF], xa[NF], ya[NF]; memcpy(ra, &r, VB); memcpy(xa, &x, VB); memcpy(ya, &y, VB);
-        for (int i = 0; i < NF; i++) { float w = cr_powf(xa[i], ya[i]); if (memcmp(&w, &ra[i], 4) && !(isnan(w) && isnan(ra[i]))) kb++; }
+        vf r = g2(x, y); float ra[NF], xa[NF], ya[NF]; memcpy(ra, &r, VB); memcpy(xa, &x, VB); memcpy(ya, &y, VB);
+        for (int i = 0; i < NF; i++) { float w = cr2(xa[i], ya[i]); if (memcmp(&w, &ra[i], 4) && !(isnan(w) && isnan(ra[i]))) kb++; }
       }
       printf("  kind %d: %lu of %ld differ\n", kind, kb, n / NF * NF);
       bad += kb; tot += n / NF * NF;
     }
-    printf("powf VB=%d (%d lanes): %lu of %lu differ from cr_powf%s\n", VB, NF, bad, tot, bad ? "" : " -- IDENTICAL on every input tried");
+    printf("%s VB=%d (%d lanes): %lu of %lu differ from cr_%s%s\n", fn2, VB, NF, bad, tot, fn2,
+           bad ? "" : " -- IDENTICAL on every input tried");
     return bad != 0;
   }
   if (argc > 1 && !strcmp(argv[1], "time")) {

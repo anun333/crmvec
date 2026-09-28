@@ -1069,6 +1069,7 @@ AVX2I static inline __m256d tanf_half(__m128 xf, __m128i *redo)
   return y;
 }
 
+#if !CRMVEC_PORT
 AVX2 __m256 _ZGVdN8v_tanf(__m256 xf)
 {
   __m128i r0, r1;
@@ -1076,6 +1077,9 @@ AVX2 __m256 _ZGVdN8v_tanf(__m256 xf)
   __m256d y1 = tanf_half(_mm256_extractf128_ps(xf, 1), &r1);
   return finish8(xf, y0, y1, r0, r1, cr_tanf);
 }
+#else   /* PORT=1: port/crmvec-port.c supplies it (port-tanf.h) */
+AVX2 __m256 _ZGVdN8v_tanf(__m256);
+#endif
 
 /* ---- powf (added 2026-09-26) ----------------------------------------- */
 
@@ -1512,6 +1516,7 @@ AVX2I static inline __m256d atan2f_half(__m128 yf, __m128 xf, __m128i *redo)
 }
 
 float cr_cbrtf(float), cr_atanf(float), cr_asinf(float), cr_acosf(float), cr_atan2f(float, float);
+#if !CRMVEC_PORT
 FLOAT_FROM_HALF(cbrtf, cbrtf_half, cr_cbrtf)
 FLOAT_FROM_HALF(atanf, atanf_half, cr_atanf)
 FLOAT_FROM_HALF(asinf, asinf_half, cr_asinf)
@@ -1524,6 +1529,11 @@ AVX2 __m256 _ZGVdN8vv_atan2f(__m256 yf, __m256 xf)
   __m256d y1 = atan2f_half(_mm256_extractf128_ps(yf, 1), _mm256_extractf128_ps(xf, 1), &r1);
   return finish8_2(yf, xf, y0, y1, r0, r1, cr_atan2f);
 }
+#else   /* PORT=1: port/crmvec-port.c supplies them (port-atanf.h) */
+AVX2 __m256 _ZGVdN8v_cbrtf(__m256); AVX2 __m256 _ZGVdN8v_atanf(__m256);
+AVX2 __m256 _ZGVdN8v_asinf(__m256); AVX2 __m256 _ZGVdN8v_acosf(__m256);
+AVX2 __m256 _ZGVdN8vv_atan2f(__m256, __m256);
+#endif
 
 /* erff and erfcf: CORE-MATH's schemes transcribed (their tables in
    crmvec-erff-tab.h, crmvec-erfcf-tab.h), with a rounding test added since
@@ -1653,6 +1663,7 @@ AVX2I static inline __m256d hypotf_half(__m128 xf, __m128 yf, __m128i *redo)
   return r;
 }
 
+#if !CRMVEC_PORT
 AVX2 __m256 _ZGVdN8vv_hypotf(__m256 xf, __m256 yf)
 {
   __m128i r0, r1;
@@ -1660,6 +1671,9 @@ AVX2 __m256 _ZGVdN8vv_hypotf(__m256 xf, __m256 yf)
   __m256d y1 = hypotf_half(_mm256_extractf128_ps(xf, 1), _mm256_extractf128_ps(yf, 1), &r1);
   return finish8_2(xf, yf, y0, y1, r0, r1, cr_hypotf);
 }
+#else   /* PORT=1: port/crmvec-port.c supplies it (port-tanf.h) */
+AVX2 __m256 _ZGVdN8vv_hypotf(__m256, __m256);
+#endif
 
 /* ---- double exp (added 2026-09-26, the calibration run) ------------- */
 
@@ -3305,10 +3319,15 @@ __m256d cp_[13]; LOAD_ROWS(PT, _mm256_mul_epu32(ri, _mm256_set1_epi64x(13)), cp_
     for (int i = 0; i < 4; i++) if (m >> i & 1) ys[i] = CR(xs[i]);                    \
     return _mm256_loadu_pd(ys);                                                       \
   }
+#if !CRMVEC_PORT
 DOUBLE_FAST(exp2, exp2_fast, cr_exp2)
 DOUBLE_FAST(exp10, exp10_fast, cr_exp10)
 DOUBLE_FAST(log2, log2_fast, cr_log2)
 DOUBLE_FAST(log10, log10_fast, cr_log10)
+#else   /* PORT=1: port/crmvec-port.c supplies them (port-dfast.h) */
+AVX2 __m256d _ZGVdN4v_exp2(__m256d); AVX2 __m256d _ZGVdN4v_exp10(__m256d);
+AVX2 __m256d _ZGVdN4v_log2(__m256d); AVX2 __m256d _ZGVdN4v_log10(__m256d);
+#endif
 #if !CR_LOOP_EXPM1
 DOUBLE_FAST(expm1, expm1_fast, cr_expm1)
 #endif
