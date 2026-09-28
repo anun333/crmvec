@@ -1288,10 +1288,15 @@ AVX2I static inline __m256d tanhf_half(__m128 xf, __m128i *redo)
 }
 
 float cr_expm1f(float), cr_coshf(float), cr_sinhf(float), cr_tanhf(float), cr_hypotf(float, float);
+#if !CRMVEC_PORT
 FLOAT_FROM_HALF(expm1f, expm1f_half, cr_expm1f)
 FLOAT_FROM_HALF(coshf, coshf_half, cr_coshf)
 FLOAT_FROM_HALF(sinhf, sinhf_half, cr_sinhf)
 FLOAT_FROM_HALF(tanhf, tanhf_half, cr_tanhf)
+#else   /* PORT=1: port/crmvec-port.c supplies them (port-hypf.h) */
+AVX2 __m256 _ZGVdN8v_expm1f(__m256); AVX2 __m256 _ZGVdN8v_coshf(__m256);
+AVX2 __m256 _ZGVdN8v_sinhf(__m256); AVX2 __m256 _ZGVdN8v_tanhf(__m256);
+#endif
 
 /* ln(1 + v) in double for v > -1: 2 atanh(v/(2 + v)) where |v/(2+v)| <= 0.172
    (never forms a rounded 1 + v), else log_core_d(1 + v); relative error

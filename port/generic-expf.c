@@ -8,8 +8,10 @@
    every target, and the code must actually be vector code on each (read the
    disassembly, not the source).
 
-     generic-expf verify [expf|exp2f|exp10f|sinf|cosf]   every float input against CORE-MATH
-                                               (sinf, cosf: port-sinf.h, added 2026-09-28)
+     generic-expf verify [expf|exp2f|exp10f|sinf|cosf|expm1f|coshf|sinhf|tanhf]
+                                               every float input against CORE-MATH
+                                               (sinf, cosf: port-sinf.h; the hyperbolic four:
+                                               port-hypf.h; both added 2026-09-28)
      generic-expf time [LIB...]                ns per element (expf), memory-bound,
                                                against the _ZGV expf entry points
                                                of the libraries given */
@@ -27,12 +29,17 @@
 #include "portable.h"
 #include "port-expf.h"
 #include "port-sinf.h"
+#include "port-hypf.h"
 
 __attribute__((noinline)) vf gexpf(vf x) { return port_expf(x); }
 __attribute__((noinline)) vf gexp2f(vf x) { return port_exp2f(x); }
 __attribute__((noinline)) vf gexp10f(vf x) { return port_exp10f(x); }
 __attribute__((noinline)) vf gsinf(vf x) { return port_sinf(x); }
 __attribute__((noinline)) vf gcosf(vf x) { return port_cosf(x); }
+__attribute__((noinline)) vf gexpm1f(vf x) { return port_expm1f(x); }
+__attribute__((noinline)) vf gcoshf(vf x) { return port_coshf(x); }
+__attribute__((noinline)) vf gsinhf(vf x) { return port_sinhf(x); }
+__attribute__((noinline)) vf gtanhf(vf x) { return port_tanhf(x); }
 
 #ifdef GUARD
 /* the shipped entry point's shape, for a fair time: crmvec's two-add
@@ -60,8 +67,13 @@ int main(int argc, char **argv)
 {
   if (argc > 1 && !strcmp(argv[1], "verify")) {
     const char *fn = argc > 2 ? argv[2] : "expf";
-    vf (*g)(vf) = !strcmp(fn, "exp2f") ? gexp2f : !strcmp(fn, "exp10f") ? gexp10f : !strcmp(fn, "sinf") ? gsinf : !strcmp(fn, "cosf") ? gcosf : gexpf;
-    float (*cr)(float) = !strcmp(fn, "exp2f") ? cr_exp2f : !strcmp(fn, "exp10f") ? cr_exp10f : !strcmp(fn, "sinf") ? cr_sinf : !strcmp(fn, "cosf") ? cr_cosf : cr_expf;
+    static const struct { const char *n; vf (*g)(vf); float (*cr)(float); } T[] = {
+      {"expf", gexpf, cr_expf}, {"exp2f", gexp2f, cr_exp2f}, {"exp10f", gexp10f, cr_exp10f},
+      {"sinf", gsinf, cr_sinf}, {"cosf", gcosf, cr_cosf}, {"expm1f", gexpm1f, cr_expm1f},
+      {"coshf", gcoshf, cr_coshf}, {"sinhf", gsinhf, cr_sinhf}, {"tanhf", gtanhf, cr_tanhf}};
+    int t = 0; while (t < (int)(sizeof T / sizeof T[0]) - 1 && strcmp(T[t].n, fn)) t++;
+    if (strcmp(T[t].n, fn)) { fprintf(stderr, "unknown function %s\n", fn); return 2; }
+    vf (*g)(vf) = T[t].g; float (*cr)(float) = T[t].cr;
     unsigned long bad = 0, first = 0;
 #pragma omp parallel for reduction(+ : bad) schedule(static, 256)
     for (long b = 0; b < (1L << 32) / NF; b++) {

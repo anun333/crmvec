@@ -31,7 +31,11 @@ static const double PORT_SIN_COS_PI16[32][2] __attribute__((aligned(16))) = {
   {-0x1.6a09e667f3bcdp-1, 0x1.6a09e667f3bcdp-1}, {-0x1.1c73b39ae68c8p-1, 0x1.a9b66290ea1a3p-1},
   {-0x1.87de2a6aea963p-2, 0x1.d906bcf328d46p-1}, {-0x1.8f8b83c69a60bp-3, 0x1.f6297cff75cbp-1}};
 
+#ifndef PORT_VFH
+#define PORT_VFH
 typedef float vfh __attribute__((vector_size(VB / 2)));   /* half a vf: as many floats as vd has doubles */
+typedef int32_t vih __attribute__((vector_size(VB / 2)));
+#endif
 
 PORT_INLINE vd port_trig_fast(vd x, int shift8)
 {
