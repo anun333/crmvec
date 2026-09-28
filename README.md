@@ -1,7 +1,7 @@
 # crmvec
 
-Correctly rounded vector math for x86-64 (and, built and checked under
-emulation, aarch64): a drop-in replacement for glibc's `libmvec.so.1`, and
+Correctly rounded vector math for x86-64 and aarch64 (checked natively on
+both): a drop-in replacement for glibc's `libmvec.so.1`, and
 on aarch64 for SLEEF's `libsleefgnuabi.so.3`, whose results are the
 correctly rounded ones, bit for bit the same as
 [CORE-MATH](https://core-math.gitlabpages.inria.fr/)'s.
@@ -391,6 +391,14 @@ there against 49.6 looping over CORE-MATH built without `-mfma`.
 
 ## Other CPUs: aarch64
 
+**For aarch64 users: use 0.3.0 or later.** From 0.3.0 the default build
+takes 35 of the 52 functions (every float function, and `log`, `exp`,
+`sin`, `cos`, `tan`, `exp2`, `exp10`, `log2`, `log10`) from the portable
+core as NEON code. On a Neoverse N2 they take 3 to 19 ns per element,
+against 29 to 182 in 0.2 and earlier. The other 17 doubles still take the
+route below, 50 to 540 ns. Every result is still CORE-MATH's, bit for bit.
+`make PORT=0` builds the old route.
+
 `make aarch64` (needs `gcc-aarch64-linux-gnu` and `libsimde-dev`) builds
 `build-aarch64/libmvec.so.1` from the same `crmvec.c`, with
 [SIMDe](https://github.com/simd-everywhere/simde) supplying the x86
@@ -434,16 +442,15 @@ library's symbols are unversioned; it binds them anyway. On riscv64 the
 same core gives the same bits (`port/port-build.sh`), but glibc has no
 riscv64 `libmvec` to stand in for.
 
-**It is slow on aarch64.** On the Neoverse N2 (`nbench`, 2026-09-28, a
-shared runner), the AdvSIMD entry points take 28 to 543 ns per element
-against 0.7 to 6 for glibc's: `expf` 89 against 1.0, `log` 84 against 2.4.
-Over the 30 functions glibc also has, that is 12 to 122 times slower
-(median 36), where on x86 the gap is about 3.3.
-The vector code reaches aarch64 through SIMDe, emulating 256-bit AVX2 on
-128-bit NEON. That is the likely cause, not yet measured. The portable
-core below is meant to replace this path, and on the same N2 its NEON
-`log` and `exp` take 7.0 and 7.5 ns per element (glibc: 2.4 and 2.0),
-identical to CORE-MATH on 16.8 million inputs each.
+**Through SIMDe it is slow.** On the Neoverse N2 (`nbench`, 2026-09-28, a
+shared runner), the AdvSIMD entry points built this way take 28 to 543 ns
+per element, against 0.7 to 6 for glibc's: `expf` 89 against 1.0, `log` 84
+against 2.4. Over the 30 functions glibc also has, that is 12 to 122 times
+slower (median 36), where on x86 the gap is about 3.3. The vector code
+reaches aarch64 through SIMDe, emulating 256-bit AVX2 on 128-bit NEON;
+that is the likely cause, not yet measured. This was every function's
+route before 0.3.0. It is now the route of the 17 doubles the portable
+core (next section) doesn't have yet.
 
 ### Toward one portable source (work in progress)
 
@@ -460,8 +467,9 @@ table rows). Thirty-five of the 52 functions are written so far:
   `sin`, `cos` and `tan` (two 128-row tables), and `exp2`, `exp10`, `log2`
   and `log10` (CORE-MATH's fast paths, on the same kind of tables).
 
-With `PORT=1` (below) they replace the intrinsics in the library; by
-default they don't.
+In the library they are the default on aarch64 from 0.3.0, in place of
+the SIMDe route. On x86, `make PORT=1` puts them in place of the
+intrinsics; by default it doesn't (below).
 - **Correct everywhere tried:**
   - the twenty-three one-argument floats match CORE-MATH on all 2^32
     inputs on x86 AVX2 (the exp family also SSE and clang), and on aarch64:
@@ -507,11 +515,11 @@ default they don't.
   On x86 the portable core does not replace the intrinsics yet, which is
   why `PORT=1` is off by default.
 - **On aarch64 the gap is the point.** On a Neoverse N2 (GitHub's arm64
-  runner), this library's AdvSIMD entry points go through SIMDe and are 12
+  runner), this library's AdvSIMD entry points built through SIMDe are 12
   to 122 times slower than glibc's (median 36). The portable NEON builds
   are identical to CORE-MATH there, and much faster:
 
-  | N2, ns per element | portable | this library now | glibc |
+  | N2, ns per element | portable | the SIMDe route | glibc |
   |---|---|---|---|
   | `log` | 7.03 | 84.8 | 2.37 |
   | `exp` | 7.51 | 41.2 | 1.99 |
@@ -519,7 +527,7 @@ default they don't.
   The portable core's NEON builds are native vector code; CI times them on
   the same runner.
 
-**Inside the library, as a prototype:** `make PORT=1` builds
+**Inside the library:** on x86, `make PORT=1` builds
 `libmvec.so.1` with those thirty-five functions taken from the portable core
 instead of the intrinsics (`port/crmvec-port.c`). Their AVX and AVX-512 entry
 points follow, since they call the AVX2 core. The SSE2 ones follow only where
@@ -529,7 +537,8 @@ those functions. The one-argument floats are checked on all 2^32 inputs
 through that build.
 `make PORT=1 PORTCC=clang` builds that file with clang: it is compiled for
 AVX2 as a whole, so clang's ABI problem (Limits) does not arise. `make
-check` passes on both builds. On aarch64, `make PORT=1` routes the same
+check` passes on both builds. On aarch64 this is the default from 0.3.0
+(`make PORT=0` builds the SIMDe route instead). It routes the same
 thirty-five through the portable NEON code:
 - the AdvSIMD entry points (`port/crmvec-port-a64.c`). On the N2:
   - `log` and `exp` take 6.5 and 7.2 ns per element, against 84 and 41
@@ -607,9 +616,11 @@ caller's vector registers survive lazy binding.
 
 ## Limits
 
-- Built and timed for x86-64; aarch64 built and checked only under
-  emulation. The x86 vector paths need AVX2 and FMA; without them, the SSE2
-  entry points loop over scalar CORE-MATH.
+- Built and timed on x86-64. aarch64 is checked natively on one core type
+  only (a Neoverse N2, 128-bit SVE, on GitHub's runners), and at other SVE
+  lengths under emulation. There, 17 doubles still go through SIMDe and
+  are slow (above). The x86 vector paths need AVX2 and FMA; without them,
+  the SSE2 entry points loop over scalar CORE-MATH.
 - Timed on one CPU, plus the busy, hired Zen 4 above.
 - **The x86 library needs gcc** (13.3 here; the packages build it with gcc
   13.2 and 16). clang passes the 256-bit arguments of a `target("avx2")`

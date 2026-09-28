@@ -11,7 +11,7 @@
 %global debug_package %{nil}
 
 Name:           crmvec
-Version:        0.2.1
+Version:        0.3.0
 Release:        1%{?dist}
 Summary:        Correctly rounded vector math (a drop-in libmvec)
 License:        MIT
@@ -61,6 +61,11 @@ make check
 %{_libdir}/pkgconfig/crmvec.pc
 
 %changelog
+* Mon Sep 28 2026 anun333 <anun333@posteo.net> - 0.3.0-1
+- aarch64: the portable core is the default (PORT defaults to 1 on aarch64,
+  0 on x86); its 35 functions are 2.3-19x faster than the SIMDe route on a
+  Neoverse N2. PORT=0 builds the previous route.
+
 * Mon Sep 28 2026 anun333 <anun333@posteo.net> - 0.2.1-1
 - crmvec.h: CRMVEC_VERSION was left at 0.1.0 in 0.2.0, which failed make check
 

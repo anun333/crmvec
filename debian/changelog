@@ -1,3 +1,11 @@
+crmvec (0.3.0) unstable; urgency=medium
+
+  * aarch64: the portable core is the default (PORT defaults to 1 on
+    aarch64, 0 on x86); its 35 functions are 2.3-19x faster than the SIMDe
+    route on a Neoverse N2. PORT=0 builds the previous route.
+
+ -- anun333 <anun333@posteo.net>  Mon, 28 Sep 2026 07:00:00 -0500
+
 crmvec (0.2.1) unstable; urgency=medium
 
   * crmvec.h: CRMVEC_VERSION was left at 0.1.0 in 0.2.0, which failed

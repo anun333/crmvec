@@ -8,7 +8,7 @@
 # own gcc builds use the flag); 33 of its 72 files compile differently.
 CC      ?= gcc
 .DEFAULT_GOAL := all
-VERSION := 0.2.1
+VERSION := 0.3.0
 # install locations (make install PREFIX=... DESTDIR=...): the libraries go
 # to a directory of their own, so that nothing replaces the system's
 # libmvec.so.1 until a program asks for it (crmvec-run, or the rpath that
@@ -81,22 +81,32 @@ headercheck: crmvec.h crmvec-f16.c crmvec-scalar.c
 	$(CC) -fsyntax-only -Wall -include crmvec.h crmvec-scalar.c
 	@grep -q '"$(VERSION)"' crmvec.h || { echo "crmvec.h's CRMVEC_VERSION is not $(VERSION)"; exit 1; }
 
-# PORT=1 (a prototype, 2026-09-27 night): double log and exp come from the
-# portable core (port/crmvec-port.c, built with PORTCC, gcc or clang)
-# instead of crmvec.c's intrinsics. Switching needs `make clean`: the objects
-# do not record which way they were built.
-PORT    ?= 0
+# PORT: the 35 functions in port/ (every float function, and log, exp, sin,
+# cos, tan, exp2, exp10, log2, log10) from the portable core instead of the
+# SIMDe route (aarch64) or crmvec.c's intrinsics (x86). The default differs
+# by target (2026-09-28, crmvec 0.3.0):
+#   aarch64: on. The portable NEON code is 2.3 to 19 times faster than the
+#            SIMDe route on a Neoverse N2, and checked (every float on all
+#            2^32 inputs natively, make check, aarch64-check at three SVE
+#            lengths in all four rounding modes);
+#   x86:     off. The intrinsics are as fast or faster there.
+# PORT=0 or PORT=1 on the command line sets both. The x86 file is built with
+# PORTCC (gcc or clang). Switching needs `make clean`: the objects do not
+# record which way they were built.
+PORT    ?=
+X86PORT := $(if $(PORT),$(PORT),0)
+A64PORT := $(if $(PORT),$(PORT),1)
 PORTCC  ?= $(CC)
-PORTOBJ := $(if $(filter 1,$(PORT)),crmvec-port.o)
+PORTOBJ := $(if $(filter 1,$(X86PORT)),crmvec-port.o)
 crmvec-port.o: port/crmvec-port.c port/portable.h port/port-log.h port/port-exp.h port/port-expf.h port/port-sincos.h port/port-sinf.h port/port-hypf.h port/port-erff.h port/port-logf.h port/port-powf.h port/port-log1pf.h port/port-atanf.h port/port-tanf.h port/port-dfast.h crmvec-powf-tab.h crmvec-erff-tab.h crmvec-erfcf-tab.h crmvec-rows-tab.h crmvec-exp-tab.h crmvec-sin-tab.h
 	$(PORTCC) -O3 -ffp-contract=off -fno-math-errno -mavx2 -mfma -fPIC -c -o $@ port/crmvec-port.c
 
 crmvec.o: crmvec.c $(HDR) $(PORTOBJ)
-	$(CC) $(CFLAGS) $(FPV) -DCRMVEC_PORT=$(PORT) -fPIC -c -o $@ crmvec.c
+	$(CC) $(CFLAGS) $(FPV) -DCRMVEC_PORT=$(X86PORT) -fPIC -c -o $@ crmvec.c
 
 # for the checks built with -mavx2 (crtest, hypot-midpoints), as before
 crmvec-avx2.o: crmvec.c $(HDR) $(PORTOBJ)
-	$(CC) $(CFLAGS) $(FPV) -DCRMVEC_PORT=$(PORT) -mavx2 -mfma -c -o $@ crmvec.c
+	$(CC) $(CFLAGS) $(FPV) -DCRMVEC_PORT=$(X86PORT) -mavx2 -mfma -c -o $@ crmvec.c
 
 libmvec.so.1: crmvec.o $(LIBC) $(HDR) $(CR) libcrf16.a crmvec-exports.map
 	$(CC) $(CFLAGS) $(FP) -fPIC -shared -Wl,-soname,libmvec.so.1 -Wl,--version-script=crmvec-exports.map -o $@ crmvec.o $(PORTOBJ) $(LIBC) $(CR) libcrf16.a -lm
@@ -154,7 +164,7 @@ pownf-search: pownf-search.c crmvec-pownf-tab.h $(PWS)
 
 # cr_tan renamed to a counter inside crmvec.c only, to see which lanes go to it
 tan-poles: tan-poles.c tan-poles.h $(LIB) $(HDR) $(CR) libcrf16.a $(PORTOBJ)
-	$(CC) $(CFLAGS) $(FPV) -DCRMVEC_PORT=$(PORT) -mavx2 -mfma -Dcr_tan=cnt_tan -c -o tan-poles-crmvec.o crmvec.c
+	$(CC) $(CFLAGS) $(FPV) -DCRMVEC_PORT=$(X86PORT) -mavx2 -mfma -Dcr_tan=cnt_tan -c -o tan-poles-crmvec.o crmvec.c
 	$(if $(PORTOBJ),$(PORTCC) -O3 -ffp-contract=off -fno-math-errno -mavx2 -mfma -Dcr_tan=cnt_tan -c -o tan-poles-port.o port/crmvec-port.c)
 	$(CC) $(CFLAGS) $(FP) -mavx2 -mfma -o $@ tan-poles.c tan-poles-crmvec.o $(if $(PORTOBJ),tan-poles-port.o) crmvec-scalar.c crmvec-f16.c $(CR) libcrf16.a -lm
 	rm -f tan-poles-crmvec.o tan-poles-port.o
@@ -170,8 +180,8 @@ A64CC   := $(CC)
 else
 A64CC   ?= aarch64-linux-gnu-gcc
 endif
-A64SRC  := $(LIB) crmvec-aarch64.c crmvec-sve.c $(HDR) $(CR) $(if $(filter 1,$(PORT)),port/crmvec-port-a64.c port/portable.h port/port-log.h port/port-exp.h port/port-expf.h port/port-sincos.h port/port-sinf.h port/port-hypf.h port/port-erff.h port/port-logf.h port/port-powf.h port/port-log1pf.h port/port-atanf.h port/port-tanf.h port/port-dfast.h)
-A64OBJ  := $(A64)/crmvec.o $(A64)/scalar.o $(A64)/f16.o $(A64)/advsimd.o $(A64)/sve.o $(if $(filter 1,$(PORT)),$(A64)/port.o)
+A64SRC  := $(LIB) crmvec-aarch64.c crmvec-sve.c $(HDR) $(CR) $(if $(filter 1,$(A64PORT)),port/crmvec-port-a64.c port/portable.h port/port-log.h port/port-exp.h port/port-expf.h port/port-sincos.h port/port-sinf.h port/port-hypf.h port/port-erff.h port/port-logf.h port/port-powf.h port/port-log1pf.h port/port-atanf.h port/port-tanf.h port/port-dfast.h)
+A64OBJ  := $(A64)/crmvec.o $(A64)/scalar.o $(A64)/f16.o $(A64)/advsimd.o $(A64)/sve.o $(if $(filter 1,$(A64PORT)),$(A64)/port.o)
 aarch64: $(A64)/libmvec.so.1 $(A64)/libsleefgnuabi.so.3 $(A64)/aarch64-check
 
 $(A64OBJ) &: $(A64SRC) $(F16SRC)
@@ -181,8 +191,8 @@ $(A64OBJ) &: $(A64SRC) $(F16SRC)
 	$(A64CC) $(CFLAGS) $(FP) -fPIC -fvisibility=hidden -c -o $(A64)/f16.o crmvec-f16.c
 	rm -rf $(A64)/f16src && mkdir -p $(A64)/f16src && for f in $(F16SRC); do $(A64CC) $(CFLAGS) $(FP) -fPIC -fvisibility=hidden -c -o $(A64)/f16src/$$(echo $$f | tr / -).o $$f || exit 1; done
 	rm -f $(A64)/libcrf16.a && ar rcs $(A64)/libcrf16.a $(A64)/f16src/*.o
-	$(A64CC) $(CFLAGS) $(FP) -DCRMVEC_PORT=$(PORT) -fPIC -fvisibility=hidden -c -o $(A64)/advsimd.o crmvec-aarch64.c
-	$(if $(filter 1,$(PORT)),$(A64CC) -O3 -ffp-contract=off -fno-math-errno -fPIC -fvisibility=hidden -c -o $(A64)/port.o port/crmvec-port-a64.c)
+	$(A64CC) $(CFLAGS) $(FP) -DCRMVEC_PORT=$(A64PORT) -fPIC -fvisibility=hidden -c -o $(A64)/advsimd.o crmvec-aarch64.c
+	$(if $(filter 1,$(A64PORT)),$(A64CC) -O3 -ffp-contract=off -fno-math-errno -fPIC -fvisibility=hidden -c -o $(A64)/port.o port/crmvec-port-a64.c)
 	$(A64CC) $(CFLAGS) $(FP) -fPIC -fvisibility=hidden -march=armv8-a+sve -c -o $(A64)/sve.o crmvec-sve.c
 
 $(A64)/libmvec.so.1 $(A64)/libsleefgnuabi.so.3: $(A64OBJ) $(CR)

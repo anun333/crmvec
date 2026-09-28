@@ -96,13 +96,13 @@ jobs:
           gcc -O3 -ffp-contract=off -fno-math-errno -fopenmp -DVB=16 -o gfloat port/generic-expf.c crf_*.o -ldl -lm
           for f in expf exp2f exp10f logf log2f log10f log1pf sinf cosf tanf asinf acosf atanf expm1f coshf sinhf tanhf asinhf acoshf atanhf cbrtf erff erfcf; do ./gfloat verify $f; done
           for f in powf atan2f hypotf; do ./gfloat verify2 16777216 $f | tail -1; done
-      - name: PORT=1 (the functions in port/ in the library), checked and timed
+      - name: PORT=0 (the SIMDe route, the default before 0.3.0), checked, and timed against the default
         run: |
-          cp build-aarch64/libmvec.so.1 /tmp/libmvec-port0.so.1
-          make clean >/dev/null && make -j"$(nproc)" PORT=1 >/dev/null
-          make PORT=1 check
-          echo "PORT=1 | PORT=0 | glibc, the AdvSIMD entry points (only the ported functions differ between the first two):"
-          build-aarch64/nbench build-aarch64/libmvec.so.1 /tmp/libmvec-port0.so.1 /usr/lib/aarch64-linux-gnu/libmvec.so.1
+          cp build-aarch64/libmvec.so.1 /tmp/libmvec-port1.so.1
+          make clean >/dev/null && make -j"$(nproc)" PORT=0 >/dev/null
+          make PORT=0 check
+          echo "PORT=1 (the default) | PORT=0 | glibc, the AdvSIMD entry points (only the ported functions differ between the first two):"
+          build-aarch64/nbench /tmp/libmvec-port1.so.1 build-aarch64/libmvec.so.1 /usr/lib/aarch64-linux-gnu/libmvec.so.1
       - name: Keep check.log
         if: always()
         uses: actions/upload-artifact@v4
