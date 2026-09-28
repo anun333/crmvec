@@ -87,8 +87,8 @@ crmvec.o: crmvec.c $(HDR)
 crmvec-avx2.o: crmvec.c $(HDR)
 	$(CC) $(CFLAGS) $(FPV) -mavx2 -mfma -c -o $@ crmvec.c
 
-libmvec.so.1: crmvec.o $(LIBC) $(HDR) $(CR) libcrf16.a
-	$(CC) $(CFLAGS) $(FP) -fPIC -shared -Wl,-soname,libmvec.so.1 -o $@ crmvec.o $(LIBC) $(CR) libcrf16.a -lm
+libmvec.so.1: crmvec.o $(LIBC) $(HDR) $(CR) libcrf16.a crmvec-exports.map
+	$(CC) $(CFLAGS) $(FP) -fPIC -shared -Wl,-soname,libmvec.so.1 -Wl,--version-script=crmvec-exports.map -o $@ crmvec.o $(LIBC) $(CR) libcrf16.a -lm
 
 crtest: crtest.c crtest-hard.h crmvec-avx2.o $(LIBC) $(HDR) $(CR) libcrf16.a
 	$(CC) $(CFLAGS) $(FP) -mavx2 -mfma -fopenmp -o $@ crtest.c crmvec-avx2.o $(LIBC) $(CR) libcrf16.a -lm -ldl
@@ -124,8 +124,9 @@ ebench: ebench.c
 # crmvec-lanes.h's functions through both x86 entry points against MPFR
 # (libmpfr-dev 4.2), and the exhaustive search that proves pownf's double
 # path and checks its exception table (crmvec-pownf-tab.h); both run by hand (`mpfrcheck`, `mpfrcheck controls`, `pownf-search`)
-mpfrcheck: mpfrcheck.c libmvec.so.1
-	$(CC) $(CFLAGS) $(FP) -mavx2 -mfma -fopenmp -o $@ mpfrcheck.c libmvec.so.1 -Wl,-rpath,'$$ORIGIN' -lmpfr -lm
+# its controls call CORE-MATH's pow directly, which the library does not export
+mpfrcheck: mpfrcheck.c libmvec.so.1 pow/pow.c powf.c
+	$(CC) $(CFLAGS) $(FP) -mavx2 -mfma -fopenmp -o $@ mpfrcheck.c pow/pow.c powf.c libmvec.so.1 -Wl,-rpath,'$$ORIGIN' -lmpfr -lm
 
 # crmvec-f16.c's functions against MPFR on every input, all four modes
 f16check: f16check.c crmvec-f16-list.h libmvec.so.1
@@ -187,10 +188,28 @@ sleef-exports: $(A64)/libsleefgnuabi.so.3
 	 test ! -s $(A64)/missing.txt && test ! -s $(A64)/no-vpcs.txt
 
 clean:
-	rm -f libmvec.so.1 crmvec.o crmvec-avx2.o crtest libcrref.so bcheck hypot-midpoints tan-poles bbench ebench mpfrcheck pownf-search libcrf16.a f16check cecheck lcheck
+	rm -f check.log libmvec.so.1 crmvec.o crmvec-avx2.o crtest libcrref.so bcheck hypot-midpoints tan-poles bbench ebench mpfrcheck pownf-search libcrf16.a f16check cecheck lcheck
 	rm -rf $(A64) build-sleef build-f16
+
+# a few minutes of the checks, for users and packagers (the full list is the
+# README's "Checking it"); each line must print a passing verdict, and the
+# controls must fail as they should. The AVX and AVX-512 entry points are
+# checked only on CPUs that have them (elsewhere the checker itself would
+# fault). Needs libmpfr-dev, as `make` does.
+check: all
+	@set -e; v() { echo "$$1" | tee -a check.log | tail -1; echo "$$1" | tail -1 | grep -qE 'IDENTICAL|CORRECTLY ROUNDED|all four differ' || { echo "FAILED: $$2"; exit 1; }; }; \
+	: > check.log; \
+	v "$$(./bcheck . 18)" bcheck; \
+	if grep -q ' avx ' /proc/cpuinfo; then v "$$(./cecheck c . 14)" "cecheck c"; else echo "cecheck c: skipped, no AVX"; fi; \
+	if grep -q avx512f /proc/cpuinfo; then v "$$(./cecheck e . 12)" "cecheck e"; else echo "cecheck e: skipped, no AVX-512F"; fi; \
+	v "$$(./mpfrcheck 16 all)" "mpfrcheck, four rounding modes"; \
+	v "$$(./mpfrcheck controls)" "mpfrcheck controls"; \
+	v "$$(./crtest verify expf logf sinf)" "crtest verify (every input of expf, logf, sinf)"; \
+	v "$$(./lcheck .)" "lcheck (every input of sinpif, cospif, tanpif, rsqrtf)"; \
+	v "$$(./f16check | tail -1)" "f16check"; \
+	echo "make check: every verdict passed (details in check.log)"
 
 print-sources:   # for the export script: every CORE-MATH source the build uses
 	@echo $(CR)
 
-.PHONY: all lib install headercheck clean print-sources aarch64 sleef-exports
+.PHONY: all lib install headercheck check clean print-sources aarch64 sleef-exports

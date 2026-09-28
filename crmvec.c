@@ -75,6 +75,18 @@ static inline __attribute__((always_inline)) int crm_rn(void) { return fegetroun
 float cr_expf(float), cr_exp2f(float), cr_exp10f(float);
 float cr_logf(float), cr_log2f(float), cr_log10f(float);
 
+#if (defined(__x86_64__) || defined(__i386__)) && defined(__clang__) && !defined(__AVX__)
+/* clang takes a target("avx2") function's 256- and 512-bit arguments from
+   memory when the file itself is not built with -mavx: it sets the calling
+   convention from the command line, not the attribute, and says nothing.
+   gcc follows the attribute and passes them in ymm/zmm registers, as every
+   caller of _ZGVd/_ZGVc/_ZGVe does. A clang-built libmvec.so.1 therefore
+   read garbage in all its AVX, AVX2 and AVX-512 entry points (audit,
+   2026-09-27: mpfrcheck on the clang build). The library must be built
+   with gcc; clang still builds the checks, which compile this file with
+   -mavx2 (crmvec-avx2.o). The fix for clang is one file per ISA. */
+#error "the x86 library needs gcc: clang would pass 256-bit arguments of its AVX2 entry points in memory (see the comment above)"
+#endif
 #if defined(__x86_64__) || defined(__i386__)
 #define AVX2 __attribute__((target("avx2,fma")))
 /* internal helpers are always inlined: when crmvec.c grew on 2026-09-26, gcc
@@ -949,7 +961,7 @@ AVX2I static inline __m256d trig_fast(__m256d x, int shift8)
   __m256d cj = _mm256_blendv_pd(_mm256_castps_pd(_mm256_permutevar8x32_ps(CLO, pidx)),
                                 _mm256_castps_pd(_mm256_permutevar8x32_ps(CHI, pidx)), hi4);
   __m256d odd = _mm256_castsi256_pd(_mm256_slli_epi64(is, 60));                /* qd odd */
-  const __m256d SIGN = _mm256_castsi256_pd(_mm256_set1_epi64x(1LL << 63));
+  const __m256d SIGN = _mm256_castsi256_pd(_mm256_set1_epi64x(INT64_MIN));
   __m256d s0 = _mm256_xor_pd(_mm256_blendv_pd(sj, cj, odd), _mm256_and_pd(_mm256_castsi256_pd(_mm256_slli_epi64(is, 59)), SIGN));
   __m256d c0 = _mm256_xor_pd(_mm256_blendv_pd(cj, sj, odd), _mm256_and_pd(_mm256_castsi256_pd(_mm256_slli_epi64(ic, 59)), SIGN));
 #endif
@@ -1024,7 +1036,7 @@ AVX2I static inline __m256d tanf_half(__m128 xf, __m128i *redo)
   __m256d d2 = _mm256_fmadd_pd(z2, _mm256_set1_pd(-0x1.9a707ab98d1c1p-9), _mm256_set1_pd(0x1.2313660f29c36p-3));
   d = _mm256_fmadd_pd(z4, d2, d);
   __m256d odd = _mm256_castsi256_pd(_mm256_slli_epi64(q, 63));
-  __m256d num = _mm256_blendv_pd(n, _mm256_xor_pd(d, _mm256_castsi256_pd(_mm256_set1_epi64x(1LL << 63))), odd);
+  __m256d num = _mm256_blendv_pd(n, _mm256_xor_pd(d, _mm256_castsi256_pd(_mm256_set1_epi64x(INT64_MIN))), odd);
   __m256d den = _mm256_blendv_pd(d, n, odd);
   __m256d y = _mm256_div_pd(num, den);
   /* |x| < 2^-26: tan x rounds to x (and keeps -0) */
@@ -1061,7 +1073,7 @@ float cr_powf(float, float);
 
 AVX2I static inline __m256d powf_half(__m128 xf, __m128 yf, __m128i *redo)
 {
-  const __m256d ONE = _mm256_set1_pd(1.0), SIGN = _mm256_castsi256_pd(_mm256_set1_epi64x(1LL << 63));
+  const __m256d ONE = _mm256_set1_pd(1.0), SIGN = _mm256_castsi256_pd(_mm256_set1_epi64x(INT64_MIN));
   const __m256i MANT = _mm256_set1_epi64x(0xfffffffffffffLL);
   __m256d x = _mm256_cvtps_pd(xf), y = _mm256_cvtps_pd(yf);
   __m256d ax = _mm256_andnot_pd(SIGN, x), ay = _mm256_andnot_pd(SIGN, y);
@@ -1201,7 +1213,7 @@ static const double INVFACT[14] = {   /* 1/n! */
   0x1.27e4fb7789f5cp-22, 0x1.ae64567f544e4p-26, 0x1.1eed8eff8d898p-29, 0x1.6124613a86d09p-33};
 
 AVX2I static inline __m256d abs_pd(__m256d x)
-{ return _mm256_andnot_pd(_mm256_castsi256_pd(_mm256_set1_epi64x(1LL << 63)), x); }
+{ return _mm256_andnot_pd(_mm256_castsi256_pd(_mm256_set1_epi64x(INT64_MIN)), x); }
 
 /* e^u - 1 in double: Taylor to u^13 for |u| < 1/2 (truncation < 2^-49
    relative), else exp2_core - 1 (relative error < 2^-35.7 there) */
@@ -1244,7 +1256,7 @@ AVX2I static inline __m256d sinhf_half(__m128 xf, __m128i *redo)
   __m256d t = _mm256_min_pd(_mm256_mul_pd(ax, _mm256_set1_pd(0x1.71547652b82fep+0)), _mm256_set1_pd(300.0));
   __m256d big = _mm256_mul_pd(_mm256_sub_pd(exp2_core(t), exp2_core(_mm256_sub_pd(_mm256_setzero_pd(), t))),
                               _mm256_set1_pd(0.5));
-  big = _mm256_or_pd(big, _mm256_and_pd(x, _mm256_castsi256_pd(_mm256_set1_epi64x(1LL << 63))));
+  big = _mm256_or_pd(big, _mm256_and_pd(x, _mm256_castsi256_pd(_mm256_set1_epi64x(INT64_MIN))));
   __m256d y = _mm256_blendv_pd(big, small, _mm256_cmp_pd(ax, _mm256_set1_pd(0.5), _CMP_LT_OQ));
   *redo = _mm_or_si128(ambiguous(y, BR_HYP), nonfinite(xf));
   return y;
@@ -1299,7 +1311,7 @@ AVX2I static inline __m256d asinhf_half(__m128 xf, __m128i *redo)
   __m256d x = _mm256_cvtps_pd(xf), ax = abs_pd(x), x2 = _mm256_mul_pd(ax, ax);   /* exact */
   __m256d w = _mm256_add_pd(ax, _mm256_div_pd(x2, _mm256_add_pd(ONE, _mm256_sqrt_pd(_mm256_add_pd(ONE, x2)))));
   __m256d y = log1p_d(_mm256_and_pd(w, _mm256_cmp_pd(w, w, _CMP_ORD_Q)));         /* nan -> 0, flagged */
-  y = _mm256_or_pd(y, _mm256_and_pd(x, _mm256_castsi256_pd(_mm256_set1_epi64x(1LL << 63))));
+  y = _mm256_or_pd(y, _mm256_and_pd(x, _mm256_castsi256_pd(_mm256_set1_epi64x(INT64_MIN))));
   *redo = _mm_or_si128(ambiguous(y, BR_HYP), nonfinite(xf));
   return y;
 }
@@ -1334,7 +1346,7 @@ FLOAT_FROM_HALF(atanhf, atanhf_half, cr_atanhf)
    Newton steps y <- (2y + m/y^2)/3, far past double precision */
 AVX2I static inline __m256d cbrtf_half(__m128 xf, __m128i *redo)
 {
-  const __m256d SIGN = _mm256_castsi256_pd(_mm256_set1_epi64x(1LL << 63));
+  const __m256d SIGN = _mm256_castsi256_pd(_mm256_set1_epi64x(INT64_MIN));
   __m128i zero = _mm_cmpeq_epi32(_mm_and_si128(_mm_castps_si128(xf), _mm_set1_epi32(0x7fffffff)), _mm_setzero_si128());
   __m128i bad = _mm_or_si128(nonfinite(xf), zero);
   __m256d x = _mm256_cvtps_pd(_mm_blendv_ps(xf, _mm_set1_ps(1.0f), _mm_castsi128_ps(bad)));
@@ -1408,7 +1420,7 @@ AVX2I static inline __m256d atan_d(__m256d t)
 AVX2I static inline __m256d atanf_half(__m128 xf, __m128i *redo)
 {
   __m256d x = _mm256_cvtps_pd(xf);
-  __m256d y = _mm256_or_pd(atan_d(abs_pd(x)), _mm256_and_pd(x, _mm256_castsi256_pd(_mm256_set1_epi64x(1LL << 63))));
+  __m256d y = _mm256_or_pd(atan_d(abs_pd(x)), _mm256_and_pd(x, _mm256_castsi256_pd(_mm256_set1_epi64x(INT64_MIN))));
   *redo = _mm_or_si128(ambiguous(y, BR_ATAN), nonfinite(xf));
   return y;
 }
@@ -1419,7 +1431,7 @@ AVX2I static inline __m256d asinf_half(__m128 xf, __m128i *redo)       /* atan(x
   __m256d x = _mm256_cvtps_pd(_mm_blendv_ps(xf, _mm_setzero_ps(), _mm_castsi128_ps(bad)));
   __m256d ax = abs_pd(x), ONE = _mm256_set1_pd(1.0);
   __m256d t = _mm256_div_pd(ax, _mm256_sqrt_pd(_mm256_mul_pd(_mm256_sub_pd(ONE, ax), _mm256_add_pd(ONE, ax))));
-  __m256d y = _mm256_or_pd(atan_d(t), _mm256_and_pd(x, _mm256_castsi256_pd(_mm256_set1_epi64x(1LL << 63))));
+  __m256d y = _mm256_or_pd(atan_d(t), _mm256_and_pd(x, _mm256_castsi256_pd(_mm256_set1_epi64x(INT64_MIN))));
 #if NOTEST4   /* the zeroed-test control: correct on all 2^32 inputs without it */
   *redo = bad;
 #else
@@ -1448,7 +1460,7 @@ AVX2I static inline __m256d acosf_half(__m128 xf, __m128i *redo)       /* 2 atan
    leaves over 2^3 of margin. pi - a never cancels (a <= pi/2). */
 AVX2I static inline __m256d atan2f_half(__m128 yf, __m128 xf, __m128i *redo)
 {
-  const __m256d SIGN = _mm256_castsi256_pd(_mm256_set1_epi64x(1LL << 63));
+  const __m256d SIGN = _mm256_castsi256_pd(_mm256_set1_epi64x(INT64_MIN));
   __m128i z = _mm_or_si128(_mm_cmpeq_epi32(_mm_and_si128(_mm_castps_si128(yf), _mm_set1_epi32(0x7fffffff)), _mm_setzero_si128()),
                            _mm_cmpeq_epi32(_mm_and_si128(_mm_castps_si128(xf), _mm_set1_epi32(0x7fffffff)), _mm_setzero_si128()));
   __m128i bad = _mm_or_si128(z, _mm_or_si128(nonfinite(yf), nonfinite(xf)));
@@ -1485,7 +1497,7 @@ AVX2 __m256 _ZGVdN8vv_atan2f(__m256 yf, __m256 xf)
 
 AVX2I static inline __m256d erff_half(__m128 xf, __m128i *redo)
 {
-  const __m256d SIGN = _mm256_castsi256_pd(_mm256_set1_epi64x(1LL << 63));
+  const __m256d SIGN = _mm256_castsi256_pd(_mm256_set1_epi64x(INT64_MIN));
   __m256d x = _mm256_cvtps_pd(xf), ax = abs_pd(x), sg = _mm256_and_pd(x, SIGN);
   /* |x| < 7/16: x times a degree-7 polynomial in x^2 */
   __m256d z2 = _mm256_mul_pd(x, x), z4 = _mm256_mul_pd(z2, z2), z8 = _mm256_mul_pd(z4, z4);
@@ -2006,7 +2018,7 @@ double cr_cbrt(double);
 
 AVX2I static inline __m256d cbrt_fast(__m256d x, __m256d *redo)
 {
-  const __m256i MANT = _mm256_set1_epi64x(0xfffffffffffffLL), SIGNI = _mm256_set1_epi64x(1LL << 63);
+  const __m256i MANT = _mm256_set1_epi64x(0xfffffffffffffLL), SIGNI = _mm256_set1_epi64x(INT64_MIN);
   const __m256d MAGIC = _mm256_set1_pd(0x1.8p52);
   __m256i hx = _mm256_castpd_si256(x);
   __m256i eb = _mm256_and_si256(_mm256_srli_epi64(hx, 52), _mm256_set1_epi64x(0x7ff));
@@ -2073,7 +2085,7 @@ double cr_atan(double);
 #endif
 AVX2I static inline __m256d atan_fast3(__m256d x, __m256d *redo, __m256d *inr)
 {
-  const __m256i SIGNI = _mm256_set1_epi64x(1LL << 63);
+  const __m256i SIGNI = _mm256_set1_epi64x(INT64_MIN);
   __m256i xb = _mm256_castpd_si256(x), at = _mm256_andnot_si256(SIGNI, xb);
   __m256i ok = _mm256_and_si256(_mm256_cmpgt_epi64(at, _mm256_set1_epi64x(0x3e3fffffffffffffLL)),     /* >= 2^-27 */
                                 _mm256_cmpgt_epi64(_mm256_set1_epi64x(0x434d02967c31cdb5LL), at));
@@ -2250,13 +2262,13 @@ AVX2I static inline __m256d asin_fast(__m256d x, __m256d *redo)
   x = _mm256_blendv_pd(_mm256_set1_pd(0.25), x, ok);
   ax = abs_pd(x);
   __m256d big = _mm256_cmp_pd(ax, _mm256_set1_pd(0.5), _CMP_GT_OQ);
-  __m256d sg = _mm256_and_pd(x, _mm256_castsi256_pd(_mm256_set1_epi64x(1LL << 63)));
+  __m256d sg = _mm256_and_pd(x, _mm256_castsi256_pd(_mm256_set1_epi64x(INT64_MIN)));
   /* |x| > 1/2 */
   __m256d tb = _mm256_setzero_pd(), jb = _mm256_setzero_pd(), zb = _mm256_setzero_pd(), zlb = _mm256_setzero_pd(), epsb = _mm256_setzero_pd();
   if (!REGIME_SKIP2 || _mm256_movemask_pd(big)) {
   tb = _mm256_sub_pd(_mm256_set1_pd(2.0), _mm256_add_pd(ax, ax));
   jb = _mm256_round_pd(_mm256_mul_pd(tb, _mm256_set1_pd(0x1p5)), _MM_FROUND_TO_NEAREST_INT | _MM_FROUND_NO_EXC);
-  zb = _mm256_xor_pd(_mm256_sqrt_pd(tb), _mm256_xor_pd(sg, _mm256_castsi256_pd(_mm256_set1_epi64x(1LL << 63))));   /* copysign(., -x) */
+  zb = _mm256_xor_pd(_mm256_sqrt_pd(tb), _mm256_xor_pd(sg, _mm256_castsi256_pd(_mm256_set1_epi64x(INT64_MIN))));   /* copysign(., -x) */
   zlb = _mm256_mul_pd(_mm256_fmsub_pd(zb, zb, tb), _mm256_mul_pd(_mm256_div_pd(_mm256_set1_pd(-0.5), tb), zb));
   tb = _mm256_sub_pd(_mm256_mul_pd(_mm256_set1_pd(0.25), tb), _mm256_mul_pd(jb, _mm256_set1_pd(0x1p-7)));
   epsb = _mm256_mul_pd(abs_pd(_mm256_mul_pd(zb, tb)), _mm256_set1_pd(0x1.99p-52 * CM_EPS_SCALE));
@@ -2405,7 +2417,7 @@ double cr_acos(double);
 
 AVX2I static inline __m256d acos_fast(__m256d x, __m256d *redo)
 {
-  const __m256d SIGN = _mm256_castsi256_pd(_mm256_set1_epi64x(1LL << 63));
+  const __m256d SIGN = _mm256_castsi256_pd(_mm256_set1_epi64x(INT64_MIN));
   __m256d ok = _mm256_cmp_pd(abs_pd(x), _mm256_set1_pd(1.0), _CMP_LT_OQ);
   x = _mm256_and_pd(x, ok);
   __m256d ax = abs_pd(x), sg = _mm256_and_pd(x, SIGN);
@@ -2471,7 +2483,7 @@ double cr_sinh(double), cr_cosh(double);
 
 AVX2I static inline __m256d sinhcosh_fast(__m256d x, int is_cosh, __m256d *redo)
 {
-  const __m256d ONE = _mm256_set1_pd(1.0), SIGN = _mm256_castsi256_pd(_mm256_set1_epi64x(1LL << 63));
+  const __m256d ONE = _mm256_set1_pd(1.0), SIGN = _mm256_castsi256_pd(_mm256_set1_epi64x(INT64_MIN));
   const __m256i MANT = _mm256_set1_epi64x(0xfffffffffffffLL);
   __m256d ax = abs_pd(x), sg = _mm256_and_pd(x, SIGN);
   __m256d ok = _mm256_and_pd(_mm256_cmp_pd(ax, _mm256_set1_pd(is_cosh ? 0x1p-26 : 0x1.7137449123ef7p-26), _CMP_GE_OQ),
@@ -2566,7 +2578,7 @@ double cr_tanh(double);
 
 AVX2I static inline __m256d tanh_fast(__m256d x, __m256d *redo)
 {
-  const __m256d ONE = _mm256_set1_pd(1.0), SIGN = _mm256_castsi256_pd(_mm256_set1_epi64x(1LL << 63));
+  const __m256d ONE = _mm256_set1_pd(1.0), SIGN = _mm256_castsi256_pd(_mm256_set1_epi64x(INT64_MIN));
   __m256d ax = abs_pd(x), sg = _mm256_and_pd(x, SIGN);
   __m256d ok = _mm256_cmp_pd(ax, _mm256_set1_pd(0x1.d12ed0af1a27fp-27), _CMP_GT_OQ);    /* false for nan */
   __m256d sat = _mm256_cmp_pd(ax, _mm256_set1_pd(0x1.30fc1931f09cap+4), _CMP_GE_OQ);
@@ -2678,7 +2690,7 @@ AVX2I static inline void asinh_log_core(__m256d tt, __m256i off, __m256d *ed, __
 
 AVX2I static inline __m256d asinh_fast(__m256d x, __m256d *redo)
 {
-  const __m256d ONE = _mm256_set1_pd(1.0), SIGN = _mm256_castsi256_pd(_mm256_set1_epi64x(1LL << 63));
+  const __m256d ONE = _mm256_set1_pd(1.0), SIGN = _mm256_castsi256_pd(_mm256_set1_epi64x(INT64_MIN));
   __m256d ax = abs_pd(x), sg = _mm256_and_pd(x, SIGN);
   __m256d ok = _mm256_and_pd(_mm256_cmp_pd(ax, _mm256_set1_pd(0x1.7137449123ef7p-26), _CMP_GE_OQ),
                              _mm256_cmp_pd(ax, _mm256_set1_pd(__builtin_inf()), _CMP_LT_OQ));
@@ -2813,7 +2825,7 @@ double cr_atanh(double);
 
 AVX2I static inline __m256d atanh_fast(__m256d x, __m256d *redo)
 {
-  const __m256d ONE = _mm256_set1_pd(1.0), SIGN = _mm256_castsi256_pd(_mm256_set1_epi64x(1LL << 63));
+  const __m256d ONE = _mm256_set1_pd(1.0), SIGN = _mm256_castsi256_pd(_mm256_set1_epi64x(INT64_MIN));
   const __m256i MANT = _mm256_set1_epi64x(0xfffffffffffffLL);
   __m256d ax = abs_pd(x), sg = _mm256_and_pd(x, SIGN);
   __m256d ok = _mm256_and_pd(_mm256_cmp_pd(ax, _mm256_set1_pd(0x1.d12ed0af1a27fp-27), _CMP_GE_OQ), _mm256_cmp_pd(ax, ONE, _CMP_LT_OQ));
@@ -2908,7 +2920,7 @@ double cr_atan2(double, double);
 
 AVX2I static inline __m256d atan2_fast(__m256d y0, __m256d x0, __m256d *redo)
 {
-  const __m256i MASK = _mm256_set1_epi64x(0x7fffffffffffffffLL), SIGNI = _mm256_set1_epi64x(1LL << 63);
+  const __m256i MASK = _mm256_set1_epi64x(0x7fffffffffffffffLL), SIGNI = _mm256_set1_epi64x(INT64_MIN);
   __m256i iy = _mm256_castpd_si256(y0), ix = _mm256_castpd_si256(x0);
   __m256i aiy = _mm256_and_si256(iy, MASK), aix = _mm256_and_si256(ix, MASK);
   const __m256i EXP = _mm256_set1_epi64x(0x7ffLL << 52);
@@ -2973,7 +2985,7 @@ AVX2 __m256d _ZGVdN4vv_atan2(__m256d y, __m256d x)
 double cr_hypot(double, double);
 
 AVX2I static inline __m256i ucmpgt_epi64(__m256i a, __m256i b)   /* unsigned a > b */
-{ const __m256i F = _mm256_set1_epi64x(1LL << 63); return _mm256_cmpgt_epi64(_mm256_xor_si256(a, F), _mm256_xor_si256(b, F)); }
+{ const __m256i F = _mm256_set1_epi64x(INT64_MIN); return _mm256_cmpgt_epi64(_mm256_xor_si256(a, F), _mm256_xor_si256(b, F)); }
 
 AVX2I static inline __m256d hypot_fast(__m256d x, __m256d y, __m256d *redo)
 {
@@ -3102,7 +3114,7 @@ __m256d cc_[13]; LOAD_ROWS(CT, _mm256_mul_epu32(row, _mm256_set1_epi64x(13)), cc
 
 AVX2I static inline __m256d erf_fast(__m256d x, __m256d *redo)
 {
-  const __m256d SIGN = _mm256_castsi256_pd(_mm256_set1_epi64x(1LL << 63));
+  const __m256d SIGN = _mm256_castsi256_pd(_mm256_set1_epi64x(INT64_MIN));
   __m256d z = abs_pd(x), sg = _mm256_and_pd(x, SIGN);
   __m256d ok = _mm256_cmp_pd(z, _mm256_set1_pd(0x1p-61), _CMP_GE_OQ);              /* false for nan */
   __m256d sat = _mm256_cmp_pd(z, _mm256_set1_pd(0x1.7afb48dc96626p+2), _CMP_GT_OQ);
@@ -3132,7 +3144,7 @@ static const double POW_T1[64][2], POW_T2[64][2];   /* defined with pow, below *
 
 AVX2I static inline __m256d erfc_fast(__m256d x, __m256d *redo)
 {
-  const __m256d ONE = _mm256_set1_pd(1.0), SIGN = _mm256_castsi256_pd(_mm256_set1_epi64x(1LL << 63));
+  const __m256d ONE = _mm256_set1_pd(1.0), SIGN = _mm256_castsi256_pd(_mm256_set1_epi64x(INT64_MIN));
   const __m256d MAGIC = _mm256_set1_pd(0x1.8p52);
 #define C_(k) _mm256_set1_pd(k)
   __m256d to2 = _mm256_cmp_pd(x, C_(-0x1.7744f8f74e94bp+2), _CMP_LE_OQ);
@@ -3436,7 +3448,7 @@ double cr_sin(double), cr_cos(double);
    absolute of sin x (or cos x); *ok is false for lanes it cannot take. */
 AVX2I static inline void sincos_dd(__m256d x, int is_cos, __m256d *fho, __m256d *flo, __m256d *oko)
 {
-  const __m256d SIGN = _mm256_castsi256_pd(_mm256_set1_epi64x(1LL << 63));
+  const __m256d SIGN = _mm256_castsi256_pd(_mm256_set1_epi64x(INT64_MIN));
   __m256d ax = _mm256_andnot_pd(SIGN, x);
   __m256d ok = _mm256_cmp_pd(ax, _mm256_set1_pd(0x1p31), _CMP_LT_OQ);          /* false for nan */
   ax = _mm256_and_pd(ax, ok);                                                   /* others: 0, recomputed */
@@ -3483,7 +3495,7 @@ AVX2I static inline void sincos_dd(__m256d x, int is_cos, __m256d *fho, __m256d 
    but not their gathers. */
 AVX2I static inline void sincos_dd2(__m256d x, __m256d *sho, __m256d *slo, __m256d *cho, __m256d *clo, __m256d *oko)
 {
-  const __m256d SIGN = _mm256_castsi256_pd(_mm256_set1_epi64x(1LL << 63));
+  const __m256d SIGN = _mm256_castsi256_pd(_mm256_set1_epi64x(INT64_MIN));
   __m256d ax = _mm256_andnot_pd(SIGN, x);
   __m256d ok = _mm256_cmp_pd(ax, _mm256_set1_pd(0x1p31), _CMP_LT_OQ);
   ax = _mm256_and_pd(ax, ok);
@@ -3588,7 +3600,7 @@ double cr_tan(double);
 
 AVX2I static inline __m256d tan_fast(__m256d x, __m256d *redo)
 {
-  const __m256d SIGN = _mm256_castsi256_pd(_mm256_set1_epi64x(1LL << 63)), E = _mm256_set1_pd(SIN_EPS);
+  const __m256d SIGN = _mm256_castsi256_pd(_mm256_set1_epi64x(INT64_MIN)), E = _mm256_set1_pd(SIN_EPS);
   __m256d sh, sl, ch, cl, ok, ok2;
 #ifndef TAN_SEPARATE
   sincos_dd2(x, &sh, &sl, &ch, &cl, &ok); ok2 = ok;
@@ -3654,7 +3666,7 @@ double cr_pow(double, double);
 
 AVX2I static inline __m256d pow_fast(__m256d x, __m256d y, __m256d *redo)
 {
-  const __m256d SIGN = _mm256_castsi256_pd(_mm256_set1_epi64x(1LL << 63)), ONE = _mm256_set1_pd(1.0);
+  const __m256d SIGN = _mm256_castsi256_pd(_mm256_set1_epi64x(INT64_MIN)), ONE = _mm256_set1_pd(1.0);
   const __m256d MAGIC = _mm256_set1_pd(0x1.8p52);
   const __m256i MANT = _mm256_set1_epi64x(0xfffffffffffffLL);
   __m256d ax = _mm256_andnot_pd(SIGN, x), ay = _mm256_andnot_pd(SIGN, y);

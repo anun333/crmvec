@@ -72,14 +72,15 @@ code yet: each element runs CORE-MATH's function.
 ## Using it
 
 ```
-make                      # libmvec.so.1 and the checks (gcc, or CC=clang with libomp)
+make                      # libmvec.so.1 and the checks (needs gcc and libmpfr-dev; clang can't build the x86 library, see Limits)
+make check                # a few minutes of the checks below; every verdict must pass
 LD_LIBRARY_PATH=$PWD your-program
 ```
 
 Or install it (version 0.1.0):
 
 ```
-make lib                  # the libraries only (on aarch64: libmvec.so.1 and libsleefgnuabi.so.3)
+make lib                  # the libraries only: a C compiler is enough (on aarch64 also libsimde-dev; builds libmvec.so.1 and libsleefgnuabi.so.3)
 make install PREFIX=/usr/local
 crmvec-run your-program   # the program's vector math from crmvec, nothing else changed
 pkg-config --cflags --libs crmvec   # to link crmvec.h's functions, with an rpath to crmvec
@@ -87,7 +88,10 @@ pkg-config --cflags --libs crmvec   # to link crmvec.h's functions, with an rpat
 
 The libraries go to `lib/crmvec/`, a directory of their own. They replace the
 system's `libmvec.so.1` only for programs run with `crmvec-run` or linked
-with pkg-config's rpath, never system-wide.
+with pkg-config's rpath, never system-wide. They export only their API: the
+vector entry points (`_ZGV*`) and `crmvec.h`'s functions (`crmvec_*`), not
+CORE-MATH's `cr_*` functions or the library's internals
+(`crmvec-exports.map`).
 
 Packages, from this repository:
 - **Debian and Ubuntu** (`debian/`, `dpkg-buildpackage -b`): built on Ubuntu
@@ -114,8 +118,13 @@ with no PoCL change and no rebuild. That holds for the 16 functions PoCL
 hands to the vectorizer: `sin` `cos` `tan` `exp` `log` `pow` `exp2` `exp10`
 `log2` `log10` `asin` `acos` `atan` `sinh` `cosh` `tanh` (the last six need an
 LLVM with the rows of #223817). PoCL computes the other ten itself and never
-calls `libmvec` for them. Programs vectorized by gcc or clang against
-`libmvec` pick up the library the same way.
+calls `libmvec` for them. And it reaches a kernel only where PoCL vectorizes
+the call: where the work-item loop stays scalar, PoCL keeps its own
+builtins. In a test kernel that calls 36 different functions, whose loop
+mostly stays scalar, 47 of its 76 outputs came from this library
+(2026-09-27). Programs vectorized by gcc or clang against `libmvec` pick up
+the library the same way, under the same condition: only calls the compiler
+vectorized reach it.
 
 ## How each function is made correct
 
@@ -180,6 +189,7 @@ that program, CORE-MATH's scalar code included.
 ## Checking it
 
 ```
+make check           # a few minutes of what follows, one verdict per line
 ./crtest verify      # one-argument floats: all 2^32 inputs each
 ./crtest verify64    # doubles: 2^31 random inputs each, CORE-MATH's hard cases, edge values
 ./crtest verify2     # the six two-argument functions: 2^30 random pairs each, 1,600 special pairs
@@ -205,8 +215,11 @@ LD_LIBRARY_PATH=$PWD python3 check-pocl.py   # through PoCL (needs pyopencl)
 python3 check-pocl.py                        # the control, with glibc's libmvec
 ```
 
-On the development machine (2026-09-26), built with gcc 13.3 and again with
-clang 22, every check reports 0 differences from CORE-MATH. The SSE2 entry
+On the development machine (2026-09-26), built with gcc 13.3, every check
+reports 0 differences from CORE-MATH. A clang 22 build passed the same
+checks that day, but they compile `crmvec.c` with `-mavx2` or call only the
+SSE2 entry points; the clang-built library's own AVX2 entry points turned
+out to be broken (Limits). The SSE2 entry
 points give the same answers on the emulated Core 2, after a control shows
 that an AVX2 instruction does fault there, so nothing on that path needs
 AVX. Through PoCL, all 16 functions it hands to `libmvec` give
@@ -230,6 +243,18 @@ fresh copy of this repository:
   without AVX2. The AVX-512 entry points under SDE. 0 differences.
 - **`pownf-search`:** every one of its 19.5 billion (x, n) pairs is covered.
 - **The aarch64 checks below:** 0 differences, in round-upward too.
+
+**Audited 2026-09-27**, from a fresh clone in clean containers:
+- **Sanitizers:** under AddressSanitizer and UBSan, `crtest verify` (every input
+  of the 23 floats), `verify64` and `verify2`, `bcheck`, `cecheck c`, `mpfrcheck` in all four modes,
+  `lcheck` and `f16check` all pass. Neither sanitizer reports anything in
+  this library's own code, after one fix: a signed shift building the sign
+  mask, now `INT64_MIN`, with identical machine code. UBSan's only other
+  reports are five shifts inside CORE-MATH's own files, none of which
+  changed a result.
+- **Exports:** the library stopped exporting its internals.
+- **clang:** a clang-built x86 library turned out to be broken (Limits).
+- **`make check`** was added.
 
 The checks do see wrong answers when there are some. Each vector path was
 rebuilt with its rounding test disabled, and then failed its check: every
@@ -290,9 +315,10 @@ CPU made the table-heavy functions up to twice as fast; functions made of
 several regimes compute a regime only when some lane of the vector is in
 it. On inputs that vary smoothly along the array (`CRTEST_SMOOTH=1`), as
 real data mostly does, the median is 3.1x, and `atan` takes 3.3 ns
-instead of the 5.4 above. Built with clang 22, the code was 6% faster at
-the median than with gcc (measured 2026-09-26, before the rounding-mode
-check).
+instead of the 5.4 above. Compiled by clang 22 with `-mavx2`, as `crtest`
+does, the vector code was 6% faster at the median than with gcc (measured
+2026-09-26, before the rounding-mode check), but clang cannot build the
+library itself (Limits).
 
 The SSE2 entry points, which programs built for baseline x86-64 call, are
 3.4x slower than glibc's at the median (1.3x to 8.4x; `./bbench`). On this
@@ -398,8 +424,16 @@ caller's vector registers survive lazy binding.
 - Built and timed for x86-64; aarch64 built and checked only under
   emulation. The x86 vector paths need AVX2 and FMA; without them, the SSE2
   entry points loop over scalar CORE-MATH.
-- Timed on one CPU, plus the busy, hired Zen 4 above. Checked with two compilers
-  (gcc 13.3, clang 22).
+- Timed on one CPU, plus the busy, hired Zen 4 above.
+- **The x86 library needs gcc** (13.3 here; the packages build it with gcc
+  13.2 and 16). clang passes the 256-bit arguments of a `target("avx2")`
+  function in memory unless the whole file is built with `-mavx`, silently.
+  gcc follows the attribute and uses registers, as every caller does. So a
+  clang-built library would read garbage in every AVX2, AVX and AVX-512
+  entry point, and `crmvec.c` stops a clang build of it with an error.
+  clang still builds the checks. This was found by an audit on 2026-09-27,
+  after the README had said the clang build passed every check; the fix
+  for clang would be one file per instruction set.
 - The AVX-512 entry points split into two AVX2 calls rather than using
   512-bit code. They are checked under Intel's emulator (SDE) and natively
   on a hired AMD EPYC 4564P (Zen 4), where every check above passes. There,
@@ -424,7 +458,9 @@ caller's vector registers survive lazy binding.
 The scalar functions, their tables, and the error analyses the vector paths
 rely on are [CORE-MATH](https://core-math.gitlabpages.inria.fr/)'s, by Alexei
 Sibidanov, Paul Zimmermann, Tom Hubrecht and others. Their files are
-included unmodified under their own MIT license and copyright notices, and
+included unmodified under their own MIT license and copyright notices (all
+165 are byte-identical to CORE-MATH's master branch at `6b84457`, still its
+latest commit on 2026-09-27), and
 the `crmvec-*-tab.h` headers copy their tables. Everything else is under the
 MIT license in `LICENSE`.
 

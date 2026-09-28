@@ -1,0 +1,12 @@
+/* crmvec-exports.map: what the x86 libmvec.so.1 exports: the vector entry
+   points (_ZGV*) and crmvec.h's functions (crmvec_*), nothing else. Without
+   it the library also exported CORE-MATH's cr_* and its own unchecked
+   internal entry points (crvi_*), 126 names: a program defining its own
+   cr_sin could interpose on crmvec's fallback, and crvi_* skip the
+   rounding-mode check (audit, 2026-09-27). The node has no name, so this sets
+   visibility only and adds no symbol versions. The aarch64 build gets the
+   same result from -fvisibility=hidden. */
+{
+  global: _ZGV*; crmvec_*;
+  local: *;
+};

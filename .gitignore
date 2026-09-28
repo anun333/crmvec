@@ -19,3 +19,4 @@ build-f16/
 build-dropin-x86/
 *.o
 ebench
+check.log
