@@ -467,7 +467,8 @@ default they don't.
     inputs on x86 AVX2 (the exp family also SSE and clang), and on aarch64:
     - under qemu (NEON): the exp family, `sinf`, `cosf`, the hyperbolic
       four, `cbrtf` and `atanf`;
-    - CI now runs all twenty-three natively on its Neoverse N2;
+    - natively on CI's Neoverse N2 (NEON): all twenty-three, and `powf`,
+      `atan2f` and `hypotf` on 84 million random pairs each;
     - `expf` also on AVX-512, SVE and RVV;
   - `powf`, `atan2f` and `hypotf` match on 2^30 random pairs and 1,600
     special pairs each through the library. With the rounding test switched
@@ -495,11 +496,16 @@ default they don't.
 
   An earlier version of this table compared against a build of this
   library from 2026-09-26, which was slower (3.05 and 3.32).
-- **x86 floats:** built by clang, the portable core is faster than the
-  intrinsics for `sinf` and `cosf` and the doubles, but so far slower (by
-  3-27%) for the float exp family, `coshf`, `sinhf` and `erff` (CI's
-  shared EPYC runner, timed through the SSE2 entry points, which reach the
-  AVX2 core for these functions).
+- **x86, all ported functions** (the AVX2 entry points, `crtest time`, in
+  L1, Zen 3):
+  - **doubles:** clang's portable build is 4-9% faster than the
+    intrinsics (`tan` 2% slower), and gcc's is 1-15% slower;
+  - **floats:** mostly slower, from near parity (the exp family, `sinf`,
+    the inverse trig functions, and clang's `logf` family) to 2.4 times
+    (`coshf` under gcc).
+
+  On x86 the portable core does not replace the intrinsics yet, which is
+  why `PORT=1` is off by default.
 - **On aarch64 the gap is the point.** On a Neoverse N2 (GitHub's arm64
   runner), this library's AdvSIMD entry points go through SIMDe and are 12
   to 122 times slower than glibc's (median 36). The portable NEON builds
@@ -526,10 +532,15 @@ AVX2 as a whole, so clang's ABI problem (Limits) does not arise. `make
 check` passes on both builds. On aarch64, `make PORT=1` routes the same
 thirty-five through the portable NEON code:
 - the AdvSIMD entry points (`port/crmvec-port-a64.c`). On the N2:
-  - `log` and `exp` take 6.6 and 7.3 ns per element, against 86 and 41
+  - `log` and `exp` take 6.5 and 7.2 ns per element, against 84 and 41
     through SIMDe;
-  - `sin` and `cos` take 9.6, against 63;
+  - `sin` and `cos` take 9.5 and 9.6, against 63;
   - `expf` takes 6.0, against 88;
+  - over all 35, the portable entry points are 2.3 (`erfcf`) to 19
+    (`sinhf`) times faster than the SIMDe route. They are still 3 to 10
+    times slower than glibc's where glibc has the function (CI run
+    36407622664);
+  - the 17 doubles not yet ported take 50 to 540 ns per element there;
 - SLEEF's names for them;
 - the blocks the SVE entry points call.
 
