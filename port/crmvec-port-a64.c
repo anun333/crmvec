@@ -2,7 +2,7 @@
    PORT=1; added 2026-09-28). The AdvSIMD entry points of the functions in
    port/ (first double log and exp, then the rest as they were ported: every
    float function and the doubles sin, cos, tan, exp2, exp10, log2, log10,
-   erf, erfc, tanh and pow), as NEON code from the same headers the spikes verify, in place of
+   erf, erfc, tanh, pow, expm1 and log1p), as NEON code from the same headers the spikes verify, in place of
    crmvec-aarch64.c's route, which widens the lanes to a 256-bit SIMDe core.
    crmvec-aarch64.c marks its own entry points weak when PORT=1, so these
    are the ones linked, and so are SLEEF's names for them (re-declared here:
@@ -26,6 +26,7 @@
 #include "port-erf.h"
 #include "port-tanh.h"
 #include "port-pow.h"
+#include "port-expm1.h"
 #include <arm_neon.h>
 
 #define EXPORT __attribute__((visibility("default"), aarch64_vector_pcs))
@@ -142,6 +143,8 @@ PORT_D1(log10)
 PORT_D1(erf)
 PORT_D1(erfc)
 PORT_D1(tanh)
+PORT_D1(expm1)
+PORT_D1(log1p)
 /* the two-argument doubles (port-pow.h ...): 2 lanes, and their SVE blocks */
 #define PORT_D2(n)                                                                     \
   EXPORT float64x2_t _ZGVnN2vv_##n(float64x2_t x, float64x2_t y)                       \

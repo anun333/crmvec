@@ -3328,10 +3328,17 @@ DOUBLE_FAST(log10, log10_fast, cr_log10)
 AVX2 __m256d _ZGVdN4v_exp2(__m256d); AVX2 __m256d _ZGVdN4v_exp10(__m256d);
 AVX2 __m256d _ZGVdN4v_log2(__m256d); AVX2 __m256d _ZGVdN4v_log10(__m256d);
 #endif
+#if !CRMVEC_PORT
 #if !CR_LOOP_EXPM1
 DOUBLE_FAST(expm1, expm1_fast, cr_expm1)
 #endif
 DOUBLE_FAST(log1p, log1p_fast, cr_log1p)
+#else   /* PORT=1: port/crmvec-port.c supplies them (port-expm1.h) */
+#if CR_LOOP_EXPM1
+#error "PORT=1 replaces expm1: keep CR_LOOP_EXPM1 at 0"
+#endif
+AVX2 __m256d _ZGVdN4v_expm1(__m256d); AVX2 __m256d _ZGVdN4v_log1p(__m256d);
+#endif
 DOUBLE_FAST(cbrt, cbrt_fast, cr_cbrt)
 #if !CR_LOOP_ATAN && !ATAN_REFINE
 DOUBLE_FAST(atan, atan_fast, cr_atan)
