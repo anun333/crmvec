@@ -235,7 +235,8 @@ double cr_hypot(double x, double y){
     if (ninf && nqnn) return (wx==wm) ? x * x : y * y;
     return x + y; /* inf, nan */
   }
-  double u = __builtin_fmax(x,y), v = __builtin_fmin(x,y);
+  // now both x and y are finite (neither NaN nor Inf)
+  double u = x > y ? x : y, v = x > y ? y : x;
   b64u64_u xd = {.f = u}, yd = {.f = v};
   ey = yd.u;
   if(__builtin_expect(!(ey>>52),0)){ // y is subnormal

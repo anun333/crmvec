@@ -774,10 +774,8 @@ The scalar functions, their tables, and the error analyses the vector paths
 rely on are [CORE-MATH](https://core-math.gitlabpages.inria.fr/)'s, by Alexei
 Sibidanov, Paul Zimmermann, Tom Hubrecht and others. Their files are
 included unmodified under their own MIT license and copyright notices. All
-165 are byte-identical to CORE-MATH's master branch at `6b84457`
-(2026-09-25). On 2026-09-28 master changed three of them (double `hypot`,
-and the bfloat16 `cbrt` and `pow`), and this repository hasn't taken those
-changes yet. The
+165 are byte-identical to CORE-MATH's master branch at `a0fce68`
+(2026-09-28). The
 `crmvec-*-tab.h` headers copy their tables. Everything else is under the
 MIT license in `LICENSE`.
 

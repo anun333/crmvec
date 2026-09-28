@@ -352,7 +352,7 @@ exp_accurate (double ylogx, uint64_t sign, fexcept_t flag)
   double c0 = 1.0 + r;
   b64u64_u expr = {.f = c0 + c2 * rr};
   expr.f *= T4[i1] * T5[i2];
-  expr.u += sign + ((int64_t) e << 52);
+  expr.u += sign + ((uint64_t) e << 52);
 #ifdef CORE_MATH_SUPPORT_ERRNO
   int u = (expr.f > 0) ? 1.0f - 0x1p-25f == 1.0f // true for rndn/rndu
     : -1.0f + 0x1p-25f == -1.0f;

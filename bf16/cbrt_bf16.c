@@ -182,7 +182,7 @@ __bf16 cr_cbrt_bf16 (__bf16 x){
   uint16_t e = au >> 7, e3 = e % 3;
   if ((au & 0x7f) == 0x58 && e3 == 2) { // case 0x1.bp+1
     v.u = (u & 0x8000) | 0x3fc0; // 0x1.8p+0 with sign bit
-    v.u += ((e - 0x80) / 3) << 7;
+    v.u += (uint16_t) ((e - 0x80) / 3) << 7;
     return v.f;
   }
 
