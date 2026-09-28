@@ -8,7 +8,7 @@
 # own gcc builds use the flag); 33 of its 72 files compile differently.
 CC      ?= gcc
 .DEFAULT_GOAL := all
-VERSION := 0.3.0
+VERSION := 0.4.0
 # install locations (make install PREFIX=... DESTDIR=...): the libraries go
 # to a directory of their own, so that nothing replaces the system's
 # libmvec.so.1 until a program asks for it (crmvec-run, or the rpath that
@@ -81,10 +81,9 @@ headercheck: crmvec.h crmvec-f16.c crmvec-scalar.c
 	$(CC) -fsyntax-only -Wall -include crmvec.h crmvec-scalar.c
 	@grep -q '"$(VERSION)"' crmvec.h || { echo "crmvec.h's CRMVEC_VERSION is not $(VERSION)"; exit 1; }
 
-# PORT: the 35 functions in port/ (every float function, and log, exp, sin,
-# cos, tan, exp2, exp10, log2, log10) from the portable core instead of the
-# SIMDe route (aarch64) or crmvec.c's intrinsics (x86). The default differs
-# by target (2026-09-28, crmvec 0.3.0):
+# PORT: all 52 functions from the portable core in port/ (35 in 0.3.0, all
+# from 0.4.0) instead of the SIMDe route (aarch64) or crmvec.c's intrinsics
+# (x86). The default differs by target (from crmvec 0.3.0):
 #   aarch64: on. The portable NEON code is 2.3 to 19 times faster than the
 #            SIMDe route on a Neoverse N2, and checked (every float on all
 #            2^32 inputs natively, make check, aarch64-check at three SVE

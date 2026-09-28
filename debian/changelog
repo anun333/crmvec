@@ -1,3 +1,11 @@
+crmvec (0.4.0) unstable; urgency=medium
+
+  * Every function (all 52) in the portable core; on aarch64 none takes the
+    SIMDe route by default any more: 3 to 38 ns per element on a Neoverse
+    N2, against 29 to 543 through SIMDe. PORT=0 builds the previous route.
+
+ -- anun333 <anun333@posteo.net>  Mon, 28 Sep 2026 09:00:00 -0500
+
 crmvec (0.3.0) unstable; urgency=medium
 
   * aarch64: the portable core is the default (PORT defaults to 1 on

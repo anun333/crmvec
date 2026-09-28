@@ -11,7 +11,7 @@
 %global debug_package %{nil}
 
 Name:           crmvec
-Version:        0.3.0
+Version:        0.4.0
 Release:        1%{?dist}
 Summary:        Correctly rounded vector math (a drop-in libmvec)
 License:        MIT
@@ -61,6 +61,11 @@ make check
 %{_libdir}/pkgconfig/crmvec.pc
 
 %changelog
+* Mon Sep 28 2026 anun333 <anun333@posteo.net> - 0.4.0-1
+- every function (all 52) in the portable core; on aarch64 none takes the
+  SIMDe route by default any more: 3 to 38 ns per element on a Neoverse N2,
+  against 29 to 543 through SIMDe. PORT=0 builds the previous route.
+
 * Mon Sep 28 2026 anun333 <anun333@posteo.net> - 0.3.0-1
 - aarch64: the portable core is the default (PORT defaults to 1 on aarch64,
   0 on x86); its 35 functions are 2.3-19x faster than the SIMDe route on a

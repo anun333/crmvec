@@ -391,13 +391,12 @@ there against 49.6 looping over CORE-MATH built without `-mfma`.
 
 ## Other CPUs: aarch64
 
-**For aarch64 users: use 0.3.0 or later.** From 0.3.0 the default build
-takes 35 of the 52 functions (every float function, and `log`, `exp`,
-`sin`, `cos`, `tan`, `exp2`, `exp10`, `log2`, `log10`) from the portable
-core as NEON code. On a Neoverse N2 they take 3 to 19 ns per element,
-against 29 to 182 in 0.2 and earlier. The other 17 doubles still take the
-route below, 50 to 540 ns. Every result is still CORE-MATH's, bit for bit.
-`make PORT=0` builds the old route.
+**For aarch64 users: use 0.4.0 or later.** From 0.4.0 the default build
+takes all 52 functions from the portable core as NEON code (0.3.0 took 35
+of them). On a Neoverse N2 they take 3 to 38 ns per element, against 29 to
+543 through the route below, which was every function's in 0.2 and
+earlier. Every result is still CORE-MATH's, bit for bit. `make PORT=0`
+builds the old route.
 
 `make aarch64` (needs `gcc-aarch64-linux-gnu` and `libsimde-dev`) builds
 `build-aarch64/libmvec.so.1` from the same `crmvec.c`, with
@@ -449,9 +448,9 @@ against 2.4. Over the 30 functions glibc also has, that is 12 to 122 times
 slower (median 36), where on x86 the gap is about 3.3. The vector code
 reaches aarch64 through SIMDe, emulating 256-bit AVX2 on 128-bit NEON;
 that is the likely cause, not yet measured. This was every function's
-route before 0.3.0, and in 0.3.0 still that of 17 doubles. On main every
-function has a portable version (next section), so the default aarch64
-build no longer uses it; `make PORT=0` still builds it.
+route before 0.3.0, and in 0.3.0 still that of 17 doubles. From 0.4.0
+every function has a portable version (next section), so the default
+aarch64 build no longer uses it; `make PORT=0` still builds it.
 
 ### One portable source
 
