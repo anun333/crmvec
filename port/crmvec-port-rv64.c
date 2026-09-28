@@ -5,7 +5,9 @@
    scalable vectors at LMUL 2. glibc has no riscv64 libmvec, and GCC 13
    makes no vector clones there. So this file, linked as libsleef.so.3,
    answers those names with the portable core: every result correctly
-   rounded, bit for bit CORE-MATH's.
+   rounded, bit for bit CORE-MATH's. It also answers the other 34 names in
+   LLVM's riscv64 SLEEF table, lane by lane (the end of this file), so it
+   stands in for SLEEF completely.
 
    Each entry point stores its argument, runs the portable core over it in
    fixed 128-bit blocks (VB 16: 4 floats, 2 doubles), and loads the result.
@@ -44,6 +46,7 @@
 #include "port-asin.h"
 #include "port-atan2.h"
 #include "port-cbrt.h"
+#include <math.h>
 #include <riscv_vector.h>
 
 #define EXPORT __attribute__((visibility("default")))
@@ -111,3 +114,132 @@ RV_D1(cosh, u10) RV_D1(erf, u10) RV_D1(erfc, u15) RV_D1(exp10, u10) RV_D1(exp2, 
 RV_D1(log10, u10) RV_D1(log1p, u10) RV_D1(log2, u10) RV_D1(sinh, u10) RV_D1(tanh, u10)
 RV_F2(powf, u10) RV_F2(atan2f, u10) RV_F2(hypotf, u05)
 RV_D2(pow, u10) RV_D2(atan2, u10) RV_D2(hypot, u05)
+
+/* SLEEF's other 34 RVV names in LLVM's riscv64 table (added 2026-09-28), so
+   that this library stands in for SLEEF completely. clang 20 calls 22 of
+   them from loops (sinpi, cospi, lgamma, tgamma, sqrt, fma, fmod, fdim,
+   nextafter, ilogb, ldexp); it turns fmin, fmax and copysign into
+   instructions and doesn't vectorize modf, sincos or sincospi, but all are
+   in the table, so other callers can use them. They have no vector code
+   here: each lane goes to CORE-MATH (correctly rounded, in every rounding
+   mode) or, for the operations whose exact result C defines, to libm.
+   Signatures from the VFABI strings: modf and sincos write through linear
+   pointers (one element per lane), ilogb returns and ldexp takes int32
+   vectors of the same element count (LMUL 1 for double, 2 for float). */
+double cr_sinpi(double), cr_cospi(double), cr_lgamma(double), cr_tgamma(double);
+float cr_sinpif(float), cr_cospif(float), cr_lgammaf(float), cr_tgammaf(float);
+void cr_sincos(double, double *, double *), cr_sincosf(float, float *, float *);
+static double rv_sqrt(double x) { return __builtin_sqrt(x); }
+static float rv_sqrtf(float x) { return __builtin_sqrtf(x); }
+
+#define RV_SD1(name, fn)                                                                         \
+  EXPORT vfloat64m2_t name(vfloat64m2_t x)                                                       \
+  { size_t vl = __riscv_vsetvlmax_e64m2(); double b[vl]; __riscv_vse64_v_f64m2(b, x, vl);        \
+    for (size_t i = 0; i < vl; i++) b[i] = fn(b[i]); return __riscv_vle64_v_f64m2(b, vl); }
+#define RV_SF1(name, fn)                                                                         \
+  EXPORT vfloat32m2_t name(vfloat32m2_t x)                                                       \
+  { size_t vl = __riscv_vsetvlmax_e32m2(); float b[vl]; __riscv_vse32_v_f32m2(b, x, vl);         \
+    for (size_t i = 0; i < vl; i++) b[i] = fn(b[i]); return __riscv_vle32_v_f32m2(b, vl); }
+#define RV_SD2(name, fn)                                                                         \
+  EXPORT vfloat64m2_t name(vfloat64m2_t x, vfloat64m2_t y)                                       \
+  { size_t vl = __riscv_vsetvlmax_e64m2(); double a[vl], b[vl];                                  \
+    __riscv_vse64_v_f64m2(a, x, vl); __riscv_vse64_v_f64m2(b, y, vl);                            \
+    for (size_t i = 0; i < vl; i++) a[i] = fn(a[i], b[i]); return __riscv_vle64_v_f64m2(a, vl); }
+#define RV_SF2(name, fn)                                                                         \
+  EXPORT vfloat32m2_t name(vfloat32m2_t x, vfloat32m2_t y)                                       \
+  { size_t vl = __riscv_vsetvlmax_e32m2(); float a[vl], b[vl];                                   \
+    __riscv_vse32_v_f32m2(a, x, vl); __riscv_vse32_v_f32m2(b, y, vl);                            \
+    for (size_t i = 0; i < vl; i++) a[i] = fn(a[i], b[i]); return __riscv_vle32_v_f32m2(a, vl); }
+
+RV_SD1(Sleef_sinpidx_u05rvvm2, cr_sinpi) RV_SF1(Sleef_sinpifx_u05rvvm2, cr_sinpif)
+RV_SD1(Sleef_cospidx_u05rvvm2, cr_cospi) RV_SF1(Sleef_cospifx_u05rvvm2, cr_cospif)
+RV_SD1(Sleef_lgammadx_u10rvvm2, cr_lgamma) RV_SF1(Sleef_lgammafx_u10rvvm2, cr_lgammaf)
+RV_SD1(Sleef_tgammadx_u10rvvm2, cr_tgamma) RV_SF1(Sleef_tgammafx_u10rvvm2, cr_tgammaf)
+RV_SD1(Sleef_sqrtdx_u05rvvm2, rv_sqrt) RV_SF1(Sleef_sqrtfx_u05rvvm2, rv_sqrtf)
+RV_SD2(Sleef_copysigndx_rvvm2, copysign) RV_SF2(Sleef_copysignfx_rvvm2, copysignf)
+RV_SD2(Sleef_fdimdx_rvvm2, fdim) RV_SF2(Sleef_fdimfx_rvvm2, fdimf)
+RV_SD2(Sleef_fmaxdx_rvvm2, fmax) RV_SF2(Sleef_fmaxfx_rvvm2, fmaxf)
+RV_SD2(Sleef_fmindx_u10rvvm2, fmin) RV_SF2(Sleef_fminfx_u10rvvm2, fminf)
+RV_SD2(Sleef_fmoddx_rvvm2, fmod) RV_SF2(Sleef_fmodfx_rvvm2, fmodf)
+RV_SD2(Sleef_nextafterdx_rvvm2, nextafter) RV_SF2(Sleef_nextafterfx_rvvm2, nextafterf)
+
+EXPORT vfloat64m2_t Sleef_fmadx_rvvm2(vfloat64m2_t x, vfloat64m2_t y, vfloat64m2_t z)
+{
+  size_t vl = __riscv_vsetvlmax_e64m2(); double a[vl], b[vl], c[vl];
+  __riscv_vse64_v_f64m2(a, x, vl); __riscv_vse64_v_f64m2(b, y, vl); __riscv_vse64_v_f64m2(c, z, vl);
+  for (size_t i = 0; i < vl; i++) a[i] = fma(a[i], b[i], c[i]);
+  return __riscv_vle64_v_f64m2(a, vl);
+}
+EXPORT vfloat32m2_t Sleef_fmafx_rvvm2(vfloat32m2_t x, vfloat32m2_t y, vfloat32m2_t z)
+{
+  size_t vl = __riscv_vsetvlmax_e32m2(); float a[vl], b[vl], c[vl];
+  __riscv_vse32_v_f32m2(a, x, vl); __riscv_vse32_v_f32m2(b, y, vl); __riscv_vse32_v_f32m2(c, z, vl);
+  for (size_t i = 0; i < vl; i++) a[i] = fmaf(a[i], b[i], c[i]);
+  return __riscv_vle32_v_f32m2(a, vl);
+}
+EXPORT vint32m1_t Sleef_ilogbdx_rvvm2(vfloat64m2_t x)
+{
+  size_t vl = __riscv_vsetvlmax_e64m2(); double b[vl]; int32_t r[vl];
+  __riscv_vse64_v_f64m2(b, x, vl);
+  for (size_t i = 0; i < vl; i++) r[i] = ilogb(b[i]);
+  return __riscv_vle32_v_i32m1(r, vl);
+}
+EXPORT vint32m2_t Sleef_ilogbfx_rvvm2(vfloat32m2_t x)
+{
+  size_t vl = __riscv_vsetvlmax_e32m2(); float b[vl]; int32_t r[vl];
+  __riscv_vse32_v_f32m2(b, x, vl);
+  for (size_t i = 0; i < vl; i++) r[i] = ilogbf(b[i]);
+  return __riscv_vle32_v_i32m2(r, vl);
+}
+EXPORT vfloat64m2_t Sleef_ldexpdx_rvvm2(vfloat64m2_t x, vint32m1_t n)
+{
+  size_t vl = __riscv_vsetvlmax_e64m2(); double b[vl]; int32_t e[vl];
+  __riscv_vse64_v_f64m2(b, x, vl); __riscv_vse32_v_i32m1(e, n, vl);
+  for (size_t i = 0; i < vl; i++) b[i] = ldexp(b[i], e[i]);
+  return __riscv_vle64_v_f64m2(b, vl);
+}
+EXPORT vfloat32m2_t Sleef_ldexpfx_rvvm2(vfloat32m2_t x, vint32m2_t n)
+{
+  size_t vl = __riscv_vsetvlmax_e32m2(); float b[vl]; int32_t e[vl];
+  __riscv_vse32_v_f32m2(b, x, vl); __riscv_vse32_v_i32m2(e, n, vl);
+  for (size_t i = 0; i < vl; i++) b[i] = ldexpf(b[i], e[i]);
+  return __riscv_vle32_v_f32m2(b, vl);
+}
+EXPORT vfloat64m2_t Sleef_modfdx_rvvm2(vfloat64m2_t x, double *ip)                /* _ZGVrNxvl8 */
+{
+  size_t vl = __riscv_vsetvlmax_e64m2(); double b[vl];
+  __riscv_vse64_v_f64m2(b, x, vl);
+  for (size_t i = 0; i < vl; i++) b[i] = modf(b[i], ip + i);
+  return __riscv_vle64_v_f64m2(b, vl);
+}
+EXPORT vfloat32m2_t Sleef_modffx_rvvm2(vfloat32m2_t x, float *ip)                 /* _ZGVrNxvl4 */
+{
+  size_t vl = __riscv_vsetvlmax_e32m2(); float b[vl];
+  __riscv_vse32_v_f32m2(b, x, vl);
+  for (size_t i = 0; i < vl; i++) b[i] = modff(b[i], ip + i);
+  return __riscv_vle32_v_f32m2(b, vl);
+}
+EXPORT void Sleef_sincosdx_u10rvvm2(vfloat64m2_t x, double *s, double *c)       /* _ZGVrNxvl8l8 */
+{
+  size_t vl = __riscv_vsetvlmax_e64m2(); double b[vl];
+  __riscv_vse64_v_f64m2(b, x, vl);
+  for (size_t i = 0; i < vl; i++) cr_sincos(b[i], s + i, c + i);
+}
+EXPORT void Sleef_sincosfx_u10rvvm2(vfloat32m2_t x, float *s, float *c)         /* _ZGVrNxvl4l4 */
+{
+  size_t vl = __riscv_vsetvlmax_e32m2(); float b[vl];
+  __riscv_vse32_v_f32m2(b, x, vl);
+  for (size_t i = 0; i < vl; i++) cr_sincosf(b[i], s + i, c + i);
+}
+EXPORT void Sleef_sincospidx_u10rvvm2(vfloat64m2_t x, double *s, double *c)
+{
+  size_t vl = __riscv_vsetvlmax_e64m2(); double b[vl];
+  __riscv_vse64_v_f64m2(b, x, vl);
+  for (size_t i = 0; i < vl; i++) { s[i] = cr_sinpi(b[i]); c[i] = cr_cospi(b[i]); }
+}
+EXPORT void Sleef_sincospifx_u10rvvm2(vfloat32m2_t x, float *s, float *c)
+{
+  size_t vl = __riscv_vsetvlmax_e32m2(); float b[vl];
+  __riscv_vse32_v_f32m2(b, x, vl);
+  for (size_t i = 0; i < vl; i++) { s[i] = cr_sinpif(b[i]); c[i] = cr_cospif(b[i]); }
+}

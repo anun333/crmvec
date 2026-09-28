@@ -636,9 +636,26 @@ ones.
 - **glibc** has no riscv64 `libmvec`.
 - **gcc 13** makes no vector clones on riscv64.
 
-So `make riscv64` builds `build-riscv64/libsleef.so.3`, which answers those
-52 names from the portable core (`port/crmvec-port-rv64.c`), and nothing
-else.
+So `make riscv64` builds `build-riscv64/libsleef.so.3`, which answers all
+86 names in LLVM's SLEEF RVV table (`port/crmvec-port-rv64.c`):
+- **The 52 functions** come from the portable core.
+- **The other 34** are split as on aarch64 above: `sinpi`, `cospi`,
+  `sincos`, `sincospi`, `lgamma` and `tgamma` from CORE-MATH, and the exact
+  operations (`sqrt`, `fma`, `fmin`, `fmax`, `fdim`, `fmod`,
+  `copysign`, `nextafter`, `ilogb`, `ldexp`, `modf`) from the C library, in
+  double and float, lane by lane.
+- **What clang 20 calls:** 74 of the 86 names, as on aarch64, but not the
+  same 74. It calls `sqrt` and `fma` (instructions on aarch64), turns
+  `fmin`, `fmax` and `copysign` into instructions, and doesn't vectorize
+  loops over `modf`, `sincos` or `sincospi`.
+- **Where it differs from SLEEF's own library** (3.9, Debian's riscv64
+  build): for `sincos`, `sincospi` and `modf` this library follows LLVM's
+  table, writing the two results through pointers. SLEEF's functions of
+  those names take one vector and return both results packed in one LMUL-4
+  vector, so code that calls them directly through SLEEF's API still needs
+  SLEEF. LLVM's table also spells four names that SLEEF 3.9 doesn't export
+  (`fmin` with a `u10` tier, `sincospi` at `u10`), and this library exports
+  LLVM's spelling.
 - **VLEN-agnostic:** each entry point runs the portable core over its
   argument in fixed 128-bit blocks. RVV 1.0 guarantees VLEN >= 128, so one
   build runs at any VLEN.
@@ -649,7 +666,7 @@ else.
 
 ```
 make riscv64
-qemu-riscv64 -cpu rv64,v=true,vlen=256 build-riscv64/rv64-check                # every entry point against CORE-MATH
+qemu-riscv64 -cpu rv64,v=true,vlen=256 build-riscv64/rv64-check                # every entry point against CORE-MATH or libm
 LD_LIBRARY_PATH=build-riscv64 qemu-riscv64 -L /usr/riscv64-linux-gnu \
     -cpu rv64,v=true,vlen=256 build-riscv64/rv64-dropin                     # loops clang 20 vectorized, end to end
 ```
@@ -661,9 +678,21 @@ Checked under qemu (no riscv64 hardware yet):
   million in the three other rounding modes, 0 differ. With the rounding tests' bounds
   zeroed, it gets thousands wrong, and with the rounding mode ignored, it
   fails in the other modes.
-- **`rv64-dropin`:** loops over all 52 functions, vectorized by clang 20,
-  give CORE-MATH's results through this library at VLEN 128, 256 and 512;
-  through the bounds-zeroed build, 682 differ.
+- **The other 34 names in `rv64-check`:** each is compared with its
+  scalar function lane by lane, pointer outputs and integer vectors
+  included.
+  - 0 of 29.9 million results differ at VLEN 128, 256 and 512.
+  - Then a table of the edge cases where SLEEF's own aarch64 library
+    differs (above): `ldexp` at `n = INT_MIN`, of infinities, of zeros and
+    into subnormals; `sinpi` and `cospi` at integers and huge arguments;
+    `ilogb(±0)`; `fmod` at huge ratios. 0 of 328,320 differ at VLEN 128
+    to 1024. With `ldexp` returning infinity at `INT_MIN`, as SLEEF 3.9's
+    does on aarch64, 456 differ.
+- **`rv64-dropin`:** the 74 loops clang 20 vectorizes give CORE-MATH's (or
+  the C library's) results through this library at VLEN 128, 256, 512 and
+  1024. Through the bounds-zeroed build 682 differ; with `lgamma` taken
+  from glibc and `ldexp` reading its exponents in reverse lane order,
+  80,258 differ.
 - **Not yet:** timing, and a comparison with SLEEF's own RVV build.
 
 ## Limits

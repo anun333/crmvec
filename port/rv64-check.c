@@ -5,11 +5,12 @@
    (specials included), log-uniform magnitudes of either sign, and a
    moderate range; pairs likewise for the two-argument functions. Then the
    same in the three other rounding modes (the frm fallback), on fewer
-   inputs. Added 2026-09-28.
+   inputs; then the other 34 names of LLVM's table. Added 2026-09-28.
 
      rv64-check [N]    N inputs per set (default 2^20)
 */
 #include <fenv.h>
+#include <float.h>
 #include <math.h>
 #include <stdint.h>
 #include <stdio.h>
@@ -95,6 +96,108 @@ static long run(const struct fn *f, int set, long n, int report)
   return bad;
 }
 
+/* the other 34 names (lane by lane in the library): against the same
+   scalar functions, so what this checks is the plumbing -- argument and
+   result types (int32 vectors for ilogb and ldexp), pointer outputs (modf,
+   sincos), argument order -- and CORE-MATH for sinpi, cospi, lgamma, tgamma */
+double cr_sinpi(double), cr_cospi(double), cr_lgamma(double), cr_tgamma(double);
+float cr_sinpif(float), cr_cospif(float), cr_lgammaf(float), cr_tgammaf(float);
+void cr_sincos(double, double *, double *), cr_sincosf(float, float *, float *);
+#define XD1(v, r) vfloat64m2_t v(vfloat64m2_t);
+#define XF1(v, r) vfloat32m2_t v(vfloat32m2_t);
+#define XD2(v, r) vfloat64m2_t v(vfloat64m2_t, vfloat64m2_t);
+#define XF2(v, r) vfloat32m2_t v(vfloat32m2_t, vfloat32m2_t);
+#define XLIST(D1, F1, D2, F2)                                                                     \
+  D1(Sleef_sinpidx_u05rvvm2, cr_sinpi) F1(Sleef_sinpifx_u05rvvm2, cr_sinpif)                      \
+  D1(Sleef_cospidx_u05rvvm2, cr_cospi) F1(Sleef_cospifx_u05rvvm2, cr_cospif)                      \
+  D1(Sleef_lgammadx_u10rvvm2, cr_lgamma) F1(Sleef_lgammafx_u10rvvm2, cr_lgammaf)                  \
+  D1(Sleef_tgammadx_u10rvvm2, cr_tgamma) F1(Sleef_tgammafx_u10rvvm2, cr_tgammaf)                  \
+  D1(Sleef_sqrtdx_u05rvvm2, sqrt) F1(Sleef_sqrtfx_u05rvvm2, sqrtf)                                \
+  D2(Sleef_copysigndx_rvvm2, copysign) F2(Sleef_copysignfx_rvvm2, copysignf)                      \
+  D2(Sleef_fdimdx_rvvm2, fdim) F2(Sleef_fdimfx_rvvm2, fdimf)                                      \
+  D2(Sleef_fmaxdx_rvvm2, fmax) F2(Sleef_fmaxfx_rvvm2, fmaxf)                                      \
+  D2(Sleef_fmindx_u10rvvm2, fmin) F2(Sleef_fminfx_u10rvvm2, fminf)                                \
+  D2(Sleef_fmoddx_rvvm2, fmod) F2(Sleef_fmodfx_rvvm2, fmodf)                                      \
+  D2(Sleef_nextafterdx_rvvm2, nextafter) F2(Sleef_nextafterfx_rvvm2, nextafterf)
+XLIST(XD1, XF1, XD2, XF2)
+vfloat64m2_t Sleef_fmadx_rvvm2(vfloat64m2_t, vfloat64m2_t, vfloat64m2_t);
+vfloat32m2_t Sleef_fmafx_rvvm2(vfloat32m2_t, vfloat32m2_t, vfloat32m2_t);
+vint32m1_t Sleef_ilogbdx_rvvm2(vfloat64m2_t); vint32m2_t Sleef_ilogbfx_rvvm2(vfloat32m2_t);
+vfloat64m2_t Sleef_ldexpdx_rvvm2(vfloat64m2_t, vint32m1_t); vfloat32m2_t Sleef_ldexpfx_rvvm2(vfloat32m2_t, vint32m2_t);
+vfloat64m2_t Sleef_modfdx_rvvm2(vfloat64m2_t, double *); vfloat32m2_t Sleef_modffx_rvvm2(vfloat32m2_t, float *);
+void Sleef_sincosdx_u10rvvm2(vfloat64m2_t, double *, double *); void Sleef_sincosfx_u10rvvm2(vfloat32m2_t, float *, float *);
+void Sleef_sincospidx_u10rvvm2(vfloat64m2_t, double *, double *); void Sleef_sincospifx_u10rvvm2(vfloat32m2_t, float *, float *);
+
+/* one block of every extra name, lanes from a[] b[] c[] (fa[] ... for
+   float) and exponents from ia[] */
+static long block(const double *a, const double *b, const double *c, const float *fa, const float *fb, const float *fc,
+                  const int32_t *ia, long *tot)
+{
+  long bad = 0;
+  size_t vd = __riscv_vsetvlmax_e64m2(), vf = __riscv_vsetvlmax_e32m2();
+  double r[vd], r2[vd]; float fr[vf], fr2[vf]; int32_t ir[vf];
+  vfloat64m2_t x = __riscv_vle64_v_f64m2(a, vd), y = __riscv_vle64_v_f64m2(b, vd), z = __riscv_vle64_v_f64m2(c, vd);
+  vfloat32m2_t xf = __riscv_vle32_v_f32m2(fa, vf), yf = __riscv_vle32_v_f32m2(fb, vf), zf = __riscv_vle32_v_f32m2(fc, vf);
+#define CD1(v, ref) __riscv_vse64_v_f64m2(r, v(x), vd); for (size_t i = 0; i < vd; i++) { bad += !same_d(r[i], ref(a[i])); } *tot += vd;
+#define CF1(v, ref) __riscv_vse32_v_f32m2(fr, v(xf), vf); for (size_t i = 0; i < vf; i++) { bad += !same_f(fr[i], ref(fa[i])); } *tot += vf;
+#define CD2(v, ref) __riscv_vse64_v_f64m2(r, v(x, y), vd); for (size_t i = 0; i < vd; i++) { bad += !same_d(r[i], ref(a[i], b[i])); } *tot += vd;
+#define CF2(v, ref) __riscv_vse32_v_f32m2(fr, v(xf, yf), vf); for (size_t i = 0; i < vf; i++) { bad += !same_f(fr[i], ref(fa[i], fb[i])); } *tot += vf;
+  XLIST(CD1, CF1, CD2, CF2)
+  __riscv_vse64_v_f64m2(r, Sleef_fmadx_rvvm2(x, y, z), vd); for (size_t i = 0; i < vd; i++) bad += !same_d(r[i], fma(a[i], b[i], c[i]));
+  __riscv_vse32_v_f32m2(fr, Sleef_fmafx_rvvm2(xf, yf, zf), vf); for (size_t i = 0; i < vf; i++) bad += !same_f(fr[i], fmaf(fa[i], fb[i], fc[i]));
+  { int32_t id[vd]; __riscv_vse32_v_i32m1(id, Sleef_ilogbdx_rvvm2(x), vd); for (size_t i = 0; i < vd; i++) bad += id[i] != ilogb(a[i]); }
+  __riscv_vse32_v_i32m2(ir, Sleef_ilogbfx_rvvm2(xf), vf); for (size_t i = 0; i < vf; i++) bad += ir[i] != ilogbf(fa[i]);
+  __riscv_vse64_v_f64m2(r, Sleef_ldexpdx_rvvm2(x, __riscv_vle32_v_i32m1(ia, vd)), vd); for (size_t i = 0; i < vd; i++) bad += !same_d(r[i], ldexp(a[i], ia[i]));
+  __riscv_vse32_v_f32m2(fr, Sleef_ldexpfx_rvvm2(xf, __riscv_vle32_v_i32m2(ia, vf)), vf); for (size_t i = 0; i < vf; i++) bad += !same_f(fr[i], ldexpf(fa[i], ia[i]));
+  __riscv_vse64_v_f64m2(r, Sleef_modfdx_rvvm2(x, r2), vd); for (size_t i = 0; i < vd; i++) { double ip, f = modf(a[i], &ip); bad += !same_d(r[i], f) + !same_d(r2[i], ip); }
+  __riscv_vse32_v_f32m2(fr, Sleef_modffx_rvvm2(xf, fr2), vf); for (size_t i = 0; i < vf; i++) { float ip, f = modff(fa[i], &ip); bad += !same_f(fr[i], f) + !same_f(fr2[i], ip); }
+  Sleef_sincosdx_u10rvvm2(x, r, r2); for (size_t i = 0; i < vd; i++) { double s0, c0; cr_sincos(a[i], &s0, &c0); bad += !same_d(r[i], s0) + !same_d(r2[i], c0); }
+  Sleef_sincosfx_u10rvvm2(xf, fr, fr2); for (size_t i = 0; i < vf; i++) { float s0, c0; cr_sincosf(fa[i], &s0, &c0); bad += !same_f(fr[i], s0) + !same_f(fr2[i], c0); }
+  Sleef_sincospidx_u10rvvm2(x, r, r2); for (size_t i = 0; i < vd; i++) bad += !same_d(r[i], cr_sinpi(a[i])) + !same_d(r2[i], cr_cospi(a[i]));
+  Sleef_sincospifx_u10rvvm2(xf, fr, fr2); for (size_t i = 0; i < vf; i++) bad += !same_f(fr[i], cr_sinpif(fa[i])) + !same_f(fr2[i], cr_cospif(fa[i]));
+  *tot += 8 * vd + 8 * vf;
+  return bad;
+}
+
+/* the edge cases where SLEEF 3.9's own aarch64 library was measured wrong
+   (docs/outline/30-deps/sleef.md in openpocl): ldexp at n = INT_MIN, of
+   +-inf and of +-0 with large n, subnormal rounding (ldexp(1 + 2^-52,
+   -1075)); sinpi and cospi at integers and large arguments; ilogb(+-0);
+   fmod at large ratios. Every pair of ED (or EF) with itself, and with EI */
+static const double ED[] = {0.0, -0.0, INFINITY, -INFINITY, NAN, 1.0, -1.0, 2.0, -2.0, -3.0, 0.5, -0.5,
+                            0x1p-1074, -0x1p-1074, 0x1p-1022, 0x1.0000000000001p0, DBL_MAX, -DBL_MAX,
+                            1e300, 1e-300, 0x1p52 + 1, 7.5e8, 0x1p28 + 0.5, -0x1.8p-1070};
+static const float EF[] = {0.0f, -0.0f, INFINITY, -INFINITY, NAN, 1.0f, -1.0f, 2.0f, -2.0f, -3.0f, 0.5f, -0.5f,
+                           0x1p-149f, -0x1p-149f, 0x1p-126f, 0x1.000002p0f, FLT_MAX, -FLT_MAX,
+                           1e38f, 1e-38f, 0x1p23f + 1, 7.5e6f, 0x1p22f + 0.5f, -0x1.8p-146f};
+static const int32_t EI[] = {INT32_MIN, INT32_MIN + 1, -1075, -1074, -150, -1, 0, 1, 1024, INT32_MAX};
+#define NE (long)(sizeof ED / sizeof ED[0])
+#define NI (long)(sizeof EI / sizeof EI[0])
+
+static long extras(long n, long *tot)
+{
+  long bad = 0;
+  size_t vd = __riscv_vsetvlmax_e64m2(), vf = __riscv_vsetvlmax_e32m2();
+  double a[vd], b[vd], c[vd]; float fa[vf], fb[vf], fc[vf]; int32_t ia[vf];
+  for (long done = 0; done < n; done += vf) {
+    int set = (int)(done / vf % 3);
+    for (size_t i = 0; i < vd; i++) { a[i] = gen_d(set); b[i] = gen_d(set); c[i] = gen_d(set); }
+    for (size_t i = 0; i < vf; i++) { fa[i] = gen_f(set); fb[i] = gen_f(set); fc[i] = gen_f(set); ia[i] = (int32_t)(rnd() % 2200) - 1100; }
+    bad += block(a, b, c, fa, fb, fc, ia, tot);
+  }
+  /* lane k holds ED[k % NE], ED[k / NE % NE] and EI[k / NE / NE]; steps of
+     vd, the shorter vector, so the double lanes see every k */
+  for (long k0 = 0; k0 < NE * NE * NI; k0 += (long)vd) {
+    for (size_t i = 0; i < vf; i++) {
+      long k = k0 + (long)i;
+      fa[i] = EF[k % NE]; fb[i] = EF[k / NE % NE]; fc[i] = EF[(k * 7 + 3) % NE]; ia[i] = EI[k / NE / NE % NI];
+    }
+    for (size_t i = 0; i < vd; i++) { long k = k0 + (long)i; a[i] = ED[k % NE]; b[i] = ED[k / NE % NE]; c[i] = ED[(k * 7 + 3) % NE]; }
+    bad += block(a, b, c, fa, fb, fc, ia, tot);
+  }
+  return bad;
+}
+
 int main(int argc, char **argv)
 {
   long n = argc > 1 ? atol(argv[1]) : 1L << 20;
@@ -116,6 +219,8 @@ int main(int argc, char **argv)
   }
   fesetround(FE_TONEAREST);
   printf("to nearest: %ld of %ld differ; other three modes: %ld of %ld differ\n", bad, total, mbad, mtotal);
-  printf("VERDICT: %s\n", bad || mbad ? "DIFFERS from CORE-MATH" : "IDENTICAL to CORE-MATH on every input tried");
-  return bad || mbad;
+  long xtot = 0, xbad = extras(n, &xtot);
+  printf("the other 34 names (CORE-MATH or libm, lane by lane, then %ld edge cases): %ld of %ld differ\n", NE * NE * NI, xbad, xtot);
+  printf("VERDICT: %s\n", bad || mbad || xbad ? "DIFFERS from CORE-MATH" : "IDENTICAL to CORE-MATH on every input tried");
+  return bad || mbad || xbad;
 }

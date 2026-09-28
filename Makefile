@@ -218,7 +218,8 @@ sleef-exports: $(A64)/libsleefgnuabi.so.3
 # riscv64 are SLEEF's RVV ones (clang 20's -fveclib=SLEEF; glibc has no
 # riscv64 libmvec, gcc 13 makes no vector clones there), so crmvec there is
 # a libsleef.so.3 answering them from the portable core, VLEN-agnostic
-# (port/crmvec-port-rv64.c). The port file needs clang: gcc 13 lowers its
+# (port/crmvec-port-rv64.c), and the 34 other names in LLVM's table lane by
+# lane from CORE-MATH or libm. The port file needs clang: gcc 13 lowers its
 # generic vectors to scalar code. Needs gcc-riscv64-linux-gnu and clang-20;
 # checked under qemu-riscv64 at several VLENs:
 #   make riscv64
@@ -244,18 +245,21 @@ $(RV64)/libcr.a: $(CR)
 $(RV64)/libsleef.so.3: $(RV64)/port.o $(RV64)/libcr.a
 	$(RVCC) -shared -fPIC -Wl,-soname,libsleef.so.3 -o $@ $(RV64)/port.o $(RV64)/libcr.a -lm
 
-# every Sleef_*rvvm2 entry point against scalar CORE-MATH (static, so
-# qemu-riscv64 runs it without a sysroot)
+# every Sleef_*rvvm2 entry point (the 52, then LLVM's other 34 names)
+# against scalar CORE-MATH or libm (static, so qemu-riscv64 runs it without
+# a sysroot)
 $(RV64)/rv64-check: port/rv64-check.c $(RV64)/port.o $(RV64)/libcr.a
 	$(RVCLANG) $(RVFLAGS) -O2 -ffp-contract=off -c -o $(RV64)/rv64-check.o port/rv64-check.c
 	$(RVCC) -static -o $@ $(RV64)/rv64-check.o $(RV64)/port.o $(RV64)/libcr.a -lm
 
-# loops clang 20 vectorizes with -fveclib=SLEEF, against whichever
-# libsleef.so.3 the dynamic linker finds, and against CORE-MATH
-$(RV64)/rv64-dropin: port/rv64-dropin-loop.c port/rv64-dropin-main.c crmvec-functions.h $(RV64)/libsleef.so.3 $(RV64)/libcr.a
+# loops clang 20 vectorizes with -fveclib=SLEEF (the 52, then the 16 other
+# names it calls), against whichever libsleef.so.3 the dynamic linker
+# finds, and against CORE-MATH or libm
+$(RV64)/rv64-dropin: port/rv64-dropin-loop.c port/rv64-dropin-extra.c port/rv64-dropin-main.c port/rv64-extra-functions.h crmvec-functions.h $(RV64)/libsleef.so.3 $(RV64)/libcr.a
 	$(RVCLANG) $(RVFLAGS) -O3 -ffp-contract=off -fno-math-errno -fveclib=SLEEF -c -o $(RV64)/dropin-loop.o port/rv64-dropin-loop.c
+	$(RVCLANG) $(RVFLAGS) -O3 -ffp-contract=off -fno-math-errno -fveclib=SLEEF -c -o $(RV64)/dropin-extra.o port/rv64-dropin-extra.c
 	$(RVCC) $(CFLAGS) $(FPV) -c -o $(RV64)/dropin-main.o port/rv64-dropin-main.c
-	$(RVCC) -o $@ $(RV64)/dropin-main.o $(RV64)/dropin-loop.o $(RV64)/libcr.a $(RV64)/libsleef.so.3 -lm
+	$(RVCC) -o $@ $(RV64)/dropin-main.o $(RV64)/dropin-loop.o $(RV64)/dropin-extra.o $(RV64)/libcr.a $(RV64)/libsleef.so.3 -lm
 
 clean:
 	rm -f check.log libmvec.so.1 crmvec.o crmvec-avx2.o crmvec-port.o crtest libcrref.so bcheck hypot-midpoints hypotf-midpoints tan-poles bbench ebench mpfrcheck pownf-search libcrf16.a f16check cecheck lcheck
