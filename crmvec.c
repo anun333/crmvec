@@ -3370,6 +3370,7 @@ AVX2 __m256d _ZGVdN4v_atan(__m256d x)
 #endif
 AVX2 __m256d _ZGVdN4v_atan(__m256d);
 #endif
+#if !CRMVEC_PORT
 #if ASIN_REFINE
 AVX2 __m256d _ZGVdN4v_asin(__m256d x)
 {
@@ -3397,6 +3398,9 @@ AVX2 __m256d _ZGVdN4v_asin(__m256d x)
 DOUBLE_FAST(asin, asin_fast, cr_asin)
 #endif
 DOUBLE_FAST(acos, acos_fast, cr_acos)
+#else   /* PORT=1: port/crmvec-port.c supplies them (port-asin.h) */
+AVX2 __m256d _ZGVdN4v_asin(__m256d); AVX2 __m256d _ZGVdN4v_acos(__m256d);
+#endif
 #if !CRMVEC_PORT
 #if !CR_LOOP_SINH
 DOUBLE_FAST(sinh, sinh_fast, cr_sinh)

@@ -2,8 +2,8 @@
    PORT=1; added 2026-09-28). The AdvSIMD entry points of the functions in
    port/ (first double log and exp, then the rest as they were ported: every
    float function and the doubles sin, cos, tan, exp2, exp10, log2, log10,
-   erf, erfc, tanh, pow, expm1, log1p, sinh, cosh, asinh, acosh, atanh
-   and atan), as NEON code from the same headers the spikes verify, in place of
+   erf, erfc, tanh, pow, expm1, log1p, sinh, cosh, asinh, acosh, atanh,
+   atan, asin and acos), as NEON code from the same headers the spikes verify, in place of
    crmvec-aarch64.c's route, which widens the lanes to a 256-bit SIMDe core.
    crmvec-aarch64.c marks its own entry points weak when PORT=1, so these
    are the ones linked, and so are SLEEF's names for them (re-declared here:
@@ -32,6 +32,7 @@
 #include "port-asinh.h"
 #include "port-atanh.h"
 #include "port-atan.h"
+#include "port-asin.h"
 #include <arm_neon.h>
 
 #define EXPORT __attribute__((visibility("default"), aarch64_vector_pcs))
@@ -156,6 +157,8 @@ PORT_D1(asinh)
 PORT_D1(acosh)
 PORT_D1(atanh)
 PORT_D1(atan)
+PORT_D1(asin)
+PORT_D1(acos)
 /* the two-argument doubles (port-pow.h ...): 2 lanes, and their SVE blocks */
 #define PORT_D2(n)                                                                     \
   EXPORT float64x2_t _ZGVnN2vv_##n(float64x2_t x, float64x2_t y)                       \
@@ -189,6 +192,10 @@ EXPORT __typeof__(_ZGVnN2v_sinh) _ZGVnN2v_sinh_u35 __attribute__((alias("_ZGVnN2
 EXPORT __typeof__(_ZGVnN2v_acosh) _ZGVnN2v___acosh_finite __attribute__((alias("_ZGVnN2v_acosh")));
 EXPORT __typeof__(_ZGVnN2v_atanh) _ZGVnN2v___atanh_finite __attribute__((alias("_ZGVnN2v_atanh")));
 EXPORT __typeof__(_ZGVnN2v_atan) _ZGVnN2v_atan_u35 __attribute__((alias("_ZGVnN2v_atan")));
+EXPORT __typeof__(_ZGVnN2v_acos) _ZGVnN2v___acos_finite __attribute__((alias("_ZGVnN2v_acos")));
+EXPORT __typeof__(_ZGVnN2v_acos) _ZGVnN2v_acos_u35 __attribute__((alias("_ZGVnN2v_acos")));
+EXPORT __typeof__(_ZGVnN2v_asin) _ZGVnN2v___asin_finite __attribute__((alias("_ZGVnN2v_asin")));
+EXPORT __typeof__(_ZGVnN2v_asin) _ZGVnN2v_asin_u35 __attribute__((alias("_ZGVnN2v_asin")));
 EXPORT __typeof__(_ZGVnN4v_sinf) _ZGVnN4v_sinf_u35 __attribute__((alias("_ZGVnN4v_sinf")));
 EXPORT __typeof__(_ZGVnN4v_sinf) _ZGVnN4v_fastsinf_u3500 __attribute__((alias("_ZGVnN4v_sinf")));
 EXPORT __typeof__(_ZGVnN4v_cosf) _ZGVnN4v_cosf_u35 __attribute__((alias("_ZGVnN4v_cosf")));
