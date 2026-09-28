@@ -123,9 +123,11 @@ RV_D2(pow, u10) RV_D2(atan2, u10) RV_D2(hypot, u05)
    in the table, so other callers can use them. They have no vector code
    here: each lane goes to CORE-MATH (correctly rounded, in every rounding
    mode) or, for the operations whose exact result C defines, to libm.
-   Signatures from the VFABI strings: modf and sincos write through linear
-   pointers (one element per lane), ilogb returns and ldexp takes int32
-   vectors of the same element count (LMUL 1 for double, 2 for float). */
+   Signatures from the VFABI strings and SLEEF's sleef.h: ilogb returns and
+   ldexp takes int32 vectors of the same element count (LMUL 1 for double,
+   2 for float); sincos, sincospi and modf are below. Beside LLVM's 86 names
+   are 8 of SLEEF's own spellings where the two differ (fmin untiered,
+   sincos u35, sincospi u05 and u35), 94 in all. */
 double cr_sinpi(double), cr_cospi(double), cr_lgamma(double), cr_tgamma(double);
 float cr_sinpif(float), cr_cospif(float), cr_lgammaf(float), cr_tgammaf(float);
 void cr_sincos(double, double *, double *), cr_sincosf(float, float *, float *);
@@ -205,32 +207,45 @@ EXPORT vfloat32m2_t Sleef_ldexpfx_rvvm2(vfloat32m2_t x, vint32m2_t n)
   for (size_t i = 0; i < vl; i++) b[i] = ldexpf(b[i], e[i]);
   return __riscv_vle32_v_f32m2(b, vl);
 }
-EXPORT vfloat64m2_t Sleef_modfdx_rvvm2(vfloat64m2_t x, double *ip)                /* _ZGVrNxvl8 */
-{
-  size_t vl = __riscv_vsetvlmax_e64m2(); double b[vl];
-  __riscv_vse64_v_f64m2(b, x, vl);
-  for (size_t i = 0; i < vl; i++) b[i] = modf(b[i], ip + i);
-  return __riscv_vle64_v_f64m2(b, vl);
-}
-EXPORT vfloat32m2_t Sleef_modffx_rvvm2(vfloat32m2_t x, float *ip)                 /* _ZGVrNxvl4 */
-{
-  size_t vl = __riscv_vsetvlmax_e32m2(); float b[vl];
-  __riscv_vse32_v_f32m2(b, x, vl);
-  for (size_t i = 0; i < vl; i++) b[i] = modff(b[i], ip + i);
-  return __riscv_vle32_v_f32m2(b, vl);
-}
-EXPORT void Sleef_sincosdx_u10rvvm2(vfloat64m2_t x, double *s, double *c)       /* _ZGVrNxvl8l8 */
-{
-  size_t vl = __riscv_vsetvlmax_e64m2(); double b[vl];
-  __riscv_vse64_v_f64m2(b, x, vl);
-  for (size_t i = 0; i < vl; i++) cr_sincos(b[i], s + i, c + i);
-}
-EXPORT void Sleef_sincosfx_u10rvvm2(vfloat32m2_t x, float *s, float *c)         /* _ZGVrNxvl4l4 */
-{
-  size_t vl = __riscv_vsetvlmax_e32m2(); float b[vl];
-  __riscv_vse32_v_f32m2(b, x, vl);
-  for (size_t i = 0; i < vl; i++) cr_sincosf(b[i], s + i, c + i);
-}
+/* sincos, sincospi and modf in SLEEF's own convention (sleef.h:
+   Sleef_vfloat64m2_t_2 is vfloat64m4_t): one vector in, both results out in
+   one LMUL-4 vector, half 0 the sine (for modf the fractional part) and
+   half 1 the cosine (the integral part), as SLEEF 3.9's riscv64 library
+   returns them (checked against it, 2026-09-28). LLVM's table gives the two
+   names it shares with SLEEF here (sincos u10, modf) pointer outputs
+   instead; one name can't serve both, since the library can't tell whether
+   a caller passed pointers, so these follow SLEEF, whose names they are.
+   No compiler emits them on riscv64 yet. */
+static void rv_sincos(double x, double *s, double *c) { cr_sincos(x, s, c); }
+static void rv_sincosf(float x, float *s, float *c) { cr_sincosf(x, s, c); }
+static void rv_sincospi(double x, double *s, double *c) { *s = cr_sinpi(x); *c = cr_cospi(x); }
+static void rv_sincospif(float x, float *s, float *c) { *s = cr_sinpif(x); *c = cr_cospif(x); }
+static void rv_modf(double x, double *f, double *ip) { *f = modf(x, ip); }
+static void rv_modff(float x, float *f, float *ip) { *f = modff(x, ip); }
+#define RV_PD(name, fn)                                                                          \
+  EXPORT vfloat64m4_t name(vfloat64m2_t x)                                                       \
+  { size_t vl = __riscv_vsetvlmax_e64m2(); double b[vl], p[vl], q[vl];                          \
+    __riscv_vse64_v_f64m2(b, x, vl);                                                             \
+    for (size_t i = 0; i < vl; i++) fn(b[i], p + i, q + i);                                      \
+    return __riscv_vcreate_v_f64m2_f64m4(__riscv_vle64_v_f64m2(p, vl), __riscv_vle64_v_f64m2(q, vl)); }
+#define RV_PF(name, fn)                                                                          \
+  EXPORT vfloat32m4_t name(vfloat32m2_t x)                                                       \
+  { size_t vl = __riscv_vsetvlmax_e32m2(); float b[vl], p[vl], q[vl];                           \
+    __riscv_vse32_v_f32m2(b, x, vl);                                                             \
+    for (size_t i = 0; i < vl; i++) fn(b[i], p + i, q + i);                                      \
+    return __riscv_vcreate_v_f32m2_f32m4(__riscv_vle32_v_f32m2(p, vl), __riscv_vle32_v_f32m2(q, vl)); }
+RV_PD(Sleef_sincosdx_u10rvvm2, rv_sincos) RV_PF(Sleef_sincosfx_u10rvvm2, rv_sincosf)
+RV_PD(Sleef_sincosdx_u35rvvm2, rv_sincos) RV_PF(Sleef_sincosfx_u35rvvm2, rv_sincosf)
+RV_PD(Sleef_sincospidx_u05rvvm2, rv_sincospi) RV_PF(Sleef_sincospifx_u05rvvm2, rv_sincospif)
+RV_PD(Sleef_sincospidx_u35rvvm2, rv_sincospi) RV_PF(Sleef_sincospifx_u35rvvm2, rv_sincospif)
+RV_PD(Sleef_modfdx_rvvm2, rv_modf) RV_PF(Sleef_modffx_rvvm2, rv_modff)
+
+/* SLEEF's spelling of fmin, untiered (LLVM's table adds u10) */
+EXPORT vfloat64m2_t Sleef_fmindx_rvvm2(vfloat64m2_t, vfloat64m2_t) __attribute__((alias("Sleef_fmindx_u10rvvm2")));
+EXPORT vfloat32m2_t Sleef_fminfx_rvvm2(vfloat32m2_t, vfloat32m2_t) __attribute__((alias("Sleef_fminfx_u10rvvm2")));
+
+/* sincospi at u10 is LLVM's name only (SLEEF has u05 and u35), so it keeps
+   the pointer outputs of LLVM's table (_ZGVrNxvl8l8) */
 EXPORT void Sleef_sincospidx_u10rvvm2(vfloat64m2_t x, double *s, double *c)
 {
   size_t vl = __riscv_vsetvlmax_e64m2(); double b[vl];

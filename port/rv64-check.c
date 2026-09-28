@@ -98,8 +98,11 @@ static long run(const struct fn *f, int set, long n, int report)
 
 /* the other 34 names (lane by lane in the library): against the same
    scalar functions, so what this checks is the plumbing -- argument and
-   result types (int32 vectors for ilogb and ldexp), pointer outputs (modf,
-   sincos), argument order -- and CORE-MATH for sinpi, cospi, lgamma, tgamma */
+   result types (int32 vectors for ilogb and ldexp), pointer outputs
+   (sincospi u10, LLVM's), SLEEF's packed pairs (sincos, sincospi u05/u35,
+   modf), argument order -- and CORE-MATH for sinpi, cospi, lgamma, tgamma.
+   Also SLEEF's own spellings where LLVM's differ (fmin untiered, sincos
+   u35, sincospi u05 and u35) */
 double cr_sinpi(double), cr_cospi(double), cr_lgamma(double), cr_tgamma(double);
 float cr_sinpif(float), cr_cospif(float), cr_lgammaf(float), cr_tgammaf(float);
 void cr_sincos(double, double *, double *), cr_sincosf(float, float *, float *);
@@ -117,6 +120,7 @@ void cr_sincos(double, double *, double *), cr_sincosf(float, float *, float *);
   D2(Sleef_fdimdx_rvvm2, fdim) F2(Sleef_fdimfx_rvvm2, fdimf)                                      \
   D2(Sleef_fmaxdx_rvvm2, fmax) F2(Sleef_fmaxfx_rvvm2, fmaxf)                                      \
   D2(Sleef_fmindx_u10rvvm2, fmin) F2(Sleef_fminfx_u10rvvm2, fminf)                                \
+  D2(Sleef_fmindx_rvvm2, fmin) F2(Sleef_fminfx_rvvm2, fminf)                                      \
   D2(Sleef_fmoddx_rvvm2, fmod) F2(Sleef_fmodfx_rvvm2, fmodf)                                      \
   D2(Sleef_nextafterdx_rvvm2, nextafter) F2(Sleef_nextafterfx_rvvm2, nextafterf)
 XLIST(XD1, XF1, XD2, XF2)
@@ -124,8 +128,21 @@ vfloat64m2_t Sleef_fmadx_rvvm2(vfloat64m2_t, vfloat64m2_t, vfloat64m2_t);
 vfloat32m2_t Sleef_fmafx_rvvm2(vfloat32m2_t, vfloat32m2_t, vfloat32m2_t);
 vint32m1_t Sleef_ilogbdx_rvvm2(vfloat64m2_t); vint32m2_t Sleef_ilogbfx_rvvm2(vfloat32m2_t);
 vfloat64m2_t Sleef_ldexpdx_rvvm2(vfloat64m2_t, vint32m1_t); vfloat32m2_t Sleef_ldexpfx_rvvm2(vfloat32m2_t, vint32m2_t);
-vfloat64m2_t Sleef_modfdx_rvvm2(vfloat64m2_t, double *); vfloat32m2_t Sleef_modffx_rvvm2(vfloat32m2_t, float *);
-void Sleef_sincosdx_u10rvvm2(vfloat64m2_t, double *, double *); void Sleef_sincosfx_u10rvvm2(vfloat32m2_t, float *, float *);
+/* SLEEF's pairs: half 0 sine (modf: fraction), half 1 cosine (integral part) */
+#define PAIRS(D, F) D(Sleef_sincosdx_u10rvvm2, ref_sincos) F(Sleef_sincosfx_u10rvvm2, ref_sincosf)          \
+  D(Sleef_sincosdx_u35rvvm2, ref_sincos) F(Sleef_sincosfx_u35rvvm2, ref_sincosf)                        \
+  D(Sleef_sincospidx_u05rvvm2, ref_sincospi) F(Sleef_sincospifx_u05rvvm2, ref_sincospif)                \
+  D(Sleef_sincospidx_u35rvvm2, ref_sincospi) F(Sleef_sincospifx_u35rvvm2, ref_sincospif)                \
+  D(Sleef_modfdx_rvvm2, ref_modf) F(Sleef_modffx_rvvm2, ref_modff)
+#define PD_DECL(v, r) vfloat64m4_t v(vfloat64m2_t);
+#define PF_DECL(v, r) vfloat32m4_t v(vfloat32m2_t);
+PAIRS(PD_DECL, PF_DECL)
+static void ref_sincos(double x, double *s, double *c) { cr_sincos(x, s, c); }
+static void ref_sincosf(float x, float *s, float *c) { cr_sincosf(x, s, c); }
+static void ref_sincospi(double x, double *s, double *c) { *s = cr_sinpi(x); *c = cr_cospi(x); }
+static void ref_sincospif(float x, float *s, float *c) { *s = cr_sinpif(x); *c = cr_cospif(x); }
+static void ref_modf(double x, double *f, double *ip) { *f = modf(x, ip); }
+static void ref_modff(float x, float *f, float *ip) { *f = modff(x, ip); }
 void Sleef_sincospidx_u10rvvm2(vfloat64m2_t, double *, double *); void Sleef_sincospifx_u10rvvm2(vfloat32m2_t, float *, float *);
 
 /* one block of every extra name, lanes from a[] b[] c[] (fa[] ... for
@@ -149,13 +166,16 @@ static long block(const double *a, const double *b, const double *c, const float
   __riscv_vse32_v_i32m2(ir, Sleef_ilogbfx_rvvm2(xf), vf); for (size_t i = 0; i < vf; i++) bad += ir[i] != ilogbf(fa[i]);
   __riscv_vse64_v_f64m2(r, Sleef_ldexpdx_rvvm2(x, __riscv_vle32_v_i32m1(ia, vd)), vd); for (size_t i = 0; i < vd; i++) bad += !same_d(r[i], ldexp(a[i], ia[i]));
   __riscv_vse32_v_f32m2(fr, Sleef_ldexpfx_rvvm2(xf, __riscv_vle32_v_i32m2(ia, vf)), vf); for (size_t i = 0; i < vf; i++) bad += !same_f(fr[i], ldexpf(fa[i], ia[i]));
-  __riscv_vse64_v_f64m2(r, Sleef_modfdx_rvvm2(x, r2), vd); for (size_t i = 0; i < vd; i++) { double ip, f = modf(a[i], &ip); bad += !same_d(r[i], f) + !same_d(r2[i], ip); }
-  __riscv_vse32_v_f32m2(fr, Sleef_modffx_rvvm2(xf, fr2), vf); for (size_t i = 0; i < vf; i++) { float ip, f = modff(fa[i], &ip); bad += !same_f(fr[i], f) + !same_f(fr2[i], ip); }
-  Sleef_sincosdx_u10rvvm2(x, r, r2); for (size_t i = 0; i < vd; i++) { double s0, c0; cr_sincos(a[i], &s0, &c0); bad += !same_d(r[i], s0) + !same_d(r2[i], c0); }
-  Sleef_sincosfx_u10rvvm2(xf, fr, fr2); for (size_t i = 0; i < vf; i++) { float s0, c0; cr_sincosf(fa[i], &s0, &c0); bad += !same_f(fr[i], s0) + !same_f(fr2[i], c0); }
+#define PD_CHK(v, ref) { vfloat64m4_t p = v(x); __riscv_vse64_v_f64m2(r, __riscv_vget_v_f64m4_f64m2(p, 0), vd);            \
+    __riscv_vse64_v_f64m2(r2, __riscv_vget_v_f64m4_f64m2(p, 1), vd);                                                  \
+    for (size_t i = 0; i < vd; i++) { double u, w; ref(a[i], &u, &w); bad += !same_d(r[i], u) + !same_d(r2[i], w); } }
+#define PF_CHK(v, ref) { vfloat32m4_t p = v(xf); __riscv_vse32_v_f32m2(fr, __riscv_vget_v_f32m4_f32m2(p, 0), vf);          \
+    __riscv_vse32_v_f32m2(fr2, __riscv_vget_v_f32m4_f32m2(p, 1), vf);                                                 \
+    for (size_t i = 0; i < vf; i++) { float u, w; ref(fa[i], &u, &w); bad += !same_f(fr[i], u) + !same_f(fr2[i], w); } }
+  PAIRS(PD_CHK, PF_CHK)
   Sleef_sincospidx_u10rvvm2(x, r, r2); for (size_t i = 0; i < vd; i++) bad += !same_d(r[i], cr_sinpi(a[i])) + !same_d(r2[i], cr_cospi(a[i]));
   Sleef_sincospifx_u10rvvm2(xf, fr, fr2); for (size_t i = 0; i < vf; i++) bad += !same_f(fr[i], cr_sinpif(fa[i])) + !same_f(fr2[i], cr_cospif(fa[i]));
-  *tot += 8 * vd + 8 * vf;
+  *tot += 15 * vd + 15 * vf;   /* fma, ilogb, ldexp: 1 each; sincospi u10 and the five pairs: 2 */
   return bad;
 }
 
@@ -220,7 +240,7 @@ int main(int argc, char **argv)
   fesetround(FE_TONEAREST);
   printf("to nearest: %ld of %ld differ; other three modes: %ld of %ld differ\n", bad, total, mbad, mtotal);
   long xtot = 0, xbad = extras(n, &xtot);
-  printf("the other 34 names (CORE-MATH or libm, lane by lane, then %ld edge cases): %ld of %ld differ\n", NE * NE * NI, xbad, xtot);
+  printf("the other 42 names (CORE-MATH or libm, lane by lane, then %ld edge cases): %ld of %ld differ\n", NE * NE * NI, xbad, xtot);
   printf("VERDICT: %s\n", bad || mbad || xbad ? "DIFFERS from CORE-MATH" : "IDENTICAL to CORE-MATH on every input tried");
   return bad || mbad || xbad;
 }

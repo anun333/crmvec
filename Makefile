@@ -219,7 +219,9 @@ sleef-exports: $(A64)/libsleefgnuabi.so.3
 # riscv64 libmvec, gcc 13 makes no vector clones there), so crmvec there is
 # a libsleef.so.3 answering them from the portable core, VLEN-agnostic
 # (port/crmvec-port-rv64.c), and the 34 other names in LLVM's table lane by
-# lane from CORE-MATH or libm. The port file needs clang: gcc 13 lowers its
+# lane from CORE-MATH or libm, plus 8 of SLEEF's own spellings where they
+# differ from LLVM's (94 names; sincos and modf in SLEEF's packed-pair
+# convention). The port file needs clang: gcc 13 lowers its
 # generic vectors to scalar code. Needs gcc-riscv64-linux-gnu and clang-20;
 # checked under qemu-riscv64 at several VLENs:
 #   make riscv64
@@ -245,7 +247,7 @@ $(RV64)/libcr.a: $(CR)
 $(RV64)/libsleef.so.3: $(RV64)/port.o $(RV64)/libcr.a
 	$(RVCC) -shared -fPIC -Wl,-soname,libsleef.so.3 -o $@ $(RV64)/port.o $(RV64)/libcr.a -lm
 
-# every Sleef_*rvvm2 entry point (the 52, then LLVM's other 34 names)
+# every Sleef_*rvvm2 entry point (the 52, then the other 42 names)
 # against scalar CORE-MATH or libm (static, so qemu-riscv64 runs it without
 # a sysroot)
 $(RV64)/rv64-check: port/rv64-check.c $(RV64)/port.o $(RV64)/libcr.a

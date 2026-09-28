@@ -52,7 +52,7 @@ jobs:
           echo "the AVX2 entry points, PORT=1 (clang), then PORT=0 (crtest time; the crmvec column is the build's):"
           ./crtest time
           /tmp/crtest-port0 time
-      - name: riscv64 (libsleef.so.3, the 86 SLEEF RVV names in LLVM's table), checked under qemu at VLEN 128 and 256
+      - name: riscv64 (libsleef.so.3, LLVM's 86 SLEEF RVV names and 8 of SLEEF's own spellings), checked under qemu at VLEN 128 and 256
         run: |
           set -o pipefail
           sudo apt-get install -y -qq clang-20 gcc-riscv64-linux-gnu libc6-dev-riscv64-cross qemu-user >/dev/null

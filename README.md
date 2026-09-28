@@ -637,7 +637,8 @@ ones.
 - **gcc 13** makes no vector clones on riscv64.
 
 So `make riscv64` builds `build-riscv64/libsleef.so.3`, which answers all
-86 names in LLVM's SLEEF RVV table (`port/crmvec-port-rv64.c`):
+86 names in LLVM's SLEEF RVV table and 8 of SLEEF's own spellings, 94 in
+all (`port/crmvec-port-rv64.c`):
 - **The 52 functions** come from the portable core.
 - **The other 34** are split as on aarch64 above: `sinpi`, `cospi`,
   `sincos`, `sincospi`, `lgamma` and `tgamma` from CORE-MATH, and the exact
@@ -648,14 +649,20 @@ So `make riscv64` builds `build-riscv64/libsleef.so.3`, which answers all
   same 74. It calls `sqrt` and `fma` (instructions on aarch64), turns
   `fmin`, `fmax` and `copysign` into instructions, and doesn't vectorize
   loops over `modf`, `sincos` or `sincospi`.
-- **Where it differs from SLEEF's own library** (3.9, Debian's riscv64
-  build): for `sincos`, `sincospi` and `modf` this library follows LLVM's
-  table, writing the two results through pointers. SLEEF's functions of
-  those names take one vector and return both results packed in one LMUL-4
-  vector, so code that calls them directly through SLEEF's API still needs
-  SLEEF. LLVM's table also spells four names that SLEEF 3.9 doesn't export
-  (`fmin` with a `u10` tier, `sincospi` at `u10`), and this library exports
-  LLVM's spelling.
+- **Where LLVM's table and SLEEF (3.9, Debian's riscv64 build) disagree:**
+  - **Spellings:** LLVM's table has four names SLEEF doesn't export
+    (`fmin` with a `u10` tier, `sincospi` at `u10`). SLEEF has spellings
+    LLVM doesn't use (`fmin` untiered, `sincos` at `u35`, `sincospi` at
+    `u05` and `u35`). This library exports both sets.
+  - **Convention:** `Sleef_sincos{d,f}x_u10rvvm2` and
+    `Sleef_modf{d,f}x_rvvm2` mean different things in the two. LLVM's table
+    gives them pointer outputs, while SLEEF returns both results packed in
+    one LMUL-4 vector (the sine, or the fractional part, first). One name
+    can't serve both, because the library can't tell whether a caller
+    passed pointers. So these follow SLEEF, whose names they are. No
+    compiler emits them on riscv64 yet.
+  - `sincospi` at `u10` exists only in LLVM's table, so it keeps LLVM's
+    pointer outputs.
 - **VLEN-agnostic:** each entry point runs the portable core over its
   argument in fixed 128-bit blocks. RVV 1.0 guarantees VLEN >= 128, so one
   build runs at any VLEN.
@@ -679,14 +686,14 @@ Checked under qemu (no riscv64 hardware yet):
   million in the three other rounding modes, 0 differ. With the rounding tests' bounds
   zeroed, it gets thousands wrong, and with the rounding mode ignored, it
   fails in the other modes.
-- **The other 34 names in `rv64-check`:** each is compared with its
-  scalar function lane by lane, pointer outputs and integer vectors
-  included.
-  - 0 of 29.9 million results differ at VLEN 128, 256 and 512.
+- **The other 42 names in `rv64-check`:** each is compared with its
+  scalar function lane by lane, packed pairs, pointer outputs and integer
+  vectors included.
+  - 0 of 42.5 million results differ at VLEN 128, 256 and 512.
   - Then a table of the edge cases where SLEEF's own aarch64 library
     differs (above): `ldexp` at `n = INT_MIN`, of infinities, of zeros and
     into subnormals; `sinpi` and `cospi` at integers and huge arguments;
-    `ilogb(±0)`; `fmod` at huge ratios. 0 of 328,320 differ at VLEN 128
+    `ilogb(±0)`; `fmod` at huge ratios. 0 of 466,560 differ at VLEN 128
     to 1024. With `ldexp` returning infinity at `INT_MIN`, as SLEEF 3.9's
     does on aarch64, 456 differ.
 - **`rv64-dropin`:** the 74 loops clang 20 vectorizes give CORE-MATH's (or
@@ -705,6 +712,13 @@ Checked under qemu (no riscv64 hardware yet):
     on the elements that share its vector, and so on the machine's VLEN.
   - `rv64-lanedep` measures this directly: 611 of 61,440 `sinf` lanes
     change at VLEN 256. crmvec: 0.
+- **SLEEF's convention, checked against SLEEF itself:** `rv64-pairs` calls
+  SLEEF's own spellings, in its packed-pair convention.
+  - SLEEF's library gives results within 2 ulp of CORE-MATH, which a wrong
+    convention or half order could not do. Almost all of its `sincospi`
+    differences are the sign of zero at integers.
+  - crmvec's library gives 0 differences.
+  - With the two halves swapped, 655,358 differ.
 - **Not yet:** timing.
 
 ## Limits
