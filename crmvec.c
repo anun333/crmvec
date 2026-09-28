@@ -3025,6 +3025,7 @@ AVX2I static inline __m256d atan2_fast(__m256d y0, __m256d x0, __m256d *redo)
   return lb;
 }
 
+#if !CRMVEC_PORT
 AVX2 __m256d _ZGVdN4vv_atan2(__m256d y, __m256d x)
 {
   __m256d redo, r = atan2_fast(y, x, &redo);
@@ -3034,6 +3035,9 @@ AVX2 __m256d _ZGVdN4vv_atan2(__m256d y, __m256d x)
   for (int i = 0; i < 4; i++) if (m >> i & 1) rs[i] = cr_atan2(ys[i], xs[i]);
   return _mm256_loadu_pd(rs);
 }
+#else   /* PORT=1: port/crmvec-port.c supplies it (port-atan2.h) */
+AVX2 __m256d _ZGVdN4vv_atan2(__m256d, __m256d);
+#endif
 
 /* hypot: CORE-MATH's cr_hypot fast path transcribed: both arguments scaled so
    the larger is in [1, 2), x^2 + y^2 and its root in double-double, and its
@@ -3089,6 +3093,7 @@ AVX2I static inline __m256d hypot_fast(__m256d x, __m256d y, __m256d *redo)
   return r;
 }
 
+#if !CRMVEC_PORT
 AVX2 __m256d _ZGVdN4vv_hypot(__m256d x, __m256d y)
 {
   __m256d redo, r = hypot_fast(x, y, &redo);
@@ -3098,6 +3103,9 @@ AVX2 __m256d _ZGVdN4vv_hypot(__m256d x, __m256d y)
   for (int i = 0; i < 4; i++) if (m >> i & 1) rs[i] = cr_hypot(xs[i], ys[i]);
   return _mm256_loadu_pd(rs);
 }
+#else   /* PORT=1: port/crmvec-port.c supplies it (port-atan2.h) */
+AVX2 __m256d _ZGVdN4vv_hypot(__m256d, __m256d);
+#endif
 
 /* erf: CORE-MATH's cr_erf_fast transcribed: below 1/16 a degree-11 series
    (relative bound 0x1.78p-69), up to 0x1.7afb48dc96626p+2 the table of
@@ -3339,7 +3347,11 @@ DOUBLE_FAST(log1p, log1p_fast, cr_log1p)
 #endif
 AVX2 __m256d _ZGVdN4v_expm1(__m256d); AVX2 __m256d _ZGVdN4v_log1p(__m256d);
 #endif
+#if !CRMVEC_PORT
 DOUBLE_FAST(cbrt, cbrt_fast, cr_cbrt)
+#else   /* PORT=1: port/crmvec-port.c supplies it (port-cbrt.h) */
+AVX2 __m256d _ZGVdN4v_cbrt(__m256d);
+#endif
 #if !CRMVEC_PORT
 #if !CR_LOOP_ATAN && !ATAN_REFINE
 DOUBLE_FAST(atan, atan_fast, cr_atan)
