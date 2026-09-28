@@ -73,7 +73,7 @@ code yet: each element runs CORE-MATH's function.
 
 ```
 make                      # libmvec.so.1 and the checks (needs gcc and libmpfr-dev; clang can't build the x86 library, see Limits)
-make check                # a few minutes of the checks below; every verdict must pass
+make check                # a few minutes of the checks below; every verdict must pass (x86-64 and aarch64)
 LD_LIBRARY_PATH=$PWD your-program
 ```
 
@@ -109,6 +109,17 @@ All of them build without link-time optimization, and run `make clean`
 first, so a source tree holding an earlier build cannot ship it. The checks have run on
 the library as compiled file by file, not on code optimized across crmvec
 and CORE-MATH.
+
+The Debian, Fedora and Nix recipes also run `make check` on the library
+they package, as part of the build (Debian's `nocheck` skips it). Checked
+2026-09-27 on Debian amd64 (Ubuntu 24.04), Fedora 44 (gcc 16) and Nix
+(nixpkgs 24.05): every verdict passes.
+
+Every push also runs `make check` on GitHub Actions
+(`.github/workflows/check.yml`), on an x86-64 runner and natively on an
+arm64 runner. On each it also prints the entry points' speed against
+glibc's: noisy, since the runners are shared, but the only aarch64 figures
+so far.
 
 [PoCL](https://github.com/pocl/pocl) built with
 `ENABLE_HOST_CPU_VECTORIZE_LIBMVEC=ON` loads `libmvec.so.1` by its SONAME
@@ -236,7 +247,7 @@ that program, CORE-MATH's scalar code included.
 ## Checking it
 
 ```
-make check           # a few minutes of what follows, one verdict per line
+make check           # a few minutes of what follows, one verdict per line (on aarch64: aarch64-check sample, the drop-in loops, simdcheck)
 ./crtest verify      # one-argument floats: all 2^32 inputs each
 ./crtest verify64    # doubles: 2^31 random inputs each, CORE-MATH's hard cases, edge values
 ./crtest verify2     # the six two-argument functions: 2^30 random pairs each, 1,600 special pairs
@@ -317,7 +328,7 @@ for `hypot` from Pythagorean triples, and without the test 2,624 of its
 400,000 inputs come out wrong. `hypotf-midpoints` does the same for
 `hypotf` by search: pairs whose `hypot` lies within 2^-50 of a midpoint
 between two floats exist for every exponent difference from 1 to 12.
-Without the test, 1,094 of the 16,661 it finds come out wrong, and MPFR
+Without the test, 1,129 of the 16,503 it finds come out wrong, and MPFR
 agrees with CORE-MATH on every one.
 
 Double precision can't be checked exhaustively. There, correctness rests on
@@ -408,6 +419,7 @@ qemu-aarch64 -cpu max build-aarch64/aarch64-check floats   # all 2^32 inputs of 
 port/port-build.sh    # the core on x86, aarch64 and riscv64: one output hash
 make sleef-exports    # all 644 of SLEEF's names, each flagged VARIANT_PCS
 port/sleef-dropin.sh  # loops vectorized by clang -fveclib=SLEEF, against this library and SLEEF 3.9's
+build-aarch64/nbench build-aarch64/libmvec.so.1 /usr/lib/aarch64-linux-gnu/libmvec.so.1   # the AdvSIMD entry points' speed (native aarch64)
 ```
 Every entry point matches CORE-MATH built for aarch64 at SVE lengths of
 128, 256, 512 and 2048 bits, and all 2^32 inputs of each of the 23 float
@@ -427,23 +439,24 @@ On aarch64 and riscv64 the vector code above comes through SIMDe, which is
 scalar on riscv64. `port/` holds the start of a rewrite in GCC/clang
 generic vector types, one source for every width. `port/portable.h` has
 the helpers the vector extensions lack (FMA, select, rounding, any-lane,
-table rows). Two functions are written so far: `expf` and the double
-`log`, with a 363-row table. Neither is in the library yet.
+table rows). Three functions are written so far: `expf`, the double `log`
+(a 363-row table) and the double `exp` (two 64-row tables). None is in the
+library yet.
 - **Correct everywhere tried:**
   - `generic-expf` matches `cr_expf` on all 2^32 inputs on x86 SSE, AVX2
     and AVX-512, aarch64 NEON and SVE, and riscv64 RVV;
-  - `generic-log` matches `cr_log` on 67 million inputs on x86 (gcc and
-    clang), and on 4 to 17 million under emulation on AVX-512, NEON, SVE
-    and RVV.
+  - `generic-log` and `generic-exp` match `cr_log` and `cr_exp` on 67
+    million inputs on x86 (gcc and clang), and on 4 to 17 million under
+    emulation on AVX-512, NEON, SVE and RVV.
 - **Vector code on each:** the compiled objects show vector FMAs on every
   target (vector-length-specific builds, e.g. 256-bit SVE and RVV).
 - **Speed, AVX2 on Zen 3, rounding-mode check included, ns per element:**
 
-  | `log` | ns |
-  |---|---|
-  | this library's hand-written intrinsics | 3.05 |
-  | portable, built by gcc | 2.99 |
-  | portable, built by clang | 2.50 |
+  | | `log` | `exp` |
+  |---|---|---|
+  | this library's hand-written intrinsics | 3.05 | 3.32 |
+  | portable, built by gcc | 2.99 | 3.51 (3.40 with per-lane row loads) |
+  | portable, built by clang | 2.50 | 2.50 |
 
 ```
 gcc -O2 -ffp-contract=off -frounding-math -c log/log.c -o cr_log.o

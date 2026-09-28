@@ -1,0 +1,57 @@
+# crmvec's checks on every push: make check on x86-64, and natively on an
+# arm64 runner (the aarch64 checker is built with SVE and is skipped on a
+# CPU without it). check.log is kept as an artifact either way.
+name: check
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  x86-64:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install MPFR
+        run: sudo apt-get update -qq && sudo apt-get install -y -qq libmpfr-dev
+      - name: CPU
+        run: nproc; grep -m1 'model name' /proc/cpuinfo; grep -o -w -E 'avx|avx2|fma|avx512f' /proc/cpuinfo | sort | uniq -c
+      - name: Build
+        run: make -j"$(nproc)"
+      - name: make check
+        run: make check
+      - name: Speed of the SSE2 entry points (a shared runner, so noisy)
+        run: ./bbench ./libmvec.so.1 /usr/lib/x86_64-linux-gnu/libmvec.so.1
+      - name: Speed of the AVX-512 entry points, where the runner has AVX-512
+        run: ./ebench ./libmvec.so.1 /usr/lib/x86_64-linux-gnu/libmvec.so.1 || echo "no AVX-512 on this runner"
+      - name: The AVX-512 entry points against CORE-MATH, where the runner has AVX-512
+        run: if grep -qw avx512f /proc/cpuinfo; then ./cecheck e . 16; else echo "no AVX-512 on this runner"; fi
+      - name: Keep check.log
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: check-x86-64
+          path: check.log
+  arm64:
+    runs-on: ubuntu-24.04-arm
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install SIMDe
+        run: sudo apt-get update -qq && sudo apt-get install -y -qq libsimde-dev
+      - name: CPU
+        run: nproc; lscpu | grep -E 'Model name|Vendor'; grep -m1 -o -w -E 'sve2?' /proc/cpuinfo || echo "no SVE"
+      - name: Build
+        run: make -j"$(nproc)"
+      - name: make check
+        run: make check
+      - name: Speed of the AdvSIMD entry points (a shared runner, so noisy)
+        run: build-aarch64/nbench build-aarch64/libmvec.so.1 /usr/lib/aarch64-linux-gnu/libmvec.so.1
+      - name: Keep check.log
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: check-arm64
+          path: check.log

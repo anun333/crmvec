@@ -2,7 +2,7 @@ Source: crmvec
 Section: libs
 Priority: optional
 Maintainer: anun333 <anun333@posteo.net>
-Build-Depends: debhelper-compat (= 13), libsimde-dev [arm64]
+Build-Depends: debhelper-compat (= 13), libsimde-dev [arm64], libmpfr-dev [amd64]
 Standards-Version: 4.6.2
 Homepage: https://github.com/anun333/crmvec
 Rules-Requires-Root: no

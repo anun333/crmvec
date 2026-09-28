@@ -1,7 +1,8 @@
 # crmvec for Nix: nix-build (default.nix), or callPackage ./package.nix {}.
-# Builds the libraries only; the checks need MPFR, qemu and hours, and run
-# from the source tree (README, "Checking it").
-{ lib, stdenv, simde }:
+# Builds the libraries, then make check: a few minutes of the checks on the
+# library being packaged; the full list runs from the source tree (README,
+# "Checking it").
+{ lib, stdenv, simde, mpfr }:
 
 stdenv.mkDerivation {
   pname = "crmvec";
@@ -15,6 +16,8 @@ stdenv.mkDerivation {
   # a checkout holding an earlier build would otherwise ship that build
   preBuild = "make clean";
   buildFlags = [ "lib" ];
+  doCheck = true;
+  checkInputs = lib.optional stdenv.hostPlatform.isx86_64 mpfr;
   makeFlags = [ "PREFIX=${placeholder "out"}" ];
 
   meta = {

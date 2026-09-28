@@ -1,5 +1,6 @@
-# crmvec: an RPM spec (Fedora). Builds the libraries only; the checks need
-# MPFR, qemu and hours, and run from the source tree (README, "Checking it").
+# crmvec: an RPM spec (Fedora). Builds the libraries, then %check runs make
+# check, a few minutes of the checks on the library being packaged; the full
+# list runs from the source tree (README, "Checking it").
 # No LTO: it would optimize across crmvec.c and CORE-MATH, code no check has
 # run on.
 %global _lto_cflags %{nil}
@@ -21,6 +22,9 @@ BuildRequires:  gcc make
 %ifarch aarch64
 BuildRequires:  simde-devel
 %endif
+%ifarch x86_64
+BuildRequires:  mpfr-devel
+%endif
 
 %description
 A replacement for glibc's libmvec.so.1 whose results are the correctly
@@ -40,6 +44,9 @@ or linked with pkg-config crmvec.
 # that build, since make finds it newer than the sources
 make clean
 %make_build lib CFLAGS="%{optflags}"
+
+%check
+make check
 
 %install
 %make_install PREFIX=%{_prefix} LIBDIR=%{_libdir}

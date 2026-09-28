@@ -1,6 +1,7 @@
 #!/usr/bin/make -f
-# crmvec: build the libraries only (make lib); the checks need MPFR, qemu and
-# hours, and are run from the source tree (README, "Checking it")
+# crmvec: build the libraries (make lib), then make check: a few minutes of
+# the checks, on the library being packaged (skipped with nocheck); the
+# full list runs from the source tree (README, "Checking it")
 # no LTO: it would optimize across crmvec.c and CORE-MATH, code no check has run on
 export DEB_BUILD_MAINT_OPTIONS = hardening=+all optimize=-lto
 include /usr/share/dpkg/architecture.mk
@@ -11,6 +12,9 @@ override_dh_auto_build:
 override_dh_auto_install:
 	$(MAKE) install PREFIX=/usr LIBDIR=/usr/lib/$(DEB_HOST_MULTIARCH) DESTDIR=$(CURDIR)/debian/crmvec
 override_dh_auto_test:
+ifeq (,$(filter nocheck,$(DEB_BUILD_OPTIONS)))
+	$(MAKE) check
+endif
 override_dh_auto_clean:
 	$(MAKE) clean
 # private libraries in their own directory: nothing for ldconfig or shlibs

@@ -113,21 +113,41 @@ PORT_INLINE void rows3d(const double (*T)[4], vl idx, vd *c0, vd *c1, vd *c2)
 #if !defined(PORT_ROWS_LANES) && ND == 4
   /* whole rows, transposed by shuffles (crmvec's rows4): per-lane scalar
      loads let gcc's SLP split the lanes and leave FMAs scalar on NEON */
-  vd r0, r1, r2, r3;
-  memcpy(&r0, T[idx[0]], 32); memcpy(&r1, T[idx[1]], 32); memcpy(&r2, T[idx[2]], 32); memcpy(&r3, T[idx[3]], 32);
+  vd r0, r1, r2, r3; int64_t ix[ND]; memcpy(ix, &idx, VB);   /* one store, then scalar reloads: cheaper than extracting each lane */
+  memcpy(&r0, T[ix[0]], 32); memcpy(&r1, T[ix[1]], 32); memcpy(&r2, T[ix[2]], 32); memcpy(&r3, T[ix[3]], 32);
   vd t0 = __builtin_shufflevector(r0, r1, 0, 4, 2, 6), t1 = __builtin_shufflevector(r0, r1, 1, 5, 3, 7);
   vd t2 = __builtin_shufflevector(r2, r3, 0, 4, 2, 6), t3 = __builtin_shufflevector(r2, r3, 1, 5, 3, 7);
   *c0 = __builtin_shufflevector(t0, t2, 0, 1, 4, 5); *c1 = __builtin_shufflevector(t1, t3, 0, 1, 4, 5);
   *c2 = __builtin_shufflevector(t0, t2, 2, 3, 6, 7);
 #elif !defined(PORT_ROWS_LANES) && ND == 2
-  vd a0, a1, b0, b1;
-  memcpy(&a0, T[idx[0]], 16); memcpy(&a1, T[idx[0]] + 2, 16); memcpy(&b0, T[idx[1]], 16); memcpy(&b1, T[idx[1]] + 2, 16);
+  vd a0, a1, b0, b1; int64_t ix[ND]; memcpy(ix, &idx, VB);
+  memcpy(&a0, T[ix[0]], 16); memcpy(&a1, T[ix[0]] + 2, 16); memcpy(&b0, T[ix[1]], 16); memcpy(&b1, T[ix[1]] + 2, 16);
   *c0 = __builtin_shufflevector(a0, b0, 0, 2); *c1 = __builtin_shufflevector(a0, b0, 1, 3);
   *c2 = __builtin_shufflevector(a1, b1, 0, 2);
 #else
-  vd a, b, c;
-  for (int i = 0; i < ND; i++) { const double *r = T[idx[i]]; a[i] = r[0]; b[i] = r[1]; c[i] = r[2]; }
+  vd a, b, c; int64_t ix[ND]; memcpy(ix, &idx, VB);
+  for (int i = 0; i < ND; i++) { const double *r = T[ix[i]]; a[i] = r[0]; b[i] = r[1]; c[i] = r[2]; }
   *c0 = a; *c1 = b; *c2 = c;
+#endif
+}
+
+/* the same for rows of 2 doubles (a hi/lo pair per index: crmvec's rows2) */
+PORT_INLINE void rows2d(const double (*T)[2], vl idx, vd *c0, vd *c1)
+{
+#if !defined(PORT_ROWS_LANES) && ND == 4
+  typedef double d2 __attribute__((vector_size(16)));
+  d2 r0, r1, r2, r3; int64_t ix[ND]; memcpy(ix, &idx, VB);
+  memcpy(&r0, T[ix[0]], 16); memcpy(&r1, T[ix[1]], 16); memcpy(&r2, T[ix[2]], 16); memcpy(&r3, T[ix[3]], 16);
+  vd a = __builtin_shufflevector(r0, r1, 0, 1, 2, 3), b = __builtin_shufflevector(r2, r3, 0, 1, 2, 3);
+  *c0 = __builtin_shufflevector(a, b, 0, 2, 4, 6); *c1 = __builtin_shufflevector(a, b, 1, 3, 5, 7);
+#elif !defined(PORT_ROWS_LANES) && ND == 2
+  vd r0, r1; int64_t ix[ND]; memcpy(ix, &idx, VB);
+  memcpy(&r0, T[ix[0]], 16); memcpy(&r1, T[ix[1]], 16);
+  *c0 = __builtin_shufflevector(r0, r1, 0, 2); *c1 = __builtin_shufflevector(r0, r1, 1, 3);
+#else
+  vd a, b; int64_t ix[ND]; memcpy(ix, &idx, VB);
+  for (int i = 0; i < ND; i++) { const double *r = T[ix[i]]; a[i] = r[0]; b[i] = r[1]; }
+  *c0 = a; *c1 = b;
 #endif
 }
 

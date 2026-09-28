@@ -55,7 +55,7 @@ libcrf16.a: $(F16SRC)
 ifeq ($(HOSTARCH),aarch64)
 # a native aarch64 build: the aarch64 rules below with this compiler; the
 # x86 checks do not build here
-all: lib $(A64)/aarch64-check
+all: lib $(A64)/aarch64-check $(A64)/nbench
 lib: $(A64)/libmvec.so.1 $(A64)/libsleefgnuabi.so.3
 LIBS_BUILT = $(A64)/libmvec.so.1 $(A64)/libsleefgnuabi.so.3
 else
@@ -199,24 +199,51 @@ clean:
 
 # a few minutes of the checks, for users and packagers (the full list is the
 # README's "Checking it"); each line must print a passing verdict, and the
-# controls must fail as they should. The AVX and AVX-512 entry points are
-# checked only on CPUs that have them (elsewhere the checker itself would
+# controls must fail as they should. The AVX, AVX2 and AVX-512 entry points
+# are checked only on CPUs that have them (elsewhere the checker itself would
 # fault). Needs libmpfr-dev, as `make` does.
+VERDICTS := 'IDENTICAL|CORRECTLY ROUNDED|all four differ|ALL EXPORTED|, 0 differ from cr_hypot|^TOTAL 0 differ'
+ifeq ($(HOSTARCH),aarch64)
+# on aarch64: every entry point against CORE-MATH (the checker is built with
+# SVE, so it runs only where the CPU has it), the simd header, and loops gcc
+# vectorized through this library against CORE-MATH (the drop-in check)
+check: all $(A64)/dropin
+	@set -e; v() { echo "$$1" | tee -a check.log | tail -1; echo "$$1" | tail -1 | grep -qE $(VERDICTS) || { echo "FAILED: $$2"; exit 1; }; }; \
+	: > check.log; \
+	if grep -qw sve /proc/cpuinfo; then v "$$($(A64)/aarch64-check sample)" "aarch64-check sample"; else echo "aarch64-check: skipped, no SVE"; fi; \
+	v "$$(LD_LIBRARY_PATH=$(A64) $(A64)/dropin 2>&1 | grep -v 'no version information')" "drop-in loops (gcc, crmvec-simd.h)"; \
+	v "$$(./simdcheck.sh $(CC) $(A64)/libmvec.so.1 2>&1)" "simdcheck (crmvec-simd.h: gcc vectorizes all 52 functions without -ffast-math)"; \
+	echo "make check: every verdict passed (details in check.log)"
+
+# the AdvSIMD entry points' speed, one column per library (bbench's twin):
+# nbench build-aarch64/libmvec.so.1 /usr/lib/aarch64-linux-gnu/libmvec.so.1
+$(A64)/nbench: port/nbench.c
+	$(A64CC) $(CFLAGS) -o $@ port/nbench.c -ldl -lm
+
+# loops gcc vectorizes with crmvec-simd.h (no -ffast-math), linked against
+# this library, against CORE-MATH's scalar functions built in
+$(A64)/dropin: port/dropin-main.c port/dropin-loop.c crmvec-simd.h $(A64)/libmvec.so.1
+	$(A64CC) $(CFLAGS) -O3 -ffp-contract=off -fno-math-errno -include crmvec-simd.h -c -o $(A64)/dropin-loop.o port/dropin-loop.c
+	$(A64CC) $(CFLAGS) $(FP) -I. -o $@ port/dropin-main.c $(A64)/dropin-loop.o sin.c log/log.c expf.c atan2f.c $(A64)/libmvec.so.1 -lm
+else
 check: all
-	@set -e; v() { echo "$$1" | tee -a check.log | tail -1; echo "$$1" | tail -1 | grep -qE 'IDENTICAL|CORRECTLY ROUNDED|all four differ|ALL EXPORTED|, 0 differ from cr_hypot' || { echo "FAILED: $$2"; exit 1; }; }; \
+	@set -e; v() { echo "$$1" | tee -a check.log | tail -1; echo "$$1" | tail -1 | grep -qE $(VERDICTS) || { echo "FAILED: $$2"; exit 1; }; }; \
 	: > check.log; \
 	v "$$(./bcheck . 18)" bcheck; \
 	if grep -q ' avx ' /proc/cpuinfo; then v "$$(./cecheck c . 14)" "cecheck c"; else echo "cecheck c: skipped, no AVX"; fi; \
 	if grep -q avx512f /proc/cpuinfo; then v "$$(./cecheck e . 12)" "cecheck e"; else echo "cecheck e: skipped, no AVX-512F"; fi; \
+	if grep -qw avx2 /proc/cpuinfo && grep -qw fma /proc/cpuinfo; then \
 	v "$$(./mpfrcheck 16 all)" "mpfrcheck, four rounding modes"; \
 	v "$$(./mpfrcheck controls)" "mpfrcheck controls"; \
 	v "$$(./crtest verify expf logf sinf)" "crtest verify (every input of expf, logf, sinf)"; \
 	v "$$(./hypot-midpoints)" "hypot-midpoints (double hypot on exact midpoints)"; \
 	v "$$(./hypotf-midpoints)" "hypotf-midpoints (float pairs near a midpoint, found by search)"; \
+	else echo "mpfrcheck, crtest, hypot-midpoints, hypotf-midpoints: skipped, no AVX2 and FMA (they call the AVX2 entry points)"; fi; \
 	v "$$(./lcheck .)" "lcheck (every input of sinpif, cospif, tanpif, rsqrtf)"; \
 	v "$$(./f16check | tail -1)" "f16check"; \
 	v "$$(./simdcheck.sh $(CC) ./libmvec.so.1 2>&1)" "simdcheck (crmvec-simd.h: gcc vectorizes all 52 functions without -ffast-math)"; \
 	echo "make check: every verdict passed (details in check.log)"
+endif
 
 print-sources:   # for the export script: every CORE-MATH source the build uses
 	@echo $(CR)

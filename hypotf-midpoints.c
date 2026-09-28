@@ -21,7 +21,8 @@
 
    HM_DUMP=1 prints each input that differs.
    ./hypotf-midpoints [per_d [budget]]   (default 1600 inputs per d, d = 1..12,
-   at most 2^26 midpoints tried per thread per d) */
+   at most 2^25 midpoints tried per search stream per d; 16 streams, so the
+   result does not depend on the number of threads) */
 #include <immintrin.h>
 #include <math.h>
 #include <stdio.h>
@@ -78,24 +79,26 @@ static int search(int d, int want, long budget, uint64_t s, float *xs, float *ys
 int main(int argc, char **argv)
 {
   int per_d = argc > 1 ? atoi(argv[1]) : 1600;
-  long budget = argc > 2 ? atol(argv[2]) : 1L << 26;   /* midpoints tried per thread per d */
+  long budget = argc > 2 ? atol(argv[2]) : 1L << 25;   /* midpoints tried per stream per d */
   long total = 0, total_bad = 0, total_exact = 0, total_tight = 0;
   for (int d = 1; d <= 12; d++) {
     float *xs = malloc(sizeof(float) * (per_d + 8)), *ys = malloc(sizeof(float) * (per_d + 8));
     int n = 0; long exact = 0, tight = 0;
-    #pragma omp parallel
-    {
-      int nt = omp_get_num_threads(), t = omp_get_thread_num(), want = (per_d + nt - 1) / nt;
-      float *lx = malloc(sizeof(float) * want), *ly = malloc(sizeof(float) * want);
-      long le = 0, lt = 0;
-      int ln = search(d, want, budget, 0x9e3779b97f4a7c15ULL ^ ((uint64_t)d << 32) ^ ((uint64_t)t * 0x2545F4914F6CDD1DULL), lx, ly, &le, &lt);
-      #pragma omp critical
-      {
-        for (int i = 0; i < ln && n < per_d; i++) { xs[n] = lx[i]; ys[n] = ly[i]; n++; }
-        exact += le; tight += lt;
-      }
-      free(lx); free(ly);
+    /* 16 fixed search streams, so the inputs found do not depend on the
+       number of threads */
+    enum { NS = 16 };
+    int want = (per_d + NS - 1) / NS;
+    float *lx = malloc(sizeof(float) * want * NS), *ly = malloc(sizeof(float) * want * NS);
+    int ln[NS]; long le[NS] = {0}, lt[NS] = {0};
+    #pragma omp parallel for schedule(dynamic, 1)
+    for (int t = 0; t < NS; t++)
+      ln[t] = search(d, want, budget, 0x9e3779b97f4a7c15ULL ^ ((uint64_t)d << 32) ^ ((uint64_t)t * 0x2545F4914F6CDD1DULL),
+                     lx + t * want, ly + t * want, &le[t], &lt[t]);
+    for (int t = 0; t < NS; t++) {
+      for (int i = 0; i < ln[t] && n < per_d; i++) { xs[n] = lx[t * want + i]; ys[n] = ly[t * want + i]; n++; }
+      exact += le[t]; tight += lt[t];
     }
+    free(lx); free(ly);
     long bad = 0;
     for (int i = n; i < ((n + 7) & ~7); i++) { xs[i] = 3.0f; ys[i] = 4.0f; }
     for (int i = 0; i < n; i += 8) {
