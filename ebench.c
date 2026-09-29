@@ -10,7 +10,7 @@
    main checks the CPU first, so on a CPU without AVX-512F this prints VOID
    rather than dying on an illegal instruction. Correctness is cecheck's
    job (cecheck e); this measures speed only. Added 2026-09-27, for timing
-   on hired AVX-512 machines (docs/hardware-buying.md). */
+   on hired AVX-512 machines (openpocl's docs/hardware-buying.md). */
 #define _GNU_SOURCE
 #include <dlfcn.h>
 #include <immintrin.h>

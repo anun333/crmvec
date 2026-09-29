@@ -5,8 +5,9 @@
 # code built with -mavx; added 2026-09-29). Run from this directory after make.
 #   emu-check.sh [k]    2^k calls per function (default 18; emulation is slow)
 # Nothing here may die of a signal: on this desktop apport files a crash
-# report for any packaged binary that does (docs/outline/40-traps.md, the
-# apport trap), and ulimit -c 0 does not stop it. ulimit -c 0 stays as a guard.
+# report for any packaged binary that does (the apport trap, in openpocl's
+# docs/outline/40-traps.md), and ulimit -c 0 does not stop it. ulimit -c 0
+# stays as a guard.
 set -u
 ulimit -c 0
 cd "$(dirname "$0")"

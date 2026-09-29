@@ -6,12 +6,61 @@ Files: *
 Copyright: 2026 anun333
 License: MIT
 
-Files: *.c */*.c
-Copyright: the CORE-MATH authors (Alexei Sibidanov, Paul Zimmermann, Tom Hubrecht and others; see each file)
+Files: *.c f16/* bf16/* log/* log10/* pow/* atan2/* atan2pi/* crmvec-*-tab.h
+Copyright: 2021-2022 Alexei Sibidanov.
+ 2021-2023 Paul Zimmermann and Tom Hubrecht
+ 2022-2023 Alexei Sibidanov.
+ 2022, 2023 CERN and Inria
+ 2022-2024 Paul Zimmermann and Tom Hubrecht
+ 2022-2025 Alexei Sibidanov.
+ 2022-2025 Alexei Sibidanov and Paul Zimmermann
+ 2022-2025 Alexei Sibidanov and Paul Zimmermann.
+ 2022-2025 CERN and Inria
+ 2022-2025 INRIA and CERN.
+ 2022-2025 Paul Zimmermann and Tom Hubrecht
+ 2022-2026 Alexei Sibidanov, Paul Zimmermann, Tom Hubrecht and
+ 2022-2026 Alexei Sibidanov <sibid@uvic.ca>
+ 2022-2026 Alexei Sibidanov <sibid@uvic.ca>.
+ 2022-2026 Paul Zimmermann and Tom Hubrecht and Alexei Sibidanov
+ 2022 Alexei Sibidanov.
+ 2022 CERN.
+ 2022 INRIA and CERN.
+ 2023-2024 Paul Zimmermann and Alexei Sibidanov
+ 2023-2025 Alexei Sibidanov.
+ 2023-2025 Alexei Sibidanov and Paul Zimmermann
+ 2023-2025 Alexei Sibidanov <sibid@uvic.ca>
+ 2023-2025 Alexei Sibidanov <sibid@uvic.ca>.
+ 2023-2025 Paul Zimmermann
+ 2023-2026 Alexei Sibidanov and Paul Zimmermann.
+ 2023-2026 Alexei Sibidanov, Cyprien Peignier, Paul Zimmermann
+ 2023-2026 Alexei Sibidanov <sibid@uvic.ca>.
+ 2023 Alexei Sibidanov.
+ 2024-2025 Alexei Sibidanov
+ 2024-2025 Alexei Sibidanov.
+ 2024-2025 Paul Zimmermann and Alexei Sibidanov
+ 2024-2026 Alexei Sibidanov <sibid@uvic.ca>.
+ 2024 Alexei Sibidanov.
+ 2024 Alexei Sibidanov <sibid@uvic.ca>.
+ 2025-2026 Maxence Ponsardin and Paul Zimmermann
+ 2025-2026 Maxence Ponsardin and Paul Zimmermann.
+ 2025 Alexei Sibidanov <sibid@uvic.ca>
+ 2025 Maxence Ponsardin.
+ 2025 Maxence Ponsardin and Paul Zimmermann
+ 2025 Paul Zimmermann
 License: MIT
-Comment: CORE-MATH's files (https://core-math.gitlabpages.inria.fr/), included unmodified
- with their own copyright notices. crmvec's own C files (crmvec*.c and the checks)
- are covered by the first paragraph.
+Comment: CORE-MATH's files (https://core-math.gitlabpages.inria.fr/), included
+ unmodified with their own copyright notices (the notices above, as
+ LICENSE.CORE-MATH lists them), and the crmvec-*-tab.h headers, which copy
+ tables from them.
+
+Files: crmvec*.c crtest.c *check.c hypot-midpoints.c hypotf-midpoints.c
+ tan-poles.c crref.c pownf-search.c bbench.c ebench.c port/*
+ crmvec-pownf-tab.h
+Copyright: 2026 anun333
+License: MIT
+Comment: crmvec's own files among those the paragraph above matches (the last
+ matching paragraph applies): the library's sources, the checks, the
+ portable core, and crmvec-pownf-tab.h (pownf-search's results).
 
 License: MIT
  Permission is hereby granted, free of charge, to any person obtaining a copy

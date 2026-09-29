@@ -175,7 +175,10 @@ clang -O3 -fveclib=libmvec -fno-math-errno prog.c $(pkg-config --cflags --libs c
 ```
 
 `-fno-math-errno` is needed because a call that may set `errno` can't be
-vectorized. Add `-ffp-contract=off` if your own arithmetic must not be fused
+vectorized. The header includes nothing, so under `-include` it leaves the
+program's own feature-test macros (`_GNU_SOURCE`) in effect (until
+2026-09-29 it included `<math.h>`, and a program defining `_GNU_SOURCE`
+lost those declarations). Add `-ffp-contract=off` if your own arithmetic must not be fused
 either. clang ignores the header and uses `-fveclib=libmvec`. Coverage then
 depends on LLVM's table: 10 of the 52 functions with clang 18, 28 with LLVM
 main, and all 52 with [llvm#223817](https://github.com/llvm/llvm-project/pull/223817)
@@ -276,7 +279,7 @@ read the control register once per call); the vector paths are unchanged.
 ## Checking it
 
 ```
-make check           # a few minutes of what follows, one verdict per line (on aarch64: aarch64-check sample, the drop-in loops, simdcheck)
+make check           # a few minutes of what follows, one verdict per line, some also under flush-to-zero (on aarch64: aarch64-check sample, the drop-in loops, simdcheck)
 ./crtest verify      # one-argument floats: all 2^32 inputs each
 ./crtest verify64    # doubles: 2^31 random inputs each, CORE-MATH's hard cases, edge values
 ./crtest verify2     # the six two-argument functions: 2^30 random pairs each, 1,600 special pairs (pow and powf: 432 parity pairs too)
@@ -346,6 +349,27 @@ fresh copy of this repository:
 - **Exports:** the library stopped exporting its internals.
 - **clang:** a clang-built x86 library turned out to be broken (Limits).
 - **`make check`** was added.
+
+**Reviewed 2026-09-29**, the whole repository, by reading and by targeted
+tests (seven reviewers, each finding reproduced before it was fixed). The
+math the checks covered held up; the bugs were where no check went:
+- **CPUs with AVX but not AVX2:** the AVX2 names ran AVX2 code there
+  (SIGILL), and clang calls those names for code built with `-mavx`. Now
+  they check the CPU; `cecheck d` and `emu-check.sh` (qemu `-cpu
+  SandyBridge`) check it.
+- **Flush-to-zero** (`-ffast-math` programs): `atan2` wrong by 2^49 or
+  calling `exit(1)`, and `logf`, `log2f`, `log10f`, `cbrtf` reading
+  subnormal inputs as zero ("How each function is made correct"). Now
+  `CRTEST_FTZ=1` checks it.
+- **The portable `pow`:** the wrong sign, or no NaN, for x < 0 and |y| in
+  [2^51, 2^53), on aarch64, riscv64 and x86 `PORT=1` ("One portable
+  source"). Now 432 parity pairs check it.
+- **The build and the checks:** a `PORT` in the environment built a broken
+  library without an error; `lcheck` died on build hosts without AVX2;
+  `mpfrcheck` and `f16check` could test another library than the build's
+  (through `LD_LIBRARY_PATH`) and pass; internal calls could be taken by
+  another library's copy; `crmvec-simd.h` under `-include` broke programs
+  defining `_GNU_SOURCE`. All fixed the same day.
 
 The checks do see wrong answers when there are some. Each vector path was
 rebuilt with its rounding test disabled, and then failed its check: every
@@ -500,7 +524,9 @@ SIMDe's code is scalar. `port/` holds a second implementation of all 52
 functions in GCC/clang generic vector types, one source for every width.
 - **aarch64:** the default (35 functions from 0.3.0, all 52 from 0.4.0).
 - **riscv64:** the whole library.
-- **x86:** optional (`make PORT=1`).
+- **x86:** the AVX-512 entry points, built for 512-bit vectors (from
+  2026-09-29; `make E512=0` for the old way, Limits), and all 52 functions
+  optionally (`make PORT=1`).
 
 `port/portable.h` has the helpers the vector extensions lack (FMA, select,
 rounding, any-lane, table rows). The functions:
@@ -579,8 +605,9 @@ How they were checked and timed:
 
 **Inside the library:** on x86, `make PORT=1` builds
 `libmvec.so.1` with all 52 functions taken from the portable core
-instead of the intrinsics (`port/crmvec-port.c`). Their AVX and AVX-512 entry
-points follow, since they call the AVX2 core. The SSE2 ones follow only where
+instead of the intrinsics (`port/crmvec-port.c`). Their AVX entry
+points follow, since they call the AVX2 core; the AVX-512 ones run the
+512-bit build of the portable core on either build (E512). The SSE2 ones follow only where
 `crmvec-bvec.h` sends them to that core; the rest call CORE-MATH per lane
 on either build, so SSE2 timings (`bbench`) cannot tell the two apart for
 those functions. The one-argument floats are checked on all 2^32 inputs
@@ -663,7 +690,11 @@ The test is `port/sleef-dropin.sh`:
 Every exported AdvSIMD and SVE function carries the ELF `VARIANT_PCS`
 flag, aliases included (`make sleef-exports` checks this and the name
 list). The flag makes the dynamic linker bind calls to them eagerly, so a
-caller's vector registers survive lazy binding.
+caller's vector registers survive lazy binding. Calls between the
+library's own entry points (the unmasked SVE names call the masked ones)
+bind inside it (`-Bsymbolic-functions`, from 2026-09-29): through the PLT,
+glibc's `libmvec` loaded first had made this library's `_ZGVsNxv_sin` run
+glibc's `sin`.
 
 ## Other CPUs: riscv64
 

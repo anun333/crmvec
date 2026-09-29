@@ -313,7 +313,19 @@ clean:
 # controls must fail as they should. The AVX, AVX2 and AVX-512 entry points
 # are checked only on CPUs that have them (elsewhere the checker itself would
 # fault). Needs libmpfr-dev, as `make` does.
-VERDICTS := 'IDENTICAL|CORRECTLY ROUNDED|all four differ|ALL EXPORTED|, 0 differ from cr_hypot|^TOTAL 0 differ'
+VERDICTS := 'IDENTICAL|CORRECTLY ROUNDED|all four differ|ALL EXPORTED|, 0 differ from cr_hypot|^TOTAL 0 differ|EVERY CALL WRAPPED'
+
+# every CORE-MATH function in the library is called through a crmvec-fpenv.c
+# wrapper, so runs with flush-to-zero off: a function CORE-MATH gains would
+# otherwise run in the caller's (added 2026-09-29; the half and bfloat16
+# ones, cr_*f16 and cr_*_bf16, are covered per call in crmvec-f16.c)
+wrapcheck: lib
+	@lib=$(firstword $(LIBS_BUILT)); d=$$(mktemp -d); \
+	 nm "$$lib" | awk '$$2 ~ /^[tT]$$/ && $$3 ~ /^cr_[a-z0-9]+$$/ && $$3 !~ /f16$$/ {print $$3}' | sort -u > $$d/defined; \
+	 nm "$$lib" | awk '$$3 ~ /^__wrap_cr_/ {sub(/^__wrap_/, "", $$3); print $$3}' | sort -u > $$d/wrapped; \
+	 m=$$(comm -23 $$d/defined $$d/wrapped | tr '\n' ' '); n=$$(wc -l < $$d/defined); rm -rf $$d; \
+	 if [ -n "$$m" ] || [ "$$n" -eq 0 ]; then echo "wrapcheck: not wrapped (add to crmvec-fpenv.c): $$m-- FAILED"; exit 1; fi; \
+	 echo "wrapcheck: $$n CORE-MATH functions in $$lib, EVERY CALL WRAPPED"
 ifeq ($(HOSTARCH),aarch64)
 # on aarch64: every entry point against CORE-MATH (the checker is built with
 # SVE, so it runs only where the CPU has it), the simd header, and loops gcc
@@ -326,6 +338,7 @@ check: all $(A64)/dropin
 	  else echo "aarch64-check: skipped, no SVE"; fi; \
 	v "$$(LD_LIBRARY_PATH=$(A64) $(A64)/dropin 2>&1 | grep -v 'no version information')" "drop-in loops (gcc, crmvec-simd.h)"; \
 	v "$$(./simdcheck.sh $(CC) $(A64)/libmvec.so.1 2>&1)" "simdcheck (crmvec-simd.h: gcc vectorizes all 52 functions without -ffast-math)"; \
+	v "$$($(MAKE) -s wrapcheck 2>&1)" "wrapcheck (every CORE-MATH function called with flush-to-zero off)"; \
 	echo "make check: every verdict passed (details in check.log)"
 
 # the AdvSIMD entry points' speed, one column per library (bbench's twin):
@@ -357,10 +370,11 @@ check: all
 	v "$$(./lcheck .)" "lcheck (every input of sinpif, cospif, tanpif, rsqrtf)"; \
 	v "$$(./f16check | tail -1)" "f16check"; \
 	v "$$(./simdcheck.sh $(CC) ./libmvec.so.1 2>&1)" "simdcheck (crmvec-simd.h: gcc vectorizes all 52 functions without -ffast-math)"; \
+	v "$$($(MAKE) -s wrapcheck 2>&1)" "wrapcheck (every CORE-MATH function called with flush-to-zero off)"; \
 	echo "make check: every verdict passed (details in check.log)"
 endif
 
 print-sources:   # for the export script: every CORE-MATH source the build uses
 	@echo $(CR)
 
-.PHONY: all lib install headercheck check clean print-sources aarch64 sleef-exports riscv64
+.PHONY: all lib install headercheck wrapcheck check clean print-sources aarch64 sleef-exports riscv64

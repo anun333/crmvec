@@ -28,7 +28,10 @@ extern "C" {
 #endif
 
 /* y[i] = f(x[i]), z[i] = f(x[i], y[i]), (s[i], c[i]) = (sin x[i], cos x[i]),
-   for i < n, correctly rounded in the current rounding mode */
+   for i < n, correctly rounded in the current rounding mode, also in a
+   program that runs with flush-to-zero (-ffast-math): each call clears it
+   and restores it. An output may be the same array as an input (in place),
+   but must not overlap one otherwise. */
 #define CRMVEC_H1(f)                                                          \
   void crmvec_f16_##f(const uint16_t *x, uint16_t *y, size_t n);             \
   void crmvec_bf16_##f(const uint16_t *x, uint16_t *y, size_t n);
@@ -49,7 +52,8 @@ void crmvec_bf16_sincos(const uint16_t *x, uint16_t *s, uint16_t *c, size_t n);
 #undef CRMVEC_H1
 #undef CRMVEC_H2
 
-/* correctly rounded scalar functions */
+/* correctly rounded scalar functions (every rounding mode; flush-to-zero
+   cleared for the call, as above) */
 #define CRMVEC_S1(f) double crmvec_##f(double x); float crmvec_##f##f(float x);
 #define CRMVEC_S2(f) double crmvec_##f(double x, double y); float crmvec_##f##f(float x, float y);
 CRMVEC_S1(sinpi) CRMVEC_S1(cospi) CRMVEC_S1(tanpi) CRMVEC_S1(asinpi) CRMVEC_S1(acospi)

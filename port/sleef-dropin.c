@@ -4,7 +4,9 @@
    the C library for the exact ones (the expressions in crmvec-lanes.h).
    sleef-dropin.sh runs it with crmvec's libsleefgnuabi.so.3 first on the
    library path, and with SLEEF 3.9's as the control. Inputs are built from
-   integer bits (docs/outline/40-traps.md, trap 63), four sets interleaved
+   integer bits, never through libm, so every ISA sees the same ones (glibc's
+   exp and exp2 differ between x86-64 and the others in the last bit; trap
+   63 in openpocl's docs/outline/40-traps.md), four sets interleaved
    lane by lane: uniform on [-8, 8], every exponent, raw bits, special
    values; N is a multiple of 256 so that no scalar remainder loop runs. */
 #include <stdint.h>

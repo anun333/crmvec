@@ -4,9 +4,11 @@ libcrref.so
 __pycache__/
 bcheck
 hypot-midpoints
+hypotf-midpoints
 tan-poles
 bbench
 build-aarch64/
+build-riscv64/
 build-port/
 mpfrcheck
 pownf-search

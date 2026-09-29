@@ -2,8 +2,10 @@
 """Write crmvec-rename.h: every AVX2 entry point name of crmvec-functions.h
 (_ZGVdN8v_expf, ...) renamed to the internal crvi_<name>, so that crmvec.c's
 vector code is defined under the internal name and the exported name belongs
-to the rounding-mode guard at the end of crmvec.c. `--check`: exit 1 unless
-the header regenerates identically. Added 2026-09-27."""
+to the guard at the end of crmvec.c (the rounding mode; on x86, where the
+exported name is the AVX entry point's alias since 2026-09-29, the CPU too).
+`--check`: exit 1 unless the header regenerates identically. Added
+2026-09-27."""
 import os, re, sys
 D = os.path.dirname(os.path.abspath(__file__))
 pre = {"F1": "_ZGVdN8v_", "D1": "_ZGVdN4v_", "F2": "_ZGVdN8vv_", "D2": "_ZGVdN4vv_"}

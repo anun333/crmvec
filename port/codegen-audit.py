@@ -5,6 +5,7 @@ the built library (added 2026-09-28).
     port/codegen-audit.py x86 libmvec.so.1                 # the crvi_* AVX2 cores (make PORT=1)
     port/codegen-audit.py a64 build-aarch64/libmvec.so.1   # the AdvSIMD entry points
     port/codegen-audit.py x86 libmvec.so.1 'crvi_(sin|cos)'   # a subset, by regex
+    port/codegen-audit.py x86 libmvec.so.1 'crve_[a-z0-9]+'   # the 512-bit cores (E512, 2026-09-29)
 
 Per function: instructions; packed and scalar floating-point arithmetic;
 lane moves between vector and scalar registers; stack loads and stores;

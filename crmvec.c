@@ -25,7 +25,13 @@
         quadrant apart.
      double exp: CORE-MATH's fast path transcribed (see exp_fast).
    d class (AVX2, 8 lanes) uses the vector paths; b class (SSE2, 4 lanes)
-   loops over scalar CORE-MATH, which measured faster there.
+   runs them on duplicated lanes where crmvec-bvec.h says that measured
+   faster (36 of the 52), else loops over scalar CORE-MATH; c (AVX) and e
+   (AVX-512) at the end. On x86 the exported d names are the c entry
+   points, which check the CPU (2026-09-29).
+
+   Every call into CORE-MATH runs with flush-to-zero off (crmvec-fpenv.h;
+   the library is linked with --wrap=cr_<name>, crmvec-fpenv.c).
 
    Functions with no vector path yet (sinpi ... pown, crmvec-lanes.h) run
    the scalar function on each lane; their x86 entry points are at the end.
@@ -4346,10 +4352,14 @@ DV2(pownf, __m256, __m256i, float, int32_t, 8, crm_pownf)
    does not. glibc exports both classes for the same 26 functions, so a
    program built that way would not load against this library without them.
    c: on a CPU with AVX2 and FMA, the AVX2 code on the same lanes; else
-   scalar CORE-MATH per lane. e: the AVX2 code on each half (every AVX-512
-   CPU has AVX2 and FMA; the scalar loop stays for completeness). Checked by
-   cecheck.c, natively for c and under Intel SDE for e and for c on a CPU
-   without AVX2. */
+   scalar CORE-MATH per lane. The exported AVX2 (d) names are these c
+   functions too (the end of this file). e: on a CPU with AVX512F and
+   AVX512DQ, the portable core built for 512-bit vectors (E512, below); else
+   the AVX2 code on each half (every AVX-512 CPU has AVX2 and FMA; the
+   scalar loop stays for completeness). Checked by cecheck.c: natively (c,
+   d and e, also under CRTEST_FTZ=1), under qemu -cpu SandyBridge for c and
+   d on a CPU with AVX but not AVX2 (emu-check.sh), and under Intel SDE for
+   e on a CPU without AVX-512. */
 #if defined(__x86_64__) || defined(__i386__)
 #define AVXE __attribute__((target("avx512f"), noinline))
 /* E512 (from 2026-09-29, the default): on a CPU with AVX512F and AVX512DQ,

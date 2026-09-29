@@ -26,10 +26,18 @@ jobs:
         run: ./bbench ./libmvec.so.1 /usr/lib/x86_64-linux-gnu/libmvec.so.1
       - name: Speed of the AVX-512 entry points, where the runner has AVX-512
         run: ./ebench ./libmvec.so.1 /usr/lib/x86_64-linux-gnu/libmvec.so.1 || echo "no AVX-512 on this runner"
-      - name: The AVX-512 entry points against CORE-MATH, where the runner has AVX-512
-        run: if grep -qw avx512f /proc/cpuinfo; then ./cecheck e . 16; else echo "no AVX-512 on this runner"; fi
+      - name: The AVX-512 entry points against CORE-MATH (every float input too), where the runner has AVX-512
+        run: |
+          set -o pipefail
+          if grep -qw avx512f /proc/cpuinfo; then ./cecheck e . 16 | tail -3; ./cecheck e . floats | tail -1; else echo "no AVX-512 on this runner"; fi
+      - name: The SSE2 entry points on a Core 2 and the AVX and AVX2 ones on a Sandy Bridge (qemu)
+        run: |
+          sudo apt-get install -y -qq qemu-user >/dev/null
+          ./emu-check.sh 12 | tail -4 | tee emu.log
+          test "$(grep -c 'IDENTICAL' emu.log)" -eq 3
       - name: The portable core (port/), checked and timed on this CPU (gcc and clang)
         run: |
+          set -o pipefail
           gcc -O2 -ffp-contract=off -frounding-math -c -o cr_log.o log/log.c
           gcc -O2 -ffp-contract=off -frounding-math -c -o cr_exp.o exp.c
           for f in log exp; do
@@ -84,6 +92,7 @@ jobs:
         run: build-aarch64/nbench build-aarch64/libmvec.so.1 /usr/lib/aarch64-linux-gnu/libmvec.so.1
       - name: The portable core (port/), checked and timed on this CPU
         run: |
+          set -o pipefail
           gcc -O2 -ffp-contract=off -frounding-math -c -o cr_log.o log/log.c
           gcc -O2 -ffp-contract=off -frounding-math -c -o cr_exp.o exp.c
           for f in log exp; do
