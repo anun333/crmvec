@@ -9,8 +9,11 @@
 #include <math.h>
 /* C23, but not in glibc 2.39 (Ubuntu 24.04, CI's cross libc) */
 double sinpi(double), cospi(double); float sinpif(float), cospif(float);
-#define X1(n, T, r) void loop_##n(T *restrict y, const T *restrict x, int k) { for (int i = 0; i < k; i++) y[i] = n(x[i]) + x[i]; }
-#define X2(n, T, r) void loop_##n(T *restrict y, const T *restrict x, const T *restrict z, int k) { for (int i = 0; i < k; i++) y[i] = n(x[i], z[i]) + x[i]; }
+/* f(x) itself, and f(x) + x to keep x live across the call (rv64-dropin-loop.c) */
+#define X1(n, T, r) void loop_##n(T *restrict y, T *restrict s, const T *restrict x, int k) \
+  { for (int i = 0; i < k; i++) { y[i] = n(x[i]); s[i] = y[i] + x[i]; } }
+#define X2(n, T, r) void loop_##n(T *restrict y, T *restrict s, const T *restrict x, const T *restrict z, int k) \
+  { for (int i = 0; i < k; i++) { y[i] = n(x[i], z[i]); s[i] = y[i] + x[i]; } }
 #include "rv64-extra-functions.h"
 void loop_ilogb(int *restrict y, const double *restrict x, int k) { for (int i = 0; i < k; i++) y[i] = ilogb(x[i]); }
 void loop_ilogbf(int *restrict y, const float *restrict x, int k) { for (int i = 0; i < k; i++) y[i] = ilogbf(x[i]); }

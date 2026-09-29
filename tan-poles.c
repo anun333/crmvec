@@ -1,9 +1,15 @@
 /* tan-poles: double tan near its poles, where the bound B in tan_fast
    (crmvec.c) needs a step the rest of its argument does not show: lanes with
-   a large ec must never pass the rounding test. Tests x within up to 2^20
-   (and some 2^40) ulps of 1,200 poles (k + 1/2) pi (tan-poles.h,
-   gen-tan-poles.py). Built with cr_tan renamed to a counter (see the
-   Makefile), so it can tell which lanes the vector path decided.
+   a large ec must never pass the rounding test. Tests x near 1,200 poles
+   (k + 1/2) pi (tan-poles.h, gen-tan-poles.py), 1,024 vectors per pole: a
+   half within 2^40 ulps, a quarter within 2^20 ulps, and a quarter within
+   2^-12 of the pole (at most 2^20 ulps). For the 800 random poles (799 of
+   them above 2^21, where 2^20 ulps is more than 2^-12) the last quarter is
+   nearly the only one that reaches |cos x| < 2^-12; until 2026-09-29, when
+   every offset was drawn from 2^20 or 2^40 ulps, almost none of their
+   vectors did. Built with cr_tan
+   renamed to a counter (see the Makefile), so it can tell which lanes the
+   vector path decided.
 
    Passes when no lane differs from cr_tan and, in every vector whose 4 lanes
    all have |cos x| < 2^-12, all 4 lanes were sent to cr_tan. The control is
@@ -21,10 +27,11 @@ int main(void) {
   long n = 0, near = 0, bad = 0, near_decided = 0, allnear = 0; srand(1);
   for (unsigned p = 0; p < sizeof POLES / sizeof POLES[0]; p++)
     for (int t = 0; t < 4096; t += 4) {
-      double x[4], y[4]; long r0 = redone; int nl = 0;
-      for (int l = 0; l < 4; l++) {            /* offsets up to 2^20 ulp, and a few up to 2^40 */
-        long off = (rand() % 2 ? 1 : -1) * (long)(((double)rand() / RAND_MAX) * ((t & 64) ? 0x1p40 : 0x1p20));
-        x[l] = POLES[p] + off * (nextafter(POLES[p], INFINITY) - POLES[p]);
+      double x[4], y[4], ulp = nextafter(POLES[p], INFINITY) - POLES[p]; long r0 = redone; int nl = 0;
+      double span = (t & 64) ? 0x1p40 : (t & 32) ? 0x1p20 : fmin(0x1p20, 0x1p-12 / ulp);   /* in ulps */
+      for (int l = 0; l < 4; l++) {
+        long off = (rand() % 2 ? 1 : -1) * (long)(((double)rand() / RAND_MAX) * span);
+        x[l] = POLES[p] + off * ulp;
         if (fabs(cos(x[l])) < 0x1p-12) nl++;
       }
       _mm256_storeu_pd(y, _ZGVdN4v_tan(_mm256_loadu_pd(x)));

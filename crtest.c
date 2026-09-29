@@ -494,12 +494,31 @@ static int set_round(void)
   return wrong ? -1 : 0;
 }
 
+/* Every name given must be one the mode tests: "crtest verify exp" (a double)
+   or "crtest verify64 epx" tested nothing and still printed the verdict
+   (until 2026-09-29), and so did a misspelt mode, which ran verify. */
+static int names_ok(int argc, char **argv, int f, int d, int p)
+{
+  for (int a = 2; a < argc; a++) {
+    int ok = 0;
+    for (unsigned i = 0; f && i < NF; i++) ok |= !strcmp(argv[a], F[i].name);
+    for (unsigned i = 0; d && i < ND; i++) ok |= !strcmp(argv[a], D[i].name);
+    for (unsigned i = 0; p && i < NP2; i++) ok |= !strcmp(argv[a], P2[i].name);
+    if (!ok) { printf("VOID: crtest %s does not test %s\n", argv[1], argv[a]); return 0; }
+  }
+  return 1;
+}
+
 int main(int argc, char **argv)
 {
+  const char *m = argc > 1 ? argv[1] : "verify";
+  int t = !strcmp(m, "time"), v1 = !strcmp(m, "verify"), v64 = !strcmp(m, "verify64"), v2 = !strcmp(m, "verify2");
+  if (!(t || v1 || v64 || v2)) { printf("VOID: crtest %s: not a mode (verify, verify64, verify2, time)\n", m); return 2; }
+  if (!names_ok(argc, argv, t || v1, t || v64, t || v2)) return 2;
   if (!own_build()) return 2;
   if (set_round()) { printf("VOID: rounding mode not set on every thread\n"); return 2; }
-  if (argc > 1 && !strcmp(argv[1], "time")) return timing(argc, argv);
-  if (argc > 1 && !strcmp(argv[1], "verify64")) return verify64(argc, argv);
-  if (argc > 1 && !strcmp(argv[1], "verify2")) return verify2(argc, argv);
+  if (t) return timing(argc, argv);
+  if (v64) return verify64(argc, argv);
+  if (v2) return verify2(argc, argv);
   return verify(argc, argv);
 }

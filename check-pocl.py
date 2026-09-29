@@ -20,7 +20,8 @@ a sibling crmvec/ directory.
 verify: float one-argument functions on all 2^32 inputs; double ones on 2^27
 random over the main range, 2^26 with any exponent, CORE-MATH's hard cases
 +-1000 ulps and edge values; pow and powf on 2^28 random pairs (main range,
-integer y, x near 1, raw bits) and every pair of 40 specials.
+integer y, x near 1, raw bits) and every pair of 40 specials. Exit status
+0 only when nothing differs, so the control exits 1 (since 2026-09-29).
 """
 import ctypes, os, re, sys, time
 
@@ -153,7 +154,7 @@ def verify(cl, np, q, prg, ref, names):
         print("%-5s %-6s %s vs CORE-MATH: %s%s" % (name, t, KERNELS[name][1], line, "  first: %s" % first if first else ""), flush=True)
     print("VERDICT: %s" % ("CORRECTLY ROUNDED through PoCL on every input tried" if total == 0 else "%d DIFFER" % total))
     print("elapsed %.0f s" % (time.time() - t0))
-    return 0
+    return total != 0            # until 2026-09-29 this returned 0 even when results differed
 
 
 def timing(cl, np, q, prg, names):
@@ -184,6 +185,9 @@ def main():
     mode = os.environ.get("CTW_MODE", "verify")
     names = [n for n in os.environ.get("CTW_FUNCS", ",".join(KERNELS)).split(",") if n]
     if names == ["llvm24"]: names = FUNCS_LLVM24
+    if mode not in ("verify", "time"): sys.exit("CTW_MODE=%s: not a mode (verify, time)" % mode)
+    unknown = [n for n in names if n not in KERNELS and not (mode == "time" and n in ("mul", "muld"))]
+    if unknown or not names: sys.exit("CTW_FUNCS: no kernel for %s" % (",".join(unknown) or "(empty list)"))
     dev = next(d for p in cl.get_platforms() for d in p.get_devices())
     print("device:", dev.name, "| variant:", os.environ.get("POCL_KERNELLIB_NAME", "auto"), "| mode:", mode,
           "| LD_LIBRARY_PATH:", os.environ.get("LD_LIBRARY_PATH", "") or "-", "| functions:", ",".join(names))

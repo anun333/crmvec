@@ -79,6 +79,7 @@ static int search(int d, int want, long budget, uint64_t s, float *xs, float *ys
 int main(int argc, char **argv)
 {
   int per_d = argc > 1 ? atoi(argv[1]) : 1600;
+  if (per_d < 1) { printf("VOID: hypotf-midpoints %s: per_d must be at least 1\n", argv[1]); return 2; }
   long budget = argc > 2 ? atol(argv[2]) : 1L << 25;   /* midpoints tried per stream per d */
   long total = 0, total_bad = 0, total_exact = 0, total_tight = 0;
   for (int d = 1; d <= 12; d++) {
@@ -115,5 +116,8 @@ int main(int argc, char **argv)
   }
   printf("near-midpoint hypotf inputs: %ld (found: %ld exact, %ld within 2^-52 but not exact), %ld differ from cr_hypotf\n",
          total, total_exact, total_tight, total_bad);
+  /* the default finds 16,503 of 19,200; a broken search found none and
+     still printed the verdict "0 differ" (until 2026-09-29) */
+  if (total * 2 < 12L * per_d) { printf("VOID: only %ld of the %ld inputs wanted were found\n", total, 12L * per_d); return 2; }
   return total_bad != 0;
 }

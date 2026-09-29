@@ -266,8 +266,20 @@ int main(int argc, char **argv)
 {
   int ctl = argc > 1 && !strcmp(argv[1], "controls");
   if (!own_library((void *)_ZGVbN2vv_powr)) return 2;
-  int lg = argc > 1 && !ctl ? atoi(argv[1]) : 20;
+  char *end = NULL;
+  int lg = argc > 1 && !ctl ? (int)strtol(argv[1], &end, 10) : 20;
   const char *ms = argc > 2 ? argv[2] : "nearest", *only = argc > 3 ? argv[3] : NULL;
+  /* a misspelt mode or function, or an N below 3 (no block of 8), tested
+     nothing and still printed IDENTICAL (until 2026-09-29) */
+  int known = !strcmp(ms, "all");
+  for (int mi = 0; mi < 4; mi++) known |= !strcmp(ms, MODES[mi].name);
+  if ((end && *end) || lg < 3 || lg > 40) { printf("VOID: mpfrcheck %s: N must be 3 to 40\n", argv[1]); return 2; }
+  if (!known) { printf("VOID: mpfrcheck: %s is not a mode (nearest, up, down, zero, all)\n", ms); return 2; }
+  if (only) {
+    int found = 0;
+    for (unsigned fi = 0; fi < NFN; fi++) found |= !strcmp(FN[fi].name, only);
+    if (!found) { printf("VOID: mpfrcheck does not test %s\n", only); return 2; }
+  }
   long long blocks = (1LL << lg) / 8;
   if (ctl) {
     int c = one_mode(0, blocks, 1, NULL);
