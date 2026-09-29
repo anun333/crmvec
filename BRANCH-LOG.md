@@ -357,10 +357,67 @@ which openpocl lists under "What not to spend time on".
       user-agent (Intel's CDN may refuse curl's);
     - reports each URL's HTTP code in the error.
     The README says CI "tries" SDE until a run shows it working.
+  - **Second run (`b72f91f`):** it landed on a runner with AVX-512. The
+    native steps ran (`cecheck e . 16` and every float input, 7 minutes)
+    and passed: CI's first check of the 512-bit core. The SDE step stood
+    aside, so its download path is still unexercised.
   - **To do:** pin that sha256 once a run reports it.
   - Two mirror URLs are tried (SDE 9.44.0, then 9.33.0).
   - Heavier checks (`crtest verify64e`, `cecheck e . floats`) stay local;
     under emulation they would take hours.
+
+### `35f3ef8`: the conda recipe built for real, the sanitizers, and a fix they found
+
+Items 3 and 5 of the re-ranked list.
+
+- **conda:** rattler-build 0.76.1 was taken from conda-forge's own channel
+  (its sha256 checked against the channel index). It built the recipe from
+  this branch's tree, with conda-forge's gcc 14 and sysroot 2.28, whose
+  `LDFLAGS` include `--gc-sections` and `--as-needed`.
+  - The package's tests pass.
+  - Its library passes `bcheck`, `cecheck c`, `d` and `e` (`d` also under
+    FTZ) and `lcheck`, and exports the same 376 symbols.
+  - Nothing in `conda/` changed: the recipe still builds the v0.5.0
+    tarball.
+  - The variant file this needed (`c_stdlib`) came from memory of
+    conda-forge's pinning, not from the pinning itself.
+- **Sanitizers:** ASan and UBSan over the code added since the 2026-09-27
+  audit, with the portable core instrumented too (through `PORTDEFS`,
+  since `crmvec-port-e.o` doesn't take `CFLAGS`).
+  - What ran: `bcheck` (also under FTZ), `cecheck c`, `d` and `e` (`d` and
+    `e` also under FTZ, `e` also rounding up), and `crtest verify64e` on
+    `exp`, `tan`, `atan`, `erfc` and `log1p`. `verify2e` on the pair
+    functions was still running when this entry was committed.
+  - ASan: nothing.
+  - UBSan: three signed overflows in the portable core's `hypot`
+    (`port/port-atan2.h`), reached through `cecheck e`. Plus
+    `cospi.c:179`, a left shift of a negative value in CORE-MATH's own
+    file, left as it is.
+    - Whether the undefined-behaviour report sent to CORE-MATH on
+      2026-09-27 covered that line isn't known here; check before
+      mentioning it upstream.
+- **The fix (`35f3ef8`):** unsigned vector arithmetic, as CORE-MATH's
+  scalar `hypot` uses.
+  - The machine code changed (register allocation and order), so it was
+    checked by behaviour rather than by reading the diff:
+    - old against new, bit for bit on 2^28 lanes of hard inputs: 0 differ;
+    - `crtest verify2` and `verify2e hypot` on `PORT=1`: 0 differ;
+    - `hypot-midpoints` at 256 bits (`PORT=1`) and at 512 bits (an 8-lane
+      variant in scratch): 0 differ; with `HYPOT_NO_TEST`, 2,624 differ,
+      the README's control count;
+    - `aarch64-check` with and without SVE, and `rv64-check`;
+    - the sanitized `cecheck e` again: no reports.
+  - **Wider vector lengths,** rerun after this branch's changes (item 5's
+    other half):
+    - `rv64-dropin` (now comparing f(x) itself) and `rv64-check` at VLEN
+      512 and 1024: 0 differ. With 128 and 256 earlier, that covers the
+      four lengths the README claims.
+    - `aarch64-check sample` at SVE 512 and 2048 bits, plain and under
+      FPCR.FZ: 0 differ (after the `SV_` refactor, which had been run only
+      at 128 and 256).
+  - The 8-lane `hypot-midpoints` variant was not added to the repo. It is
+    a four-line `sed` of the 4-lane one, and could become an E mode like
+    `crtest`'s.
 
 ## Deliberately not done
 

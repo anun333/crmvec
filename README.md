@@ -114,7 +114,11 @@ Packages, from this repository:
   and its library passes the checks.
 - **conda-forge** (`conda/recipe.yaml`): submitted as
   [staged-recipes#34976](https://github.com/conda-forge/staged-recipes/pull/34976)
-  (version 0.5.0), waiting for review.
+  (version 0.5.0), waiting for review. The recipe also builds this
+  repository's later tree (2026-09-29: rattler-build 0.76.1, conda-forge's
+  gcc 14 and sysroot 2.28, whose flags include `--gc-sections` and
+  `--as-needed`). The package's tests pass, and its library passes
+  `bcheck`, `cecheck c`, `d` and `e`, and `lcheck`.
 
 All of them build without link-time optimization, and run `make clean`
 first, so a source tree holding an earlier build cannot ship it. The checks have run on
@@ -397,6 +401,20 @@ math the checks covered held up; the bugs were where no check went:
   headers rebuilt nothing; `CC ?= gcc` never took effect (make's default
   is `cc`); a native aarch64 `make check` needed a static glibc, which
   Fedora and Nix don't install by default. Fixed the same day.
+- **Sanitizers again,** over what was added since the 2026-09-27 audit:
+  the flush-to-zero wrappers, the AVX-512 core, and the checks. They ran
+  under AddressSanitizer and UBSan, the core instrumented too: `bcheck`,
+  `cecheck c`, `d` and `e`, some also under flush-to-zero or rounding up,
+  and `crtest verify64e` on five doubles.
+  - AddressSanitizer reports nothing.
+  - UBSan found three signed overflows in the portable core's `hypot`, on
+    lanes decided elsewhere. The arithmetic is now unsigned, as in
+    CORE-MATH's own `hypot`, and every result is unchanged: old against
+    new bit for bit on 2^28 lanes, and `hypot-midpoints` at 256 and 512
+    bits.
+  - Its one other report is a left shift of a negative value in CORE-MATH's
+    own `cospi.c` (line 179), which crmvec leaves as it is, like the
+    shifts the 2026-09-27 audit found.
 
 The checks do see wrong answers when there are some. Each vector path was
 rebuilt with its rounding test disabled, and then failed its check: every
@@ -827,7 +845,7 @@ Checked under qemu (no riscv64 hardware yet):
     `logf` were 1 ulp off in every lane, that comparison saw 13,216 of
     `log`'s 32,922 wrong results; the loops now store f(x) too, and it sees
     all 32,922 (the other 32,614 inputs give NaN, which stays NaN). 0
-    differ through this library at VLEN 128 and 256.
+    differ through this library at VLEN 128, 256, 512 and 1024.
 - **Against SLEEF 3.9's own** (`port/rv64-sleef.sh`, Debian's riscv64
   build, hash-pinned): 23,539 of the drop-in's 4,849,664 results differ
   from CORE-MATH at VLEN 256, and 23,609 at VLEN 128.
