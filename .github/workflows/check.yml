@@ -31,16 +31,18 @@ jobs:
           set -o pipefail
           if grep -qw avx512f /proc/cpuinfo; then ./cecheck e . 16 | tail -3; ./cecheck e . floats | tail -1; else echo "no AVX-512 on this runner"; fi
       # GitHub's x86-64 runners vary, and most lack AVX-512, so the step above
-      # skipped the 512-bit core on most runs (2026-09-29). Where it did, Intel
-      # SDE runs the AVX-512 entry points on an emulated Skylake-SP. The
+      # skipped the 512-bit core on most runs (2026-09-29). Intel SDE runs the
+      # AVX-512 entry points on an emulated Skylake-SP: 2^10 calls a function
+      # on a runner without AVX-512, 2^6 on one with it (checked natively
+      # above; this keeps the download itself tested on every run). The
       # download is reported as a notice (with its sha256, to pin later). A
       # failed download is an error on this step but does not stop the steps
       # after it (continue-on-error): Intel's site is outside this repo.
-      - name: The AVX-512 entry points under Intel SDE (Skylake-SP), where the runner lacks AVX-512
+      - name: The AVX-512 entry points under Intel SDE (Skylake-SP)
         continue-on-error: true
         run: |
           set -o pipefail
-          if grep -qw avx512f /proc/cpuinfo; then echo "this runner has AVX-512: checked natively above"; exit 0; fi
+          k=10; if grep -qw avx512f /proc/cpuinfo; then k=6; echo "this runner has AVX-512 (checked natively above): SDE at 2^6 calls, to test the step"; fi
           page=https://www.intel.com/content/www/us/en/download/684897/intel-software-development-emulator.html
           ua="Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0 Safari/537.36"
           found=$(curl -sSL --retry 2 -A "$ua" "$page" | grep -oE 'https://downloadmirror\.intel\.com/[0-9]+/sde-external-[0-9.]+-[0-9-]+-lin\.tar\.xz' | head -1 || true)
@@ -57,7 +59,7 @@ jobs:
           test -s sde.tar.xz || { echo "::error::Intel SDE could not be downloaded (page link: ${found:-none}; tried:$tried)"; exit 1; }
           echo "::notice::Intel SDE from $u, sha256 $(sha256sum sde.tar.xz | cut -c1-64)"
           mkdir sde && tar xf sde.tar.xz -C sde --strip-components=1
-          sde/sde64 -skx -- ./cecheck e . 10 | tail -3 | tee sde.log
+          sde/sde64 -skx -- ./cecheck e . $k | tail -3 | tee sde.log
           tail -1 sde.log | grep -q IDENTICAL || { echo "::error::cecheck e under SDE: $(tail -1 sde.log)"; exit 1; }
           echo "::notice::cecheck e under SDE -skx: $(tail -1 sde.log)"
       - name: The SSE2 entry points on a Core 2 and the AVX and AVX2 ones on a Sandy Bridge (qemu)

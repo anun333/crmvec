@@ -405,7 +405,8 @@ math the checks covered held up; the bugs were where no check went:
   the flush-to-zero wrappers, the AVX-512 core, and the checks. They ran
   under AddressSanitizer and UBSan, the core instrumented too: `bcheck`,
   `cecheck c`, `d` and `e`, some also under flush-to-zero or rounding up,
-  and `crtest verify64e` on five doubles.
+  and `crtest verify64e` and `verify2e` on five doubles and four pair
+  functions.
   - AddressSanitizer reports nothing.
   - UBSan found three signed overflows in the portable core's `hypot`, on
     lanes decided elsewhere. The arithmetic is now unsigned, as in
@@ -904,10 +905,11 @@ Checked under qemu (no riscv64 hardware yet):
     in `cbrt` to 2,967,824 in `tan`), and in `pow` and `atan2`, while the
     AVX2 checks of the same build still pass. Not yet timed on Zen 4, whose
     512-bit units are 256 bits wide.
-  - **CI** runs `cecheck e` natively where GitHub's runner has AVX-512.
-    Where it doesn't, which is most runs, it tries Intel SDE (`-skx`); the
-    first try couldn't download SDE (2026-09-29), and a failed download
-    doesn't stop the other steps.
+  - **CI** runs `cecheck e` natively where GitHub's runner has AVX-512,
+    which is a minority of runs. It also tries Intel SDE (`-skx`) on every
+    runner, with fewer calls where the native check ran. The first try
+    couldn't download SDE (2026-09-29), and a failed download doesn't stop
+    the other steps.
   - **Before**, on a hired AMD EPYC 4564P (Zen 4), where every check above
     passed, the halves were 8% slower per element than the AVX2 entry
     points, while glibc's 512-bit code is 23% faster than its AVX2 code: 4.5x

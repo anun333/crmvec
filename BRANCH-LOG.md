@@ -361,6 +361,10 @@ which openpocl lists under "What not to spend time on".
     native steps ran (`cecheck e . 16` and every float input, 7 minutes)
     and passed: CI's first check of the 512-bit core. The SDE step stood
     aside, so its download path is still unexercised.
+  - **Then:** the step runs on every runner, at 2^6 calls a function where
+    the runner has AVX-512 and the native check already ran, so each run
+    tests the download. Otherwise it would wait for a runner without
+    AVX-512.
   - **To do:** pin that sha256 once a run reports it.
   - Two mirror URLs are tried (SDE 9.44.0, then 9.33.0).
   - Heavier checks (`crtest verify64e`, `cecheck e . floats`) stay local;
@@ -386,8 +390,10 @@ Items 3 and 5 of the re-ranked list.
   since `crmvec-port-e.o` doesn't take `CFLAGS`).
   - What ran: `bcheck` (also under FTZ), `cecheck c`, `d` and `e` (`d` and
     `e` also under FTZ, `e` also rounding up), and `crtest verify64e` on
-    `exp`, `tan`, `atan`, `erfc` and `log1p`. `verify2e` on the pair
-    functions was still running when this entry was committed.
+    `exp`, `tan`, `atan`, `erfc` and `log1p`, and `verify2e` on `pow`,
+    `atan2`, `powf` and `hypot`. The last finished after this entry was
+    first committed. It reported only the three `hypot` overflows (the
+    sanitized build predates the fix) and matched CORE-MATH on every pair.
   - ASan: nothing.
   - UBSan: three signed overflows in the portable core's `hypot`
     (`port/port-atan2.h`), reached through `cecheck e`. Plus
