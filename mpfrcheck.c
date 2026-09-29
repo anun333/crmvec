@@ -21,6 +21,7 @@
    Both modes also run pownf on the 35 inputs of crmvec-pownf-tab.h (and
    their negatives), whose double result is a float midpoint.
    Needs libmpfr-dev (4.2: sinpi, powr, pown). */
+#define _GNU_SOURCE   /* dladdr, in crtest-own.h */
 #include <fenv.h>
 #include <immintrin.h>
 #include <math.h>
@@ -30,6 +31,7 @@
 #include <string.h>
 #include <mpfr.h>
 #include "crmvec-pownf-tab.h"
+#include "crtest-own.h"
 
 #define D1(n) __m256d _ZGVdN4v_##n(__m256d); __m128d _ZGVbN2v_##n(__m128d);
 #define F1(n) __m256 _ZGVdN8v_##n(__m256); __m128 _ZGVbN4v_##n(__m128);
@@ -263,6 +265,7 @@ static int one_mode(int mi, long long blocks, int ctl, const char *only)
 int main(int argc, char **argv)
 {
   int ctl = argc > 1 && !strcmp(argv[1], "controls");
+  if (!own_library((void *)_ZGVbN2vv_powr)) return 2;
   int lg = argc > 1 && !ctl ? atoi(argv[1]) : 20;
   const char *ms = argc > 2 ? argv[2] : "nearest", *only = argc > 3 ? argv[3] : NULL;
   long long blocks = (1LL << lg) / 8;

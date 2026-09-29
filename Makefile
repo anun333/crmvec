@@ -40,6 +40,13 @@ CR      := expf.c exp2f.c exp10f.c logf.c log2f.c log10f.c sinf.c cosf.c tanf.c 
            rsqrt.c sincos.c sinpif.c cospif.c tanpif.c asinpif.c acospif.c atanpif.c atan2pif.c \
            lgammaf.c tgammaf.c rsqrtf.c sincosf.c
 HDR     := $(wildcard crmvec-*.h)
+# Every shared library here is linked with -z defs (an undefined symbol is
+# a link error, not a failure to load) and -Bsymbolic-functions: a call from
+# one of its functions to another it exports (the unmasked SVE names call
+# the masked ones, the 2-lane AdvSIMD forms the 4-lane ones) binds to its
+# own, where through the PLT another library's copy could take it (glibc's
+# libmvec loaded first made crmvec's _ZGVsNxv_sin run glibc's sin;
+# 2026-09-29)
 # the library's own sources, beside CORE-MATH's
 LIB     := crmvec.c crmvec-scalar.c crmvec-f16.c
 LIBC    := crmvec-scalar.c crmvec-f16.c
@@ -98,6 +105,18 @@ headercheck: crmvec.h crmvec-f16.c crmvec-scalar.c
 # PORTCC (gcc or clang). Switching needs `make clean`: the objects do not
 # record which way they were built.
 PORT    ?=
+# only 0 or 1: any other value built a library with 52 undefined symbols,
+# and make succeeded (2026-09-29). A PORT from the environment that is
+# neither (containers often set PORT=8080 for a web server) is ignored with
+# a warning; one given to make is an error
+ifneq ($(filter-out 0 1,$(PORT)),)
+ifeq ($(origin PORT),environment)
+$(warning ignoring PORT=$(PORT) from the environment: crmvec's PORT is 0 or 1)
+PORT    :=
+else
+$(error PORT must be 0 or 1, not "$(PORT)")
+endif
+endif
 X86PORT := $(if $(PORT),$(PORT),0)
 A64PORT := $(if $(PORT),$(PORT),1)
 PORTCC  ?= $(CC)
@@ -114,13 +133,13 @@ crmvec-avx2.o: crmvec.c $(HDR) $(PORTOBJ)
 	$(CC) $(CFLAGS) $(FPV) -DCRMVEC_PORT=$(X86PORT) -mavx2 -mfma -c -o $@ crmvec.c
 
 libmvec.so.1: crmvec.o $(LIBC) crmvec-fpenv.c $(HDR) $(CR) libcrf16.a crmvec-exports.map
-	$(CC) $(CFLAGS) $(FP) -fPIC -shared -Wl,-soname,libmvec.so.1 -Wl,--version-script=crmvec-exports.map -o $@ crmvec.o $(PORTOBJ) $(LIBC) $(CR) $(CRWRAP) libcrf16.a -lm
+	$(CC) $(CFLAGS) $(FP) -fPIC -shared -Wl,-z,defs -Wl,-Bsymbolic-functions -Wl,-soname,libmvec.so.1 -Wl,--version-script=crmvec-exports.map -o $@ crmvec.o $(PORTOBJ) $(LIBC) $(CR) $(CRWRAP) libcrf16.a -lm
 
 crtest: crtest.c crtest-hard.h port/pow-parity.h crmvec-avx2.o $(LIBC) crmvec-fpenv.c $(HDR) $(CR) libcrf16.a
 	$(CC) $(CFLAGS) $(FP) -mavx2 -mfma -fopenmp -o $@ crtest.c crmvec-avx2.o $(PORTOBJ) $(LIBC) $(CR) $(CRWRAP) libcrf16.a -lm -ldl
 
 libcrref.so: crref.c crmvec-scalar.c crmvec-pownf-tab.h $(CR)
-	$(CC) $(CFLAGS) $(FP) -fPIC -shared -fopenmp -o $@ crref.c crmvec-scalar.c $(CR) -lm
+	$(CC) $(CFLAGS) $(FP) -fPIC -shared -Wl,-z,defs -fopenmp -o $@ crref.c crmvec-scalar.c $(CR) -lm
 
 # baseline x86-64 on purpose (no -mavx): the SSE2 entry points' check must run on a CPU without AVX
 bcheck: bcheck.c crtest-ftz.h
@@ -157,12 +176,14 @@ ebench: ebench.c
 # (libmpfr-dev 4.2), and the exhaustive search that proves pownf's double
 # path and checks its exception table (crmvec-pownf-tab.h); both run by hand (`mpfrcheck`, `mpfrcheck controls`, `pownf-search`)
 # its controls call CORE-MATH's pow directly, which the library does not export
-mpfrcheck: mpfrcheck.c libmvec.so.1 pow/pow.c powf.c
-	$(CC) $(CFLAGS) $(FP) -mavx2 -mfma -fopenmp -o $@ mpfrcheck.c pow/pow.c powf.c libmvec.so.1 -Wl,-rpath,'$$ORIGIN' -lmpfr -lm
+# they load libmvec.so.1 from their own directory through an RPATH (not a
+# RUNPATH, which LD_LIBRARY_PATH would override), and check that they did
+mpfrcheck: mpfrcheck.c crtest-own.h libmvec.so.1 pow/pow.c powf.c
+	$(CC) $(CFLAGS) $(FP) -mavx2 -mfma -fopenmp -o $@ mpfrcheck.c pow/pow.c powf.c libmvec.so.1 -Wl,--disable-new-dtags,-rpath,'$$ORIGIN' -lmpfr -lm
 
 # crmvec-f16.c's functions against MPFR on every input, all four modes
-f16check: f16check.c crmvec-f16-list.h libmvec.so.1
-	$(CC) $(CFLAGS) $(FP) -fopenmp -o $@ f16check.c libmvec.so.1 -Wl,-rpath,'$$ORIGIN' -lmpfr -lm
+f16check: f16check.c crmvec-f16-list.h crtest-own.h libmvec.so.1
+	$(CC) $(CFLAGS) $(FP) -fopenmp -o $@ f16check.c libmvec.so.1 -Wl,--disable-new-dtags,-rpath,'$$ORIGIN' -lmpfr -lm
 
 PWS     := crmvec-scalar.c $(CR)
 pownf-search: pownf-search.c crmvec-pownf-tab.h $(PWS)
@@ -202,7 +223,7 @@ $(A64OBJ) &: $(A64SRC) $(F16SRC)
 	$(A64CC) $(CFLAGS) $(FP) -fPIC -fvisibility=hidden -march=armv8-a+sve -c -o $(A64)/sve.o crmvec-sve.c
 
 $(A64)/libmvec.so.1 $(A64)/libsleefgnuabi.so.3: $(A64OBJ) $(CR) crmvec-fpenv.c
-	$(A64CC) $(CFLAGS) $(FP) -fPIC -fvisibility=hidden -shared -Wl,-soname,$(notdir $@) -o $@ $(A64OBJ) $(CR) $(CRWRAP) $(A64)/libcrf16.a -lm
+	$(A64CC) $(CFLAGS) $(FP) -fPIC -fvisibility=hidden -shared -Wl,-z,defs -Wl,-Bsymbolic-functions -Wl,-soname,$(notdir $@) -o $@ $(A64OBJ) $(CR) $(CRWRAP) $(A64)/libcrf16.a -lm
 
 # static, so qemu-aarch64 runs it without a sysroot
 $(A64)/aarch64-check: port/aarch64-check.c port/pow-parity.h $(A64OBJ) $(CR) crmvec-fpenv.c
@@ -252,7 +273,7 @@ $(RV64)/libcr.a: $(CR)
 	rm -f $@ && ar rcs $@ $(RV64)/cr/*.o
 
 $(RV64)/libsleef.so.3: $(RV64)/port.o $(RV64)/libcr.a
-	$(RVCC) -shared -fPIC -Wl,-soname,libsleef.so.3 -o $@ $(RV64)/port.o $(RV64)/libcr.a -lm
+	$(RVCC) -shared -fPIC -Wl,-z,defs -Wl,-Bsymbolic-functions -Wl,-soname,libsleef.so.3 -o $@ $(RV64)/port.o $(RV64)/libcr.a -lm
 
 # every Sleef_*rvvm2 entry point (the 52, then the other 42 names)
 # against scalar CORE-MATH or libm (static, so qemu-riscv64 runs it without

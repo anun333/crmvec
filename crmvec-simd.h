@@ -21,16 +21,26 @@
 
    No `const` here (glibc's aarch64 header adds it): a const function's
    result may be assumed not to depend on the rounding mode, and crmvec is
-   correctly rounded in all four. */
+   correctly rounded in all four.
+
+   It includes nothing (2026-09-29: it included <math.h>, and under -include
+   that processed <features.h> before the program's own #define _GNU_SOURCE,
+   whose declarations then went missing: memrchr, sincos). The exception
+   specification is glibc's __THROW, spelled out, since C++ requires the
+   same one on <math.h>'s later declarations. */
 #ifndef CRMVEC_SIMD_H
 #define CRMVEC_SIMD_H
 
-#include <math.h>
-
 #if defined __GNUC__ && !defined __clang__ && (defined __x86_64__ || defined __aarch64__)
 
-#ifndef __THROW
-# define __THROW
+#ifdef __cplusplus
+# if __cplusplus >= 201103L
+#  define CRMVEC_THROW noexcept (true)
+# else
+#  define CRMVEC_THROW throw ()
+# endif
+#else
+# define CRMVEC_THROW __attribute__ ((__nothrow__, __leaf__))
 #endif
 #define CRMVEC_SIMD_DECL __attribute__ ((__simd__ ("notinbranch")))
 
@@ -38,10 +48,10 @@
 extern "C" {
 #endif
 
-#define F1(f) extern float f (float) __THROW CRMVEC_SIMD_DECL;
-#define D1(f) extern double f (double) __THROW CRMVEC_SIMD_DECL;
-#define F2(f) extern float f (float, float) __THROW CRMVEC_SIMD_DECL;
-#define D2(f) extern double f (double, double) __THROW CRMVEC_SIMD_DECL;
+#define F1(f) extern float f (float) CRMVEC_THROW CRMVEC_SIMD_DECL;
+#define D1(f) extern double f (double) CRMVEC_THROW CRMVEC_SIMD_DECL;
+#define F2(f) extern float f (float, float) CRMVEC_THROW CRMVEC_SIMD_DECL;
+#define D2(f) extern double f (double, double) CRMVEC_THROW CRMVEC_SIMD_DECL;
 F1(expf) F1(exp2f) F1(exp10f) F1(logf) F1(log2f) F1(log10f) F1(sinf) F1(cosf) F1(tanf)
 F1(acosf) F1(acoshf) F1(asinf) F1(asinhf) F1(atanf) F1(atanhf) F1(cbrtf) F1(coshf)
 F1(erff) F1(erfcf) F1(expm1f) F1(log1pf) F1(sinhf) F1(tanhf)

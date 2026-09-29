@@ -15,6 +15,7 @@
    subnormals emulated. Two IEEE rules replace MPFR's own conventions, as in
    mpfrcheck.c: an operation on a signaling NaN gives a NaN, and rSqrt(-0)
    is -inf. */
+#define _GNU_SOURCE   /* dladdr, in crtest-own.h */
 #include <fenv.h>
 #include <stddef.h>
 #include <stdint.h>
@@ -23,6 +24,7 @@
 #include <string.h>
 #ifndef NO_MPFR
 #include <mpfr.h>
+#include "crtest-own.h"
 #endif
 
 #define H1(f) void crmvec_f16_##f(const uint16_t *, uint16_t *, size_t); void crmvec_bf16_##f(const uint16_t *, uint16_t *, size_t);
@@ -97,6 +99,7 @@ static void pairs(int bf)
 int main(int argc, char **argv)
 {
   int hashmode = argc > 1 && !strcmp(argv[1], "hash"), ctl = argc > 1 && !strcmp(argv[1], "control");
+  if (!own_library((void *)crmvec_f16_exp)) return 2;
   for (int i = 0; i < 65536; i++) X[i] = (uint16_t)i;
   static uint16_t Y[65536], Z[65536], P[NP];
   long bad_total = 0, checked = 0;

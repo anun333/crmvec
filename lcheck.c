@@ -7,7 +7,10 @@
 
    The control is a library built with FBR_SCALE=0 (no lane ever recomputed):
    it must differ, or the bound the vector code relies on is untested.
-   Threads: OMP_NUM_THREADS. */
+   Threads: OMP_NUM_THREADS. The AVX2 entry points take ymm arguments, so
+   on a CPU without AVX only the SSE2 ones are checked (said in the output;
+   2026-09-29: they were called anyway, and make check died of SIGILL on
+   such a build host). A name that matches no function is an error. */
 #define _GNU_SOURCE
 #include <dlfcn.h>
 #include <immintrin.h>
@@ -17,7 +20,7 @@
 
 static const char *FN[] = {"sinpif", "cospif", "tanpif", "rsqrtf"};
 
-__attribute__((target("avx2"))) static void call_d(void *v, const float *x, float *y)
+__attribute__((target("avx"))) static void call_d(void *v, const float *x, float *y)
 { _mm256_storeu_ps(y, ((__m256 (*)(__m256))v)(_mm256_loadu_ps(x))); }
 static void call_b(void *v, const float *x, float *y)
 { _mm_storeu_ps(y, ((__m128 (*)(__m128))v)(_mm_loadu_ps(x))); _mm_storeu_ps(y + 4, ((__m128 (*)(__m128))v)(_mm_loadu_ps(x + 4))); }
@@ -28,10 +31,18 @@ int main(int argc, char **argv)
   char p1[512], p2[512]; snprintf(p1, sizeof p1, "%s/libmvec.so.1", dir); snprintf(p2, sizeof p2, "%s/libcrref.so", dir);
   void *lib = dlopen(p1, RTLD_NOW | RTLD_LOCAL), *ref = dlopen(p2, RTLD_NOW | RTLD_LOCAL);
   if (!lib || !ref) { printf("VOID: cannot load %s\n", dlerror()); return 2; }
-  int bad_fns = 0;
+  int bad_fns = 0, tested = 0;
+  __builtin_cpu_init();
+  int avx = __builtin_cpu_supports("avx");
+  if (!avx) printf("no AVX on this CPU: the SSE2 entry points only\n");
+  for (int a = 2; a < argc; a++) {
+    int known = 0; for (unsigned f = 0; f < sizeof FN / sizeof FN[0]; f++) known |= !strcmp(argv[a], FN[f]);
+    if (!known) { printf("VOID: no function %s here\n", argv[a]); return 2; }
+  }
   for (unsigned f = 0; f < sizeof FN / sizeof FN[0]; f++) {
     int want = argc <= 2; for (int a = 2; a < argc; a++) want |= !strcmp(argv[a], FN[f]);
     if (!want) continue;
+    tested++;
     char sd[40], sb[40], sr[40];
     snprintf(sd, sizeof sd, "_ZGVdN8v_%s", FN[f]); snprintf(sb, sizeof sb, "_ZGVbN4v_%s", FN[f]); snprintf(sr, sizeof sr, "cr_%s", FN[f]);
     void *vd = dlsym(lib, sd), *vb = dlsym(lib, sb); float (*cr)(float) = (float (*)(float))dlsym(ref, sr);
@@ -42,10 +53,11 @@ int main(int argc, char **argv)
       uint32_t w[8]; float x[8], yd[8], yb[8];
       for (int i = 0; i < 8; i++) w[i] = (uint32_t)(blk * 8 + i);
       memcpy(x, w, 32);
-      call_d(vd, x, yd); call_b(vb, x, yb);
+      if (avx) call_d(vd, x, yd);
+      call_b(vb, x, yb);
       for (int i = 0; i < 8; i++) {
         float r = cr(x[i]);
-        int ed = memcmp(&r, &yd[i], 4) && !(r != r && yd[i] != yd[i]), eb = memcmp(&r, &yb[i], 4) && !(r != r && yb[i] != yb[i]);
+        int ed = avx && memcmp(&r, &yd[i], 4) && !(r != r && yd[i] != yd[i]), eb = memcmp(&r, &yb[i], 4) && !(r != r && yb[i] != yb[i]);
         bd += ed; bb += eb;
         if ((ed || eb) && !__atomic_load_n(&have, __ATOMIC_RELAXED)) {
 #pragma omp critical
@@ -53,10 +65,12 @@ int main(int argc, char **argv)
         }
       }
     }
-    printf("%-7s all 2^32 inputs: %llu differ through _ZGVdN8v_, %llu through _ZGVbN4v_%s", FN[f], bd, bb, (bd || bb) ? "" : "\n");
+    if (avx) printf("%-7s all 2^32 inputs: %llu differ through _ZGVdN8v_, %llu through _ZGVbN4v_%s", FN[f], bd, bb, (bd || bb) ? "" : "\n");
+    else printf("%-7s all 2^32 inputs: %llu differ through _ZGVbN4v_%s", FN[f], bb, bb ? "" : "\n");
     if (bd || bb) printf(" (first at 0x%08llx)\n", first);
     bad_fns += bd || bb;
   }
+  if (!tested) { printf("VERDICT: VOID, nothing tested\n"); return 2; }
   printf("VERDICT: %s\n", bad_fns ? "NOT correctly rounded" : "CORRECTLY ROUNDED on every input, every function");
   return bad_fns != 0;
 }
