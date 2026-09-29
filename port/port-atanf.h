@@ -93,11 +93,6 @@ static const double PORT_ASCF_C[12] = {
   0x1.6a09e667f3bcbp+0, 0x1.e2b7dddff2db9p-4, 0x1.b27247ab42dbcp-6, 0x1.02995cc4e0744p-7,
   0x1.5ffb0276ec8eap-9, 0x1.033885a928decp-10, 0x1.911f2be23f8c7p-12, 0x1.4c3c55d2437fdp-13,
   0x1.af477e1d7b461p-15, 0x1.abd6bdff67dcbp-15, -0x1.1717e86d0fa28p-16, 0x1.6ff526de46023p-16};
-/* the second polynomial for |x| < 1/2, the same array in both files */
-static const double PORT_ASCF_A[12] = {
-  0x1.555555555529cp-3, 0x1.333333337e0ddp-4, 0x1.6db6db3b4465ep-5, 0x1.f1c72e13ac306p-6,
-  0x1.6e89cebe06bc4p-6, 0x1.1c6dcf5289094p-6, 0x1.c6dbbcc7c6315p-7, 0x1.8f8dc2615e996p-7,
-  0x1.a5833b7bf15e8p-8, 0x1.43f44ace1665cp-6, -0x1.0fb17df881c73p-6, 0x1.07520c026b2d6p-5};
 /* CORE-MATH's poly12 */
 PORT_INLINE vd port_poly12(vd z, const double *c)
 {
@@ -137,14 +132,10 @@ PORT_INLINE vd port_asinf_half(vd x, vl *redo)
     rc = (vd)(((vl)rc & ~SIGN) | ((vl)x & SIGN));                         /* copysign(r, x) */
     y = seld_v(sq, rc, y);
   }
-  vl lo = ~pass & (ax < splatd(0.5));                                     /* CORE-MATH's second polynomial */
-  if (anyl(lo & ~bad)) {
-    vd z2 = x * x;
-    y = seld_v(lo, x + (x * z2) * port_poly12(z2, PORT_ASCF_A), y);
-  }
   vl tiny = ax < splatd(0x1p-12);                                          /* fmaf(x, 0x1p-25, x): exact in double, rounded once at the join */
   y = seld_v(tiny, x + x * splatd(0x1p-25), y);
-  *redo = bad | (sq & ((ax == splatd(0x1.55688ap-1)) | (ax == splatd(0x1.107434p-1))));   /* CORE-MATH's two listed inputs */
+  *redo = bad | (~pass & ~tiny & (ax < splatd(0.5)))
+        | (sq & ((ax == splatd(0x1.55688ap-1)) | (ax == splatd(0x1.107434p-1))));   /* CORE-MATH's two listed inputs */
   return y;
 }
 PORT_INLINE vd port_acosf_half(vd x, vl *redo)
@@ -166,12 +157,7 @@ PORT_INLINE vd port_acosf_half(vd x, vl *redo)
     vd o = (vd)((vl)splatd(0x1.921fb54442d18p+1) & ((vl)x >> 63));         /* 0, or pi for x < 0 */
     y = seld_v(sq, o + s * port_poly12(z, PORT_ASCF_C), y);
   }
-  vl lo = ~pass & (ax < splatd(0.5));                                     /* CORE-MATH's second polynomial */
-  if (anyl(lo & ~bad)) {
-    vd x2 = x * x;
-    y = seld_v(lo, (splatd(0x1.921fb54442d18p+0) - x) - (x * x2) * port_poly12(x2, PORT_ASCF_A), y);
-  }
-  *redo = bad | (lo & ((x == splatd(0x1.110b46p-26)) | (x == splatd(0x1.04c444p-12))));   /* its two listed inputs */
+  *redo = bad | (~pass & (ax < splatd(0.5)));                              /* the second polynomial and its listed inputs */
   return y;
 }
 /* atan(|y/x|), then pi - that for x < 0, with the sign of y; zeros,
