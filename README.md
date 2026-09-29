@@ -538,11 +538,14 @@ How they were checked and timed:
   library from 2026-09-26, which was slower (3.05 and 3.32).
 - **x86, all ported functions** (the AVX2 entry points, `crtest time`, in
   L1, Zen 3):
-  - **doubles:** clang's portable build is 4-9% faster than the
-    intrinsics (`tan` 2% slower), and gcc's is 1-15% slower;
-  - **floats:** mostly slower, from near parity (the exp family, `sinf`,
-    the inverse trig functions, and clang's `logf` family) to 2.4 times
-    (`coshf` under gcc).
+  - **as of 2026-09-29, built by gcc:** 1.00x the intrinsics at the median
+    and the mean over all 52, 24 at or below parity, the slowest `erf`,
+    `erff`, `tan` and `asin` at 1.11-1.14x (`asinf` and `acosf`, now
+    CORE-MATH's own schemes, 0.86x and 0.69x);
+  - **what got it there:** conversions, table rows and a 32-bit multiply
+    that gcc 13 compiled lane by lane, now given one-instruction forms,
+    and three polynomial loops unrolled (`port/codegen-audit.py` finds
+    such cases in a built library).
 
   On x86 the portable core does not replace the intrinsics yet, which is
   why `PORT=1` is off by default.
