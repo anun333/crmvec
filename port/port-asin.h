@@ -20,9 +20,7 @@ double cr_asin(double), cr_acos(double);
 PORT_INLINE void port_asin_tail(vd t, vd jd, vd z, vd zl, vd f0h, vd f0l, vd eps, vd *lb, vd *ub)
 {
   vl row = (vl)(jd + splatd(0x1.8p52)) & splatl(63);
-  vd G[8];
-  { int64_t ix[ND]; memcpy(ix, &row, VB);
-    for (int k = 0; k < 8; k++) for (int i = 0; i < ND; i++) G[k][i] = ASIN_CC[ix[i]][k]; }
+  vd G[8]; rowsNd(&ASIN_CC[0][0], 8, row, G, 8);
   vd t2 = t * t;
   vd d = t * ((G[2] + t * G[3]) + t2 * ((G[4] + t * G[5]) + t2 * (G[6] + t * G[7])));
   vd ch = G[0], cl = G[1] + d;

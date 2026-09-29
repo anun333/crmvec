@@ -33,8 +33,7 @@ PORT_INLINE vd port_erff_half(vd x, vl *redo)
   vl row = (vl)(vi + splatd(0x1.8p52)) & splatl(63);
   vd z = (ax - splatd(0.03125)) - splatd(0.0625) * v;
   vd w2 = z * z, w4 = w2 * w2;
-  vd cc[8]; int64_t ix[ND]; memcpy(ix, &row, VB);
-  for (int i = 0; i < ND; i++) for (int c = 0; c < 8; c++) cc[c][i] = ERFF_C[ix[i]][c];
+  vd cc[8]; rowsNd(&ERFF_C[0][0], 8, row, cc, 8);
   vd d0 = cc[0] + z * cc[1];
   vd d2 = cc[2] + z * cc[3];
   vd d4 = cc[4] + z * cc[5];
@@ -52,7 +51,7 @@ PORT_INLINE vd port_erfcf_half(vd x, vl *redo)
 {
   const vd ONE = splatd(1.0), MAGIC = splatd(0x1.8p52);
   vfh xh = __builtin_convertvector(x, vfh);                        /* exact: x came from a float */
-  vl u = __builtin_convertvector((vih)xh, vl);                     /* the float's bits, sign-extended */
+  vl u = widen_ih((vih)xh);                                        /* the float's bits, sign-extended */
   vl at = u & splatl(0x7fffffff);
   vd axd = port_abs(x), x2 = axd * axd;
   vl neg = u >> 63;                                                /* all ones if x < 0 */

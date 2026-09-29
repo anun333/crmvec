@@ -34,7 +34,7 @@ PORT_INLINE vd port_log_core_d(vd x)
 PORT_INLINE vd port_log_family(vd x, double scale, vl *redo)
 {
   vfh xh = __builtin_convertvector(x, vfh);                        /* exact: x came from a float */
-  vl u = __builtin_convertvector((vih)xh, vl);
+  vl u = widen_ih((vih)xh);
   vl sp = (u < splatl(1)) | (u > splatl(0x7f7fffff));
   vd y = port_log_core_d(seld_v(sp, splatd(1.0), x));
   if (scale != 1.0) y = y * splatd(scale);

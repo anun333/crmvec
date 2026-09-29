@@ -26,8 +26,8 @@ PORT_INLINE void port_asinh_log_core(vd tt, vl off, vd *ed, vd *dx, vd *f, vd *g
   vl i = (vl)((vu)m >> (52 - 5));
   vl d = m & splatl((long long)(~0ULL >> 17));
   vl b0, b1;
-  { int64_t ix[ND]; memcpy(ix, &i, VB); for (int k = 0; k < ND; k++) { b0[k] = LOG2_B[ix[k]][0]; b1[k] = LOG2_B[ix[k]][1]; } }
-  vl j = (m + b0) + b1 * (vl)((vu)d >> 16);                         /* _mm256_mul_epi32: both fit 32 bits */
+  { vd r0, r1; rows2d((const double (*)[2])LOG2_B, i, &r0, &r1); b0 = (vl)r0; b1 = (vl)r1; }   /* whole rows, the same bits */
+  vl j = (m + b0) + port_mul_epi32(b1, (vl)((vu)d >> 16));          /* both fit 32 bits */
   j = (vl)((vu)j >> (52 - 10));
   vd t1 = (vd)(m | splatl(0x3ffLL << 52));
   vl i1 = j >> 5, i2 = j & splatl(0x1f);

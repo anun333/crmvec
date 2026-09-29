@@ -31,11 +31,6 @@ static const double PORT_SIN_COS_PI16[32][2] __attribute__((aligned(16))) = {
   {-0x1.6a09e667f3bcdp-1, 0x1.6a09e667f3bcdp-1}, {-0x1.1c73b39ae68c8p-1, 0x1.a9b66290ea1a3p-1},
   {-0x1.87de2a6aea963p-2, 0x1.d906bcf328d46p-1}, {-0x1.8f8b83c69a60bp-3, 0x1.f6297cff75cbp-1}};
 
-#ifndef PORT_VFH
-#define PORT_VFH
-typedef float vfh __attribute__((vector_size(VB / 2)));   /* half a vf: as many floats as vd has doubles */
-typedef int32_t vih __attribute__((vector_size(VB / 2)));
-#endif
 
 PORT_INLINE vd port_trig_fast(vd x, int shift8)
 {
@@ -67,16 +62,14 @@ PORT_INLINE vf port_trigf(vf xf, int shift)
   vi ax = (vi)xf & splati(0x7fffffff);
   vi big = ax > splati(0x4c7fffff);                                /* |x| >= 2^26, inf, nan */
   vf xs = self_v(big, splatf(0.0f), xf);
-  vfh lo, hi; memcpy(&lo, &xs, VB / 2); memcpy(&hi, (char *)&xs + VB / 2, VB / 2);
-  vd x0 = __builtin_convertvector(lo, vd), x1 = __builtin_convertvector(hi, vd);
+  vd x0, x1; split_f(xs, &x0, &x1);
   vd y0 = port_trig_fast(x0, 8 * shift), y1 = port_trig_fast(x1, 8 * shift);
   if (shift == 0) {                                                /* |x| < 2^-12: sin x rounds to x (and keeps -0) */
     const vl ABS = splatl(0x7fffffffffffffffLL);
     y0 = seld_v((vd)((vl)x0 & ABS) < splatd(0x1p-12), x0, y0);
     y1 = seld_v((vd)((vl)x1 & ABS) < splatd(0x1p-12), x1, y1);
   }
-  vfh r0 = __builtin_convertvector(y0, vfh), r1 = __builtin_convertvector(y1, vfh);
-  vf y; memcpy(&y, &r0, VB / 2); memcpy((char *)&y + VB / 2, &r1, VB / 2);
+  vf y = join_d(y0, y1);
   if (__builtin_expect(!anyi(big), 1)) return y;
   return port_trigf_finish(xf, y, big, shift ? cr_cosf : cr_sinf);
 }

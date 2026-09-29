@@ -102,13 +102,10 @@ __attribute__((noinline, cold)) static vf port_half2_finish(vf x, vf yv, vf y, v
 #define PORT_FROM_HALF2(NAME, HALF, CR)                                                  \
   PORT_INLINE vf port_##NAME(vf xf, vf yf)                                               \
   {                                                                                      \
-    vfh xl, xh, yl, yh; memcpy(&xl, &xf, VB / 2); memcpy(&xh, (char *)&xf + VB / 2, VB / 2); \
-    memcpy(&yl, &yf, VB / 2); memcpy(&yh, (char *)&yf + VB / 2, VB / 2);                  \
+    vd xl, xh, yl, yh; split_f(xf, &xl, &xh); split_f(yf, &yl, &yh);                    \
     vl r0, r1;                                                                           \
-    vd y0 = HALF(__builtin_convertvector(xl, vd), __builtin_convertvector(yl, vd), &r0);  \
-    vd y1 = HALF(__builtin_convertvector(xh, vd), __builtin_convertvector(yh, vd), &r1);  \
-    vfh f0 = __builtin_convertvector(y0, vfh), f1 = __builtin_convertvector(y1, vfh);    \
-    vf y; memcpy(&y, &f0, VB / 2); memcpy((char *)&y + VB / 2, &f1, VB / 2);             \
+    vd y0 = HALF(xl, yl, &r0), y1 = HALF(xh, yh, &r1);                                   \
+    vf y = join_d(y0, y1);                                                               \
     if (__builtin_expect(!anyl(r0 | r1), 1)) return y;                                   \
     return port_half2_finish(xf, yf, y, r0, r1, CR);                                     \
   }

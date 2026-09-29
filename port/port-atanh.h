@@ -51,8 +51,8 @@ PORT_INLINE vd port_atanh_fast(vd x, vl *redo)
     vl m = tu & MANT;
     vl i = (vl)((vu)m >> (52 - 5)), d = m & splatl((long long)(~0ULL >> 17));
     vl b0, b1;
-    { int64_t ix[ND]; memcpy(ix, &i, VB); for (int k = 0; k < ND; k++) { b0[k] = LOG2_B[ix[k]][0]; b1[k] = LOG2_B[ix[k]][1]; } }
-    vl j = (vl)((vu)((m + b0) + b1 * (vl)((vu)d >> 16)) >> (52 - 10));   /* _mm256_mul_epi32: both fit 32 bits */
+    { vd r0, r1; rows2d((const double (*)[2])LOG2_B, i, &r0, &r1); b0 = (vl)r0; b1 = (vl)r1; }   /* whole rows, the same bits */
+    vl j = (vl)((vu)((m + b0) + port_mul_epi32(b1, (vl)((vu)d >> 16))) >> (52 - 10));   /* both fit 32 bits */
     vd tf = (vd)(m | splatl(0x3ffLL << 52));
     vl i1 = j >> 5, i2 = j & splatl(0x1f);
     vd r1, gt10, gt11, r2, gt20, gt21;
