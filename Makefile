@@ -132,8 +132,9 @@ hypotf-midpoints: hypotf-midpoints.c crmvec-avx2.o $(LIBC) $(HDR) $(CR) libcrf16
 lcheck: lcheck.c
 	$(CC) $(CFLAGS) -fopenmp -o $@ lcheck.c -ldl
 
-# the AVX and AVX-512 entry points (cecheck c natively; cecheck e, and c on
-# a CPU without AVX2, under Intel SDE); baseline x86-64 like bcheck
+# the AVX, AVX2 and AVX-512 entry points (cecheck c and d natively, and
+# under emu-check.sh's qemu -cpu SandyBridge; cecheck e natively or under
+# Intel SDE); baseline x86-64 like bcheck
 cecheck: cecheck.c
 	$(CC) $(CFLAGS) -o $@ cecheck.c -ldl -lm
 
@@ -300,7 +301,7 @@ check: all
 	@set -e; v() { echo "$$1" | tee -a check.log | tail -1; echo "$$1" | tail -1 | grep -qE $(VERDICTS) || { echo "FAILED: $$2"; exit 1; }; }; \
 	: > check.log; \
 	v "$$(./bcheck . 18)" bcheck; \
-	if grep -q ' avx ' /proc/cpuinfo; then v "$$(./cecheck c . 14)" "cecheck c"; else echo "cecheck c: skipped, no AVX"; fi; \
+	if grep -q ' avx ' /proc/cpuinfo; then v "$$(./cecheck c . 14)" "cecheck c"; v "$$(./cecheck d . 14)" "cecheck d"; else echo "cecheck c, cecheck d: skipped, no AVX"; fi; \
 	if grep -q avx512f /proc/cpuinfo; then v "$$(./cecheck e . 12)" "cecheck e"; else echo "cecheck e: skipped, no AVX-512F"; fi; \
 	if grep -qw avx2 /proc/cpuinfo && grep -qw fma /proc/cpuinfo; then \
 	v "$$(./mpfrcheck 16 all)" "mpfrcheck, four rounding modes"; \

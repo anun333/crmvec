@@ -4009,6 +4009,11 @@ double cr_tanh(double);
 static int crm_avx2;
 __attribute__((constructor)) static void crm_cpu(void)
 { __builtin_cpu_init(); crm_avx2 = __builtin_cpu_supports("avx2") && __builtin_cpu_supports("fma"); }
+/* for an exported function that takes ymm arguments and must still run on a
+   CPU with AVX but not AVX2 (Sandy Bridge, Ivy Bridge, Bulldozer, Jaguar):
+   it tests crm_avx2 itself and calls AVX2 code only through a function
+   compiled for it, so no AVX2 instruction is reached before the test */
+#define AVXC __attribute__((target("avx"), noinline))
 #else
 #define crm_avx2 0
 #endif
@@ -4046,19 +4051,25 @@ __attribute__((constructor)) static void crm_cpu(void)
 #undef D2
 
 /* glibc's __*_finite entry points (for code built with -ffinite-math-only
-   headers): the same functions under a second name. */
+   headers): the same functions under a second name. The AVX2 ones name the
+   AVX entry point, which the AVX2 name is on x86 (at the end of this file). */
 #define ALIAS(NEW, OLD, RET, ARGS, ATTR) ATTR RET NEW ARGS __attribute__((alias(#OLD)));
-ALIAS(_ZGVdN8v___expf_finite, _ZGVdN8v_expf, __m256, (__m256), AVX2)
+#if defined(__x86_64__) || defined(__i386__)
+#define ALIASD(NEW, OLD, OLDC, RET, ARGS) ALIAS(NEW, OLDC, RET, ARGS, AVXC)
+#else
+#define ALIASD(NEW, OLD, OLDC, RET, ARGS) ALIAS(NEW, OLD, RET, ARGS, AVX2)
+#endif
+ALIASD(_ZGVdN8v___expf_finite, _ZGVdN8v_expf, _ZGVcN8v_expf, __m256, (__m256))
 ALIAS(_ZGVbN4v___expf_finite, _ZGVbN4v_expf, __m128, (__m128), NOATTR)
-ALIAS(_ZGVdN8v___logf_finite, _ZGVdN8v_logf, __m256, (__m256), AVX2)
+ALIASD(_ZGVdN8v___logf_finite, _ZGVdN8v_logf, _ZGVcN8v_logf, __m256, (__m256))
 ALIAS(_ZGVbN4v___logf_finite, _ZGVbN4v_logf, __m128, (__m128), NOATTR)
-ALIAS(_ZGVdN8vv___powf_finite, _ZGVdN8vv_powf, __m256, (__m256, __m256), AVX2)
+ALIASD(_ZGVdN8vv___powf_finite, _ZGVdN8vv_powf, _ZGVcN8vv_powf, __m256, (__m256, __m256))
 ALIAS(_ZGVbN4vv___powf_finite, _ZGVbN4vv_powf, __m128, (__m128, __m128), NOATTR)
-ALIAS(_ZGVdN4v___exp_finite, _ZGVdN4v_exp, __m256d, (__m256d), AVX2)
+ALIASD(_ZGVdN4v___exp_finite, _ZGVdN4v_exp, _ZGVcN4v_exp, __m256d, (__m256d))
 ALIAS(_ZGVbN2v___exp_finite, _ZGVbN2v_exp, __m128d, (__m128d), NOATTR)
-ALIAS(_ZGVdN4v___log_finite, _ZGVdN4v_log, __m256d, (__m256d), AVX2)
+ALIASD(_ZGVdN4v___log_finite, _ZGVdN4v_log, _ZGVcN4v_log, __m256d, (__m256d))
 ALIAS(_ZGVbN2v___log_finite, _ZGVbN2v_log, __m128d, (__m128d), NOATTR)
-ALIAS(_ZGVdN4vv___pow_finite, _ZGVdN4vv_pow, __m256d, (__m256d, __m256d), AVX2)
+ALIASD(_ZGVdN4vv___pow_finite, _ZGVdN4vv_pow, _ZGVcN4vv_pow, __m256d, (__m256d, __m256d))
 ALIAS(_ZGVbN2vv___pow_finite, _ZGVbN2vv_pow, __m128d, (__m128d, __m128d), NOATTR)
 
 /* ---- lane by lane (crmvec-lanes.h; added 2026-09-27) ------------------ */
@@ -4081,12 +4092,12 @@ ALIAS(_ZGVbN2vv___pow_finite, _ZGVbN2vv_pow, __m128d, (__m128d, __m128d), NOATTR
   ATTR V NAME(V v, VI k)                                                               \
   { T a[N]; int32_t m[sizeof(VI) / 4]; memcpy(a, &v, sizeof a); memcpy(m, &k, sizeof m); \
     for (int i = 0; i < N; i++) { T x = a[i]; int n = m[i]; a[i] = e; } memcpy(&v, a, sizeof a); return v; }
-#define LD1(n, e) XL1(double, __m128d, 2, _ZGVbN2v_##n, e, NOATTR) XL1(double, __m256d, 4, _ZGVdN4v_##n, e, AVX2)
-#define LF1(n, e) XL1(float, __m128, 4, _ZGVbN4v_##n, e, NOATTR) XL1(float, __m256, 8, _ZGVdN8v_##n, e, AVX2)
-#define LD2(n, e) XL2(double, __m128d, 2, _ZGVbN2vv_##n, e, NOATTR) XL2(double, __m256d, 4, _ZGVdN4vv_##n, e, AVX2)
-#define LF2(n, e) XL2(float, __m128, 4, _ZGVbN4vv_##n, e, NOATTR) XL2(float, __m256, 8, _ZGVdN8vv_##n, e, AVX2)
-#define LDN(n, e) XLN(double, __m128d, __m128i, 2, _ZGVbN2vv_##n, e, NOATTR) XLN(double, __m256d, __m128i, 4, _ZGVdN4vv_##n, e, AVX2)
-#define LFN(n, e) XLN(float, __m128, __m128i, 4, _ZGVbN4vv_##n, e, NOATTR) XLN(float, __m256, __m256i, 8, _ZGVdN8vv_##n, e, AVX2)
+#define LD1(n, e) XL1(double, __m128d, 2, _ZGVbN2v_##n, e, NOATTR) XL1(double, __m256d, 4, _ZGVdN4v_##n, e, AVXC)
+#define LF1(n, e) XL1(float, __m128, 4, _ZGVbN4v_##n, e, NOATTR) XL1(float, __m256, 8, _ZGVdN8v_##n, e, AVXC)
+#define LD2(n, e) XL2(double, __m128d, 2, _ZGVbN2vv_##n, e, NOATTR) XL2(double, __m256d, 4, _ZGVdN4vv_##n, e, AVXC)
+#define LF2(n, e) XL2(float, __m128, 4, _ZGVbN4vv_##n, e, NOATTR) XL2(float, __m256, 8, _ZGVdN8vv_##n, e, AVXC)
+#define LDN(n, e) XLN(double, __m128d, __m128i, 2, _ZGVbN2vv_##n, e, NOATTR) XLN(double, __m256d, __m128i, 4, _ZGVdN4vv_##n, e, AVXC)
+#define LFN(n, e) XLN(float, __m128, __m128i, 4, _ZGVbN4vv_##n, e, NOATTR) XLN(float, __m256, __m256i, 8, _ZGVdN8vv_##n, e, AVXC)
 /* sinpif, cospif, rsqrtf, powr and pown have vector paths (below) */
 #define VF1(n, e)
 #define VD2(n, e)
@@ -4117,16 +4128,16 @@ static inline AVX2I __m256 absf(__m256 v) { return _mm256_andnot_ps(_mm256_set1_
 #define LANEWISE(T, N, V, CR, VI, NI)                                                        \
   { T a[N]; NI b[N]; memcpy(a, &x, sizeof a); memcpy(b, &y, sizeof b);                          \
     for (int i = 0; i < N; i++) a[i] = CR(a[i], b[i]); V r; memcpy(&r, a, sizeof r); return r; }
-AVX2 __m256d _ZGVdN4vv_powr(__m256d x, __m256d y)
+AVX2 __attribute__((noinline)) static __m256d crvl_powr(__m256d x, __m256d y)
 { if (!crm_rn()) LANEWISE(double, 4, __m256d, crm_powr, __m256d, double)
   POWR_BODY(__m256d, double, _mm256_cmp_pd, _mm256_blendv_pd, _mm256_set1_pd, _mm256_and_pd, _mm256_or_pd, _ZGVdN4vv_pow, absd) }
-AVX2 __m256 _ZGVdN8vv_powrf(__m256 x, __m256 y)
+AVX2 __attribute__((noinline)) static __m256 crvl_powrf(__m256 x, __m256 y)
 { if (!crm_rn()) LANEWISE(float, 8, __m256, crm_powrf, __m256, float)
   POWR_BODY(__m256, float, _mm256_cmp_ps, _mm256_blendv_ps, _mm256_set1_ps, _mm256_and_ps, _mm256_or_ps, _ZGVdN8vv_powf, absf) }
-AVX2 __m256d _ZGVdN4vv_pown(__m256d x, __m128i n)
+AVX2 __attribute__((noinline)) static __m256d crvl_pown(__m256d x, __m128i n)
 { if (!crm_rn()) { __m128i y = n; LANEWISE(double, 4, __m256d, crm_pown, __m128i, int32_t) }
   return _ZGVdN4vv_pow(x, _mm256_cvtepi32_pd(n)); }
-AVX2 __m256 _ZGVdN8vv_pownf(__m256 x, __m256i n)
+AVX2 __attribute__((noinline)) static __m256 crvl_pownf(__m256 x, __m256i n)
 {
   if (!crm_rn()) { __m256i y = n; LANEWISE(float, 8, __m256, crm_pownf, __m256i, int32_t) }
   __m256 r = _ZGVdN8vv_powf(x, _mm256_cvtepi32_ps(n));
@@ -4186,7 +4197,7 @@ AVX2I static inline __m256d sinpi_half(__m256d x, int cosine, __m128i *flag)
   return y;
 }
 #define SINPIF(NAME, COS, CR)                                                                  \
-  AVX2 __m256 _ZGVdN8v_##NAME(__m256 xf)                                                       \
+  AVX2 __attribute__((noinline)) static __m256 crvl_##NAME(__m256 xf)                          \
   {                                                                                            \
     if (!crm_rn()) { float a[8]; _mm256_storeu_ps(a, xf); for (int i = 0; i < 8; i++) a[i] = CR(a[i]); return _mm256_loadu_ps(a); } \
     __m128i r0, r1;                                                                            \
@@ -4222,7 +4233,7 @@ AVX2I static inline __m256d tanpi_half(__m256d x, __m128i *flag)
   *flag = _mm_or_si128(ambiguous(y, 0x1p-44), _mm256_castsi256_si128(_mm256_permutevar8x32_epi32(_mm256_castpd_si256(bad), _mm256_setr_epi32(0, 2, 4, 6, 0, 2, 4, 6))));
   return y;
 }
-AVX2 __m256 _ZGVdN8v_tanpif(__m256 xf)
+AVX2 __attribute__((noinline)) static __m256 crvl_tanpif(__m256 xf)
 {
   if (!crm_rn()) { float a[8]; _mm256_storeu_ps(a, xf); for (int i = 0; i < 8; i++) a[i] = cr_tanpif(a[i]); return _mm256_loadu_ps(a); }
   __m128i r0, r1;
@@ -4239,7 +4250,7 @@ AVX2I static inline __m256d rsqrt_half(__m256d x, __m128i *flag)
   *flag = _mm_or_si128(ambiguous(y, 0x1p-44), _mm256_castsi256_si128(_mm256_permutevar8x32_epi32(_mm256_castpd_si256(bad), _mm256_setr_epi32(0, 2, 4, 6, 0, 2, 4, 6))));
   return y;
 }
-AVX2 __m256 _ZGVdN8v_rsqrtf(__m256 xf)
+AVX2 __attribute__((noinline)) static __m256 crvl_rsqrtf(__m256 xf)
 {
   if (!crm_rn()) { float a[8]; _mm256_storeu_ps(a, xf); for (int i = 0; i < 8; i++) a[i] = cr_rsqrtf(a[i]); return _mm256_loadu_ps(a); }
   __m128i r0, r1;
@@ -4249,7 +4260,7 @@ AVX2 __m256 _ZGVdN8v_rsqrtf(__m256 xf)
 }
 #define BVF1(NAME)                                                                             \
   AVX2 __attribute__((noinline)) static __m128 bvf_##NAME(__m128 x)                             \
-  { return _mm256_castps256_ps128(_ZGVdN8v_##NAME(_mm256_set_m128(x, x))); }                    \
+  { return _mm256_castps256_ps128(crvl_##NAME(_mm256_set_m128(x, x))); }                        \
   __m128 _ZGVbN4v_##NAME(__m128 x)                                                              \
   { if (crm_avx2 && crm_rn()) return bvf_##NAME(x);                                            \
     float a[4]; memcpy(a, &x, 16); for (int i = 0; i < 4; i++) a[i] = cr_##NAME(a[i]); memcpy(&x, a, 16); return x; }
@@ -4262,7 +4273,7 @@ BVF1(tanpif)
    vector path is several times faster than scalar CORE-MATH), else per lane */
 #define BVP(NAME, V, W, T, N, SETW, CASTV, VI, DUPI, CR, NI)                                   \
   AVX2 __attribute__((noinline)) static V bvp_##NAME(V x, VI y)                                  \
-  { return CASTV(_ZGVd##W##_##NAME(SETW(x), DUPI(y))); }                                      \
+  { return CASTV(crvl_##NAME(SETW(x), DUPI(y))); }                                             \
   V _ZGVb##N##_##NAME(V x, VI y)                                                                 \
   { if (crm_avx2 && crm_rn()) return bvp_##NAME(x, y);                                                       \
     T a[16 / sizeof(T)]; NI b[16 / sizeof(NI)]; memcpy(a, &x, 16); memcpy(b, &y, 16);           \
@@ -4275,6 +4286,30 @@ BVP(powr, __m128d, N4vv, double, N2vv, DUPD, _mm256_castpd256_pd128, __m128d, DU
 BVP(powrf, __m128, N8vv, float, N4vv, DUPF, _mm256_castps256_ps128, __m128, DUPF, crm_powrf, float)
 BVP(pown, __m128d, N4vv, double, N2vv, DUPD, _mm256_castpd256_pd128, __m128i, DUPI2, crm_pown, int32_t)
 BVP(pownf, __m128, N8vv, float, N4vv, DUPF, _mm256_castps256_ps128, __m128i, DUPI4, crm_pownf, int32_t)
+
+/* The exported AVX2 names of the eight above: clang calls _ZGVd names for
+   code built with -mavx (LLVM's libmvec table has no _ZGVc), so on a CPU
+   with AVX but not AVX2 they must not run AVX2 code. glibc makes its _ZGVd
+   names IFUNCs for this; here, like the c entry points, CORE-MATH (or
+   crmvec-scalar.c) per lane where the CPU lacks AVX2 or FMA. Their vector
+   paths check the rounding mode themselves. Added 2026-09-29. */
+#define DV1(NAME, CR)                                                                          \
+  AVXC __m256 _ZGVdN8v_##NAME(__m256 x)                                                        \
+  { if (crm_avx2) return crvl_##NAME(x);                                                       \
+    float a[8]; _mm256_storeu_ps(a, x); for (int i = 0; i < 8; i++) a[i] = CR(a[i]); return _mm256_loadu_ps(a); }
+#define DV2(NAME, V, VI, T, NI, N, CR)                                                         \
+  AVXC V _ZGVdN##N##vv_##NAME(V x, VI y)                                                       \
+  { if (crm_avx2) return crvl_##NAME(x, y);                                                    \
+    T a[N]; NI b[N]; memcpy(a, &x, sizeof a); memcpy(b, &y, sizeof b);                          \
+    for (int i = 0; i < N; i++) a[i] = CR(a[i], b[i]); memcpy(&x, a, sizeof a); return x; }
+DV1(sinpif, cr_sinpif)
+DV1(cospif, cr_cospif)
+DV1(tanpif, cr_tanpif)
+DV1(rsqrtf, cr_rsqrtf)
+DV2(powr, __m256d, __m256d, double, double, 4, crm_powr)
+DV2(powrf, __m256, __m256, float, float, 8, crm_powrf)
+DV2(pown, __m256d, __m128i, double, int32_t, 4, crm_pown)
+DV2(pownf, __m256, __m256i, float, int32_t, 8, crm_pownf)
 #endif
 
 /* ---- the AVX (c) and AVX-512 (e) entry points (added 2026-09-27) --------- */
@@ -4290,7 +4325,6 @@ BVP(pownf, __m128, N8vv, float, N4vv, DUPF, _mm256_castps256_ps128, __m128i, DUP
    cecheck.c, natively for c and under Intel SDE for e and for c on a CPU
    without AVX2. */
 #if defined(__x86_64__) || defined(__i386__)
-#define AVXC __attribute__((target("avx"), noinline))
 #define AVXE __attribute__((target("avx512f"), noinline))
 #define F1(n)                                                                                 \
   AVXC __m256 _ZGVcN8v_##n(__m256 x)                                                           \
@@ -4339,7 +4373,21 @@ BVP(pownf, __m128, N8vv, float, N4vv, DUPF, _mm256_castps256_ps128, __m128i, DUP
 
 /* ---- the exported AVX2 names: the rounding-mode guard (added 2026-09-27) --- */
 
-/* In round-to-nearest, the vector code (crvi_<name>); in any other mode,
+#if defined(__x86_64__) || defined(__i386__)
+/* On x86 each is the AVX entry point above under a second name: the same
+   arguments in the same registers, and on a CPU with AVX2 and FMA the same
+   code (crm_rn, then crvi_<name>). clang calls the _ZGVd names for code built
+   with -mavx, where the CPU may lack AVX2; glibc's are IFUNCs that fall back
+   there, and until 2026-09-29 these ran AVX2 code unconditionally (SIGILL on
+   Sandy Bridge; emu-check.sh now runs them on one). The only cost is the
+   crm_avx2 test. */
+#define F1(n) AVXC __m256 crvd_##n(__m256) __asm__("_ZGVdN8v_" #n) __attribute__((alias("_ZGVcN8v_" #n)));
+#define D1(n) AVXC __m256d crvd_##n(__m256d) __asm__("_ZGVdN4v_" #n) __attribute__((alias("_ZGVcN4v_" #n)));
+#define F2(n) AVXC __m256 crvd_##n(__m256, __m256) __asm__("_ZGVdN8vv_" #n) __attribute__((alias("_ZGVcN8vv_" #n)));
+#define D2(n) AVXC __m256d crvd_##n(__m256d, __m256d) __asm__("_ZGVdN4vv_" #n) __attribute__((alias("_ZGVcN4vv_" #n)));
+#else
+/* Elsewhere (the SIMDe route, called by crmvec-aarch64.c and crmvec-sve.c):
+   in round-to-nearest, the vector code (crvi_<name>); in any other mode,
    CORE-MATH lane by lane. See crm_rn at the top. */
 #define F1(n) AVX2 __m256 crvx_##n(__m256) __asm__("_ZGVdN8v_" #n);                            \
   AVX2 __m256 crvx_##n(__m256 x)                                                               \
@@ -4357,6 +4405,7 @@ BVP(pownf, __m128, N8vv, float, N4vv, DUPF, _mm256_castps256_ps128, __m128i, DUP
   AVX2 __m256d crvx_##n(__m256d x, __m256d y)                                                  \
   { if (__builtin_expect(crm_rn(), 1)) return crvi_##n(x, y);                                  \
     double a[4], b[4]; memcpy(a, &x, 32); memcpy(b, &y, 32); for (int i = 0; i < 4; i++) a[i] = cr_##n(a[i], b[i]); memcpy(&x, a, 32); return x; }
+#endif
 #include "crmvec-functions.h"
 #undef F1
 #undef D1

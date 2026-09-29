@@ -28,7 +28,7 @@ reproducible across libraries.
 
 | entry points | what runs |
 |---|---|
-| AVX2 (`_ZGVdN8v_*`, `_ZGVdN4v_*`) | vector code, with scalar CORE-MATH for the lanes it can't decide |
+| AVX2 (`_ZGVdN8v_*`, `_ZGVdN4v_*`) | vector code, with scalar CORE-MATH for the lanes it can't decide; on a CPU with AVX but not AVX2 (clang calls these names for code built with `-mavx`), scalar CORE-MATH |
 | SSE2 (`_ZGVbN4v_*`, `_ZGVbN2v_*`) | on a CPU with AVX2 and FMA, 36 of the 52 run the AVX2 code on their lanes (where that measured faster with half its lanes idle); the others, and every one on older CPUs, loop over scalar CORE-MATH |
 | AVX (`_ZGVcN8v_*`, `_ZGVcN4v_*`) | what gcc calls for code built with `-mavx`: the AVX2 code on a CPU that has it, else scalar CORE-MATH |
 | AVX-512 (`_ZGVeN16v_*`, `_ZGVeN8v_*`) | what gcc calls for code built with `-mavx512f`: the AVX2 code on each half |
@@ -261,7 +261,7 @@ make check           # a few minutes of what follows, one verdict per line (on a
 ./crtest verify64    # doubles: 2^31 random inputs each, CORE-MATH's hard cases, edge values
 ./crtest verify2     # the six two-argument functions: 2^30 random pairs each, 1,600 special pairs
 ./bcheck             # every SSE2 entry point of libmvec.so.1 against CORE-MATH
-./emu-check.sh       # the same on an emulated Core 2 (qemu-x86_64 -cpu Conroe: no AVX)
+./emu-check.sh       # the same on an emulated Core 2 (qemu-x86_64 -cpu Conroe: no AVX), then cecheck c and d on a Sandy Bridge (AVX, no AVX2)
 ./hypot-midpoints    # double hypot on inputs whose result is exactly halfway between two doubles
 ./hypotf-midpoints   # hypotf on float pairs whose result lies within 2^-50 of a midpoint, found by search
 ./tan-poles          # double tan near its poles, where its error bound is tightest
@@ -276,7 +276,7 @@ CRTEST_SMOOTH=1 ./crtest time   # the same, on inputs that vary smoothly along t
 ./lcheck             # sinpif cospif tanpif rsqrtf: all 2^32 inputs, both entry points
 ./f16check           # half and bfloat16: every input of every one-argument function, four modes, against MPFR
 ./simdcheck.sh       # crmvec-simd.h: gcc vectorizes all 52 functions without -ffast-math, and this library exports every name it calls
-./cecheck c          # the AVX entry points; `sde64 -spr -- ./cecheck e` for AVX-512 (Intel SDE)
+./cecheck c          # the AVX entry points; `./cecheck d` every AVX2 one; `./cecheck e` (or `sde64 -spr -- ./cecheck e`) for AVX-512
 port/dropin-x86.sh   # loops gcc vectorized with -mavx and -mavx512f, against this library and glibc's
 CRTEST_ROUND=up ./crtest verify   # any check above in another rounding mode (also bcheck, cecheck, aarch64-check)
 ./pownf-search       # the proof for float pown with |n| > 2^24 (about 6 minutes on 8 threads)
