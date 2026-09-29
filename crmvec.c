@@ -563,11 +563,13 @@ AVX2I static inline __m256d log_core_d(__m256d x)
 #endif
 
 /* ln x for x > 0 finite (lanes with x <= 0 / inf / nan give ln 1 = 0 and
-   are flagged in *special); relative error < 2^-36. */
+   are flagged in *special); relative error < 2^-36. Subnormal x is flagged
+   too (2026-09-29): under DAZ, which -ffast-math programs run with, the
+   conversion to double reads it as 0, and log_core_d(0) is -1023 ln 2 */
 AVX2I static inline __m256d log_core(__m128 xf, __m128i *special)
 {
   __m128i ux = _mm_castps_si128(xf);
-  __m128i sp = _mm_or_si128(_mm_cmpgt_epi32(_mm_set1_epi32(1), ux),            /* x <= 0 */
+  __m128i sp = _mm_or_si128(_mm_cmpgt_epi32(_mm_set1_epi32(0x00800000), ux),   /* x <= 0, or subnormal */
                             _mm_cmpgt_epi32(ux, _mm_set1_epi32(0x7f7fffff)));  /* inf, nan */
   *special = sp;
   return log_core_d(_mm256_cvtps_pd(_mm_blendv_ps(xf, _mm_set1_ps(1.0f), _mm_castsi128_ps(sp))));
@@ -1389,7 +1391,9 @@ AVX2 __m256 _ZGVdN8v_acoshf(__m256); AVX2 __m256 _ZGVdN8v_atanhf(__m256);
 AVX2I static inline __m256d cbrtf_half(__m128 xf, __m128i *redo)
 {
   const __m256d SIGN = _mm256_castsi256_pd(_mm256_set1_epi64x(INT64_MIN));
-  __m128i zero = _mm_cmpeq_epi32(_mm_and_si128(_mm_castps_si128(xf), _mm_set1_epi32(0x7fffffff)), _mm_setzero_si128());
+  /* zero, or subnormal (2026-09-29: under DAZ the conversion reads it as 0,
+     whose exponent field would give cbrt 2^-341, which rounds to 0) */
+  __m128i zero = _mm_cmpgt_epi32(_mm_set1_epi32(0x00800000), _mm_and_si128(_mm_castps_si128(xf), _mm_set1_epi32(0x7fffffff)));
   __m128i bad = _mm_or_si128(nonfinite(xf), zero);
   __m256d x = _mm256_cvtps_pd(_mm_blendv_ps(xf, _mm_set1_ps(1.0f), _mm_castsi128_ps(bad)));
   __m256d ax = abs_pd(x);
@@ -4017,6 +4021,25 @@ __attribute__((constructor)) static void crm_cpu(void)
 #else
 #define crm_avx2 0
 #endif
+/* The scalar loops of the entry points below call CORE-MATH directly
+   (__real_cr_<name>: the library is linked with --wrap=cr_<name>, see
+   crmvec-fpenv.c) with flush-to-zero cleared once for the whole loop,
+   rather than once per lane through the wrappers, which cost the SSE2
+   entry points that loop 7% at the median and logf's 26% (bbench, Cascade
+   Lake, 2026-09-29). Every other call to CORE-MATH (the lanes a vector
+   path cannot decide) goes through a wrapper. */
+#include "crmvec-fpenv.h"
+#define CRR(n) __real_cr_##n
+#define CRM_SCALAR(...) do { crm_fpenv_t crm_e_ = crm_fp_enter(); __VA_ARGS__; crm_fp_leave(crm_e_); } while (0)
+#define F1(n) float __real_cr_##n(float);
+#define D1(n) double __real_cr_##n(double);
+#define F2(n) float __real_cr_##n(float, float);
+#define D2(n) double __real_cr_##n(double, double);
+#include "crmvec-functions.h"
+#undef F1
+#undef D1
+#undef F2
+#undef D2
 #include "crmvec-bvec.h"
 #ifndef BVEC_ALL
 #define BVEC_ALL -1
@@ -4026,23 +4049,23 @@ __attribute__((constructor)) static void crm_cpu(void)
   { return _mm256_castps256_ps128(_ZGVdN8v_##n(_mm256_set_m128(x, x))); }                          \
   __m128 _ZGVbN4v_##n(__m128 x)                                                                     \
   { if (BVON(n)) return bv_##n(x);                                                                  \
-    float a[4]; memcpy(a, &x, 16); for (int i = 0; i < 4; i++) a[i] = cr_##n(a[i]); memcpy(&x, a, 16); return x; }
+    float a[4]; memcpy(a, &x, 16); CRM_SCALAR(for (int i = 0; i < 4; i++) a[i] = CRR(n)(a[i])); memcpy(&x, a, 16); return x; }
 #define D1(n) AVX2 __attribute__((noinline)) static __m128d bv_##n(__m128d x)                        \
   { return _mm256_castpd256_pd128(_ZGVdN4v_##n(_mm256_set_m128d(x, x))); }                         \
   __m128d _ZGVbN2v_##n(__m128d x)                                                                   \
   { if (BVON(n)) return bv_##n(x);                                                                  \
-    double a[2]; memcpy(a, &x, 16); a[0] = cr_##n(a[0]); a[1] = cr_##n(a[1]); memcpy(&x, a, 16); return x; }
+    double a[2]; memcpy(a, &x, 16); CRM_SCALAR(a[0] = CRR(n)(a[0]); a[1] = CRR(n)(a[1])); memcpy(&x, a, 16); return x; }
 #define F2(n) AVX2 __attribute__((noinline)) static __m128 bv_##n(__m128 x, __m128 y)                \
   { return _mm256_castps256_ps128(_ZGVdN8vv_##n(_mm256_set_m128(x, x), _mm256_set_m128(y, y))); }  \
   __m128 _ZGVbN4vv_##n(__m128 x, __m128 y)                                                          \
   { if (BVON(n)) return bv_##n(x, y);                                                               \
-    float a[4], b[4]; memcpy(a, &x, 16); memcpy(b, &y, 16); for (int i = 0; i < 4; i++) a[i] = cr_##n(a[i], b[i]); \
+    float a[4], b[4]; memcpy(a, &x, 16); memcpy(b, &y, 16); CRM_SCALAR(for (int i = 0; i < 4; i++) a[i] = CRR(n)(a[i], b[i])); \
     memcpy(&x, a, 16); return x; }
 #define D2(n) AVX2 __attribute__((noinline)) static __m128d bv_##n(__m128d x, __m128d y)             \
   { return _mm256_castpd256_pd128(_ZGVdN4vv_##n(_mm256_set_m128d(x, x), _mm256_set_m128d(y, y))); } \
   __m128d _ZGVbN2vv_##n(__m128d x, __m128d y)                                                       \
   { if (BVON(n)) return bv_##n(x, y);                                                               \
-    double a[2], b[2]; memcpy(a, &x, 16); memcpy(b, &y, 16); a[0] = cr_##n(a[0], b[0]); a[1] = cr_##n(a[1], b[1]); \
+    double a[2], b[2]; memcpy(a, &x, 16); memcpy(b, &y, 16); CRM_SCALAR(a[0] = CRR(n)(a[0], b[0]); a[1] = CRR(n)(a[1], b[1])); \
     memcpy(&x, a, 16); return x; }
 #include "crmvec-functions.h"
 #undef F1
@@ -4329,40 +4352,40 @@ DV2(pownf, __m256, __m256i, float, int32_t, 8, crm_pownf)
 #define F1(n)                                                                                 \
   AVXC __m256 _ZGVcN8v_##n(__m256 x)                                                           \
   { if (crm_avx2 && crm_rn()) return _ZGVdN8v_##n(x);                                                      \
-    float a[8]; _mm256_storeu_ps(a, x); for (int i = 0; i < 8; i++) a[i] = cr_##n(a[i]); return _mm256_loadu_ps(a); } \
+    float a[8]; _mm256_storeu_ps(a, x); CRM_SCALAR(for (int i = 0; i < 8; i++) a[i] = CRR(n)(a[i])); return _mm256_loadu_ps(a); } \
   AVXE __m512 _ZGVeN16v_##n(__m512 x)                                                          \
   { float a[16]; _mm512_storeu_ps(a, x);                                                       \
     if (crm_avx2 && crm_rn()) { _mm256_storeu_ps(a, _ZGVdN8v_##n(_mm256_loadu_ps(a))); _mm256_storeu_ps(a + 8, _ZGVdN8v_##n(_mm256_loadu_ps(a + 8))); } \
-    else for (int i = 0; i < 16; i++) a[i] = cr_##n(a[i]);                                     \
+    else CRM_SCALAR(for (int i = 0; i < 16; i++) a[i] = CRR(n)(a[i]));                                     \
     return _mm512_loadu_ps(a); }
 #define D1(n)                                                                                 \
   AVXC __m256d _ZGVcN4v_##n(__m256d x)                                                         \
   { if (crm_avx2 && crm_rn()) return _ZGVdN4v_##n(x);                                                      \
-    double a[4]; _mm256_storeu_pd(a, x); for (int i = 0; i < 4; i++) a[i] = cr_##n(a[i]); return _mm256_loadu_pd(a); } \
+    double a[4]; _mm256_storeu_pd(a, x); CRM_SCALAR(for (int i = 0; i < 4; i++) a[i] = CRR(n)(a[i])); return _mm256_loadu_pd(a); } \
   AVXE __m512d _ZGVeN8v_##n(__m512d x)                                                         \
   { double a[8]; _mm512_storeu_pd(a, x);                                                       \
     if (crm_avx2 && crm_rn()) { _mm256_storeu_pd(a, _ZGVdN4v_##n(_mm256_loadu_pd(a))); _mm256_storeu_pd(a + 4, _ZGVdN4v_##n(_mm256_loadu_pd(a + 4))); } \
-    else for (int i = 0; i < 8; i++) a[i] = cr_##n(a[i]);                                      \
+    else CRM_SCALAR(for (int i = 0; i < 8; i++) a[i] = CRR(n)(a[i]));                                      \
     return _mm512_loadu_pd(a); }
 #define F2(n)                                                                                 \
   AVXC __m256 _ZGVcN8vv_##n(__m256 x, __m256 y)                                                \
   { if (crm_avx2 && crm_rn()) return _ZGVdN8vv_##n(x, y);                                                  \
-    float a[8], b[8]; _mm256_storeu_ps(a, x); _mm256_storeu_ps(b, y); for (int i = 0; i < 8; i++) a[i] = cr_##n(a[i], b[i]); \
+    float a[8], b[8]; _mm256_storeu_ps(a, x); _mm256_storeu_ps(b, y); CRM_SCALAR(for (int i = 0; i < 8; i++) a[i] = CRR(n)(a[i], b[i])); \
     return _mm256_loadu_ps(a); }                                                               \
   AVXE __m512 _ZGVeN16vv_##n(__m512 x, __m512 y)                                               \
   { float a[16], b[16]; _mm512_storeu_ps(a, x); _mm512_storeu_ps(b, y);                        \
     if (crm_avx2 && crm_rn()) for (int h = 0; h < 16; h += 8) _mm256_storeu_ps(a + h, _ZGVdN8vv_##n(_mm256_loadu_ps(a + h), _mm256_loadu_ps(b + h))); \
-    else for (int i = 0; i < 16; i++) a[i] = cr_##n(a[i], b[i]);                               \
+    else CRM_SCALAR(for (int i = 0; i < 16; i++) a[i] = CRR(n)(a[i], b[i]));                               \
     return _mm512_loadu_ps(a); }
 #define D2(n)                                                                                 \
   AVXC __m256d _ZGVcN4vv_##n(__m256d x, __m256d y)                                             \
   { if (crm_avx2 && crm_rn()) return _ZGVdN4vv_##n(x, y);                                                  \
-    double a[4], b[4]; _mm256_storeu_pd(a, x); _mm256_storeu_pd(b, y); for (int i = 0; i < 4; i++) a[i] = cr_##n(a[i], b[i]); \
+    double a[4], b[4]; _mm256_storeu_pd(a, x); _mm256_storeu_pd(b, y); CRM_SCALAR(for (int i = 0; i < 4; i++) a[i] = CRR(n)(a[i], b[i])); \
     return _mm256_loadu_pd(a); }                                                               \
   AVXE __m512d _ZGVeN8vv_##n(__m512d x, __m512d y)                                             \
   { double a[8], b[8]; _mm512_storeu_pd(a, x); _mm512_storeu_pd(b, y);                         \
     if (crm_avx2 && crm_rn()) for (int h = 0; h < 8; h += 4) _mm256_storeu_pd(a + h, _ZGVdN4vv_##n(_mm256_loadu_pd(a + h), _mm256_loadu_pd(b + h))); \
-    else for (int i = 0; i < 8; i++) a[i] = cr_##n(a[i], b[i]);                                \
+    else CRM_SCALAR(for (int i = 0; i < 8; i++) a[i] = CRR(n)(a[i], b[i]));                                \
     return _mm512_loadu_pd(a); }
 #include "crmvec-functions.h"
 #undef F1

@@ -44,7 +44,30 @@ static double pow2_rand(int e)   /* 2^e times a random mantissa in [1, 2), from 
   if (e < -1022) { double d = (double)((1ULL << 52) | m) * 0x1p-52; return __builtin_ldexp(d, e); }
   uint64_t b = ((uint64_t)(e + 1023) << 52) | m; double d; memcpy(&d, &b, 8); return d;
 }
+/* CRTEST_FTZ=1 (added 2026-09-29): run with FPCR.FZ on, as a gcc
+   -ffast-math program does (crtfastmath.o sets it); the references, called
+   through crmvec-fpenv.c's wrappers like the library's own calls, run with
+   it off. Subnormal inputs are flushed before use (the library may read
+   them as zero), and a zero of the right sign is accepted where the result
+   is subnormal or the smallest normal (crtest-ftz.h has the contract). Bit
+   tests throughout: with FZ on, a subnormal compares equal to zero. */
+static int ftz_mode;
+static double ftz_d(double v) { uint64_t b; memcpy(&b, &v, 8); if (ftz_mode && !(b & 0x7ff0000000000000ULL)) b &= 1ULL << 63; memcpy(&v, &b, 8); return v; }
+static float ftz_f(float v) { uint32_t b; memcpy(&b, &v, 4); if (ftz_mode && !(b & 0x7f800000u)) b &= 1u << 31; memcpy(&v, &b, 4); return v; }
+static int flushed_d(double got, double want)
+{
+  uint64_t g, w; memcpy(&g, &got, 8); memcpy(&w, &want, 8);
+  return ftz_mode && (g & ~(1ULL << 63)) == 0 && (g >> 63) == (w >> 63) && (w & ~(1ULL << 63)) <= 0x0010000000000000ULL;
+}
+static int flushed_f(float got, float want)
+{
+  uint32_t g, w; memcpy(&g, &got, 4); memcpy(&w, &want, 4);
+  return ftz_mode && (g & 0x7fffffffu) == 0 && (g >> 31) == (w >> 31) && (w & 0x7fffffffu) <= 0x00800000u;
+}
+static double gen_raw(int set, double lo, double hi, int is_float);
 static double gen(int set, double lo, double hi, int is_float)
+{ double v = gen_raw(set, lo, hi, is_float); return is_float ? (double)ftz_f((float)v) : ftz_d(v); }
+static double gen_raw(int set, double lo, double hi, int is_float)
 {
   if (set == 0) return hi > lo ? lo + u01() * (hi - lo) : pow2_rand((int)(rnd() % 2020) - 1010);
   if (set == 1) return (rnd() & 1 ? -1.0 : 1.0) * (is_float ? pow2_rand((int)(rnd() % 276) - 150) : pow2_rand((int)(rnd() % 2098) - 1074));
@@ -52,8 +75,8 @@ static double gen(int set, double lo, double hi, int is_float)
   if (is_float) { uint32_t w = (uint32_t)b; float f; memcpy(&f, &w, 4); return f; }
   double d; memcpy(&d, &b, 8); return d;
 }
-static int same_f(float a, float b) { return !memcmp(&a, &b, 4) || (a != a && b != b); }
-static int same_d(double a, double b) { return !memcmp(&a, &b, 8) || (a != a && b != b); }
+static int same_f(float a, float b) { return !memcmp(&a, &b, 4) || (a != a && b != b) || flushed_f(a, b); }
+static int same_d(double a, double b) { return !memcmp(&a, &b, 8) || (a != a && b != b) || flushed_d(a, b); }
 
 /* crtest's timing ranges (lo == hi: log-uniform positive) */
 static double lo_of(const char *n, double *hi)
@@ -310,7 +333,7 @@ static void all_floats(void)
       for (uint32_t lo = 0; lo < 65536; lo += 4) {                                             \
         uint32_t w[4]; float x[4], y[4];                                                       \
         for (int k = 0; k < 4; k++) w[k] = (uint32_t)(hi << 16) | (lo + k);                    \
-        memcpy(x, w, 16);                                                                      \
+        memcpy(x, w, 16); for (int k = 0; k < 4; k++) x[k] = ftz_f(x[k]);                      \
         vst1q_f32(y, _ZGVnN4v_##n(vld1q_f32(x)));                                             \
         for (int k = 0; k < 4; k++) bad += !same_f(y[k], cr_##n(x[k]));                       \
       }                                                                                        \
@@ -360,6 +383,24 @@ static void parity(void)
   report("_ZGVsMxvv_powf (parity)", bsf, ((np + nf - 1) / nf) * nf);
 }
 
+/* under CRTEST_FTZ: atan2 with x near 2^1022, where CORE-MATH's atan2 run
+   with FZ on returned results off by 2^49 or called exit(1) (crtest-ftz.h) */
+static void ftz_far(long n)
+{
+  long bad = 0;
+  for (long i = 0; i < n; i++) {
+    double y[2], x[2], r[2];
+    for (int k = 0; k < 2; k++) {
+      uint64_t a = rnd(), c = rnd();
+      y[k] = __builtin_ldexp(1.0 + (double)(a >> 12) * 0x1p-52, 400 + (int)(a % 624)) * ((a >> 11) & 1 ? -1.0 : 1.0);
+      x[k] = __builtin_ldexp(1.0 + (double)(c >> 12) * 0x1p-52, 960 + (int)(c % 64)) * ((c >> 11) & 1 ? -1.0 : 1.0);
+    }
+    vst1q_f64(r, _ZGVnN2vv_atan2(vld1q_f64(y), vld1q_f64(x)));
+    for (int k = 0; k < 2; k++) bad += !same_d(r[k], cr_atan2(y[k], x[k]));
+  }
+  report("_ZGVnN2vv_atan2 (x near 2^1022, FZ)", bad, 2 * n);
+}
+
 /* CRTEST_ROUND=up|down|zero: run in that rounding mode (added 2026-09-27) */
 static int set_round_env(void)
 {
@@ -373,8 +414,13 @@ static int set_round_env(void)
 int main(int argc, char **argv)
 {
   if (set_round_env()) return 2;
+  const char *fz = getenv("CRTEST_FTZ");
+  if (fz && *fz && strcmp(fz, "0")) {
+    unsigned long c; __asm__ volatile("mrs %0, fpcr" : "=r"(c)); __asm__ volatile("msr fpcr, %0" : : "r"(c | (1ul << 24)));
+    ftz_mode = 1; printf("flush-to-zero: FPCR.FZ on\n");
+  }
   if (argc > 1 && !strcmp(argv[1], "floats")) all_floats();
-  else { long n = argc > 2 ? atol(argv[2]) : 1 << 14; sample(n); parity(); lanes(n / 16); }
+  else { long n = argc > 2 ? atol(argv[2]) : 1 << 14; sample(n); parity(); if (ftz_mode) ftz_far(n); lanes(n / 16); }
   printf("VERDICT: %s (%ld results checked, %ld differ)\n", bad_total ? "DIFFERS from CORE-MATH" : "IDENTICAL to CORE-MATH on every input tried",
          checked_total, bad_total);
   return bad_total != 0;

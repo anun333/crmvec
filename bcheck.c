@@ -22,6 +22,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include "crtest-ftz.h"
 
 #define F1 "expf exp2f exp10f logf log2f log10f sinf cosf tanf acosf acoshf asinf asinhf atanf atanhf cbrtf coshf erff erfcf expm1f log1pf sinhf tanhf" \
            " sinpif cospif tanpif asinpif acospif atanpif lgammaf tgammaf rsqrtf"
@@ -37,12 +38,12 @@ static uint64_t rng = 0x9e3779b97f4a7c15ULL;
 static uint64_t next(void) { rng ^= rng << 13; rng ^= rng >> 7; rng ^= rng << 17; return rng; }
 static float f_of(uint32_t u) { float f; memcpy(&f, &u, 4); return f; }
 static double d_of(uint64_t u) { double d; memcpy(&d, &u, 8); return d; }
-static int same_f(float a, float b) { return (isnan(a) && isnan(b)) || !memcmp(&a, &b, 4); }
-static int same_d(double a, double b) { return (isnan(a) && isnan(b)) || !memcmp(&a, &b, 8); }
+static int same_f(float a, float b) { return (isnan(a) && isnan(b)) || !memcmp(&a, &b, 4) || ftz_flushed_f(a, b); }
+static int same_d(double a, double b) { return (isnan(a) && isnan(b)) || !memcmp(&a, &b, 8) || ftz_flushed_d(a, b); }
 
 /* half raw bit patterns, half moderate values of both signs */
-static float in_f(void) { uint64_t r = next(); return (r & 1) ? f_of((uint32_t)(r >> 32)) : (float)((double)(int64_t)(r >> 1) * 0x1p-58); }
-static double in_d(void) { uint64_t r = next(); return (r & 1) ? d_of(next()) : (double)(int64_t)r * 0x1p-58; }
+static float in_f(void) { uint64_t r = next(); return ftz_in_f((r & 1) ? f_of((uint32_t)(r >> 32)) : (float)((double)((int64_t)r >> 1) * 0x1p-58)); }
+static double in_d(void) { uint64_t r = next(); return ftz_in_d((r & 1) ? d_of(next()) : (double)(int64_t)r * 0x1p-58); }
 /* ints: small, moderate, any, and beyond 2^24 (where pownf changes method) */
 static int in_i(void) { uint64_t r = next(); switch (r & 3) { case 0: return (int)((r >> 8) % 41) - 20; case 1: return (int)((r >> 8) % 4001) - 2000;
   case 2: return (int)(uint32_t)(r >> 16); default: return (int)((r >> 8) % 0x7f000000) * ((r >> 63) ? -1 : 1) | 0x1000001; } }
@@ -55,29 +56,29 @@ static long check(const char *kind, const char *name, void *vec, void *ref)
   for (long i = 0; i < N; i++) {
     if (!strcmp(kind, "f1")) {
       float x[4], y[4]; for (int k = 0; k < 4; k++) x[k] = in_f();
-      _mm_storeu_ps(y, ((__m128 (*)(__m128))vec)(_mm_loadu_ps(x)));
+      FTZ_ON(); _mm_storeu_ps(y, ((__m128 (*)(__m128))vec)(_mm_loadu_ps(x))); FTZ_OFF();
       for (int k = 0; k < 4; k++) bad += !same_f(y[k], ((float (*)(float))ref)(x[k]));
     } else if (!strcmp(kind, "f2")) {
       float x[4], z[4], y[4]; for (int k = 0; k < 4; k++) { x[k] = in_f(); z[k] = in_f(); }
-      _mm_storeu_ps(y, ((__m128 (*)(__m128, __m128))vec)(_mm_loadu_ps(x), _mm_loadu_ps(z)));
+      FTZ_ON(); _mm_storeu_ps(y, ((__m128 (*)(__m128, __m128))vec)(_mm_loadu_ps(x), _mm_loadu_ps(z))); FTZ_OFF();
       for (int k = 0; k < 4; k++) bad += !same_f(y[k], ((float (*)(float, float))ref)(x[k], z[k]));
     } else if (!strcmp(kind, "d1")) {
       double x[2], y[2]; for (int k = 0; k < 2; k++) x[k] = in_d();
-      _mm_storeu_pd(y, ((__m128d (*)(__m128d))vec)(_mm_loadu_pd(x)));
+      FTZ_ON(); _mm_storeu_pd(y, ((__m128d (*)(__m128d))vec)(_mm_loadu_pd(x))); FTZ_OFF();
       for (int k = 0; k < 2; k++) bad += !same_d(y[k], ((double (*)(double))ref)(x[k]));
     } else if (!strcmp(kind, "fn")) {
       float x[4], y[4]; int n[4]; for (int k = 0; k < 4; k++) { x[k] = in_f(); n[k] = in_i(); }
       if (i & 1) for (int k = 0; k < 4; k++) x[k] = 1.0f + (float)((int)(next() % 41) - 20) * 0x1p-23f;   /* near 1, where large n stays finite */
-      _mm_storeu_ps(y, ((__m128 (*)(__m128, __m128i))vec)(_mm_loadu_ps(x), _mm_loadu_si128((const __m128i *)n)));
+      FTZ_ON(); _mm_storeu_ps(y, ((__m128 (*)(__m128, __m128i))vec)(_mm_loadu_ps(x), _mm_loadu_si128((const __m128i *)n))); FTZ_OFF();
       for (int k = 0; k < 4; k++) bad += !same_f(y[k], ((float (*)(float, int))ref)(x[k], n[k]));
     } else if (!strcmp(kind, "dn")) {
       double x[2], y[2]; int n[4] = {0}; for (int k = 0; k < 2; k++) { x[k] = in_d(); n[k] = in_i(); }
       if (i & 1) for (int k = 0; k < 2; k++) x[k] = 1.0 + (double)((int)(next() % 41) - 20) * 0x1p-52;
-      _mm_storeu_pd(y, ((__m128d (*)(__m128d, __m128i))vec)(_mm_loadu_pd(x), _mm_loadu_si128((const __m128i *)n)));
+      FTZ_ON(); _mm_storeu_pd(y, ((__m128d (*)(__m128d, __m128i))vec)(_mm_loadu_pd(x), _mm_loadu_si128((const __m128i *)n))); FTZ_OFF();
       for (int k = 0; k < 2; k++) bad += !same_d(y[k], ((double (*)(double, int))ref)(x[k], n[k]));
     } else {
       double x[2], z[2], y[2]; for (int k = 0; k < 2; k++) { x[k] = in_d(); z[k] = in_d(); }
-      _mm_storeu_pd(y, ((__m128d (*)(__m128d, __m128d))vec)(_mm_loadu_pd(x), _mm_loadu_pd(z)));
+      FTZ_ON(); _mm_storeu_pd(y, ((__m128d (*)(__m128d, __m128d))vec)(_mm_loadu_pd(x), _mm_loadu_pd(z))); FTZ_OFF();
       for (int k = 0; k < 2; k++) bad += !same_d(y[k], ((double (*)(double, double))ref)(x[k], z[k]));
     }
   }
@@ -121,6 +122,7 @@ static int set_round_env(void)
 int main(int argc, char **argv)
 {
   if (set_round_env()) return 2;
+  ftz_init();
   const char *dir = argc > 1 ? argv[1] : ".";
   if (argc > 2) N = 1L << atoi(argv[2]);
   char p1[512], p2[512]; snprintf(p1, sizeof p1, "%s/libmvec.so.1", dir); snprintf(p2, sizeof p2, "%s/libcrref.so", dir);

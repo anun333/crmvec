@@ -43,6 +43,11 @@ HDR     := $(wildcard crmvec-*.h)
 # the library's own sources, beside CORE-MATH's
 LIB     := crmvec.c crmvec-scalar.c crmvec-f16.c
 LIBC    := crmvec-scalar.c crmvec-f16.c
+# the libraries' calls to CORE-MATH go through crmvec-fpenv.c, which runs
+# them with flush-to-zero off (2026-09-29): linked with --wrap=cr_<name> for
+# every name listed there (the checks link CORE-MATH directly)
+comma   := ,
+CRWRAP  := crmvec-fpenv.c $(foreach n,$(shell grep -o 'CRW_[A-Z0-9]*([a-z0-9]*)' crmvec-fpenv.c | grep -v '(n)' | sed 's/.*(//; s/)//'),-Wl$(comma)--wrap=cr_$(n))
 # CORE-MATH's half and bfloat16 functions (crmvec-f16.c), built with hidden
 # visibility into an archive: each file also defines a stand-in under the
 # bare name (sinf16) that is not correctly rounded and must not be exported
@@ -108,26 +113,26 @@ crmvec.o: crmvec.c $(HDR) $(PORTOBJ)
 crmvec-avx2.o: crmvec.c $(HDR) $(PORTOBJ)
 	$(CC) $(CFLAGS) $(FPV) -DCRMVEC_PORT=$(X86PORT) -mavx2 -mfma -c -o $@ crmvec.c
 
-libmvec.so.1: crmvec.o $(LIBC) $(HDR) $(CR) libcrf16.a crmvec-exports.map
-	$(CC) $(CFLAGS) $(FP) -fPIC -shared -Wl,-soname,libmvec.so.1 -Wl,--version-script=crmvec-exports.map -o $@ crmvec.o $(PORTOBJ) $(LIBC) $(CR) libcrf16.a -lm
+libmvec.so.1: crmvec.o $(LIBC) crmvec-fpenv.c $(HDR) $(CR) libcrf16.a crmvec-exports.map
+	$(CC) $(CFLAGS) $(FP) -fPIC -shared -Wl,-soname,libmvec.so.1 -Wl,--version-script=crmvec-exports.map -o $@ crmvec.o $(PORTOBJ) $(LIBC) $(CR) $(CRWRAP) libcrf16.a -lm
 
-crtest: crtest.c crtest-hard.h port/pow-parity.h crmvec-avx2.o $(LIBC) $(HDR) $(CR) libcrf16.a
-	$(CC) $(CFLAGS) $(FP) -mavx2 -mfma -fopenmp -o $@ crtest.c crmvec-avx2.o $(PORTOBJ) $(LIBC) $(CR) libcrf16.a -lm -ldl
+crtest: crtest.c crtest-hard.h port/pow-parity.h crmvec-avx2.o $(LIBC) crmvec-fpenv.c $(HDR) $(CR) libcrf16.a
+	$(CC) $(CFLAGS) $(FP) -mavx2 -mfma -fopenmp -o $@ crtest.c crmvec-avx2.o $(PORTOBJ) $(LIBC) $(CR) $(CRWRAP) libcrf16.a -lm -ldl
 
 libcrref.so: crref.c crmvec-scalar.c crmvec-pownf-tab.h $(CR)
 	$(CC) $(CFLAGS) $(FP) -fPIC -shared -fopenmp -o $@ crref.c crmvec-scalar.c $(CR) -lm
 
 # baseline x86-64 on purpose (no -mavx): the SSE2 entry points' check must run on a CPU without AVX
-bcheck: bcheck.c
+bcheck: bcheck.c crtest-ftz.h
 	$(CC) $(CFLAGS) -o $@ bcheck.c -ldl -lm
 
-hypot-midpoints: hypot-midpoints.c crmvec-avx2.o $(LIBC) $(HDR) $(CR) libcrf16.a
-	$(CC) $(CFLAGS) $(FP) -mavx2 -mfma -o $@ hypot-midpoints.c crmvec-avx2.o $(PORTOBJ) $(LIBC) $(CR) libcrf16.a -lm
+hypot-midpoints: hypot-midpoints.c crmvec-avx2.o $(LIBC) crmvec-fpenv.c $(HDR) $(CR) libcrf16.a
+	$(CC) $(CFLAGS) $(FP) -mavx2 -mfma -o $@ hypot-midpoints.c crmvec-avx2.o $(PORTOBJ) $(LIBC) $(CR) $(CRWRAP) libcrf16.a -lm
 
 # hypotf on float pairs within 2^-50 of a midpoint, found by search (random
 # pairs never get there); a build with -DFBR_SCALE=0 must differ
-hypotf-midpoints: hypotf-midpoints.c crmvec-avx2.o $(LIBC) $(HDR) $(CR) libcrf16.a
-	$(CC) $(CFLAGS) $(FP) -mavx2 -mfma -fopenmp -o $@ hypotf-midpoints.c crmvec-avx2.o $(PORTOBJ) $(LIBC) $(CR) libcrf16.a -lm
+hypotf-midpoints: hypotf-midpoints.c crmvec-avx2.o $(LIBC) crmvec-fpenv.c $(HDR) $(CR) libcrf16.a
+	$(CC) $(CFLAGS) $(FP) -mavx2 -mfma -fopenmp -o $@ hypotf-midpoints.c crmvec-avx2.o $(PORTOBJ) $(LIBC) $(CR) $(CRWRAP) libcrf16.a -lm
 
 # the float functions of crmvec-lanes.h with vector code, on every input
 lcheck: lcheck.c
@@ -136,7 +141,7 @@ lcheck: lcheck.c
 # the AVX, AVX2 and AVX-512 entry points (cecheck c and d natively, and
 # under emu-check.sh's qemu -cpu SandyBridge; cecheck e natively or under
 # Intel SDE); baseline x86-64 like bcheck
-cecheck: cecheck.c
+cecheck: cecheck.c crtest-ftz.h
 	$(CC) $(CFLAGS) -o $@ cecheck.c -ldl -lm
 
 # the SSE2 entry points' speed (crtest times the AVX2 ones); baseline x86-64
@@ -164,10 +169,10 @@ pownf-search: pownf-search.c crmvec-pownf-tab.h $(PWS)
 	$(CC) $(CFLAGS) $(FP) -fopenmp -o $@ pownf-search.c $(PWS) -lmpfr -lm
 
 # cr_tan renamed to a counter inside crmvec.c only, to see which lanes go to it
-tan-poles: tan-poles.c tan-poles.h $(LIB) $(HDR) $(CR) libcrf16.a $(PORTOBJ)
+tan-poles: tan-poles.c tan-poles.h $(LIB) crmvec-fpenv.c $(HDR) $(CR) libcrf16.a $(PORTOBJ)
 	$(CC) $(CFLAGS) $(FPV) -DCRMVEC_PORT=$(X86PORT) -mavx2 -mfma -Dcr_tan=cnt_tan -c -o tan-poles-crmvec.o crmvec.c
 	$(if $(PORTOBJ),$(PORTCC) -O3 -ffp-contract=off -fno-math-errno -mavx2 -mfma -Dcr_tan=cnt_tan -c -o tan-poles-port.o port/crmvec-port.c)
-	$(CC) $(CFLAGS) $(FP) -mavx2 -mfma -o $@ tan-poles.c tan-poles-crmvec.o $(if $(PORTOBJ),tan-poles-port.o) crmvec-scalar.c crmvec-f16.c $(CR) libcrf16.a -lm
+	$(CC) $(CFLAGS) $(FP) -mavx2 -mfma -o $@ tan-poles.c tan-poles-crmvec.o $(if $(PORTOBJ),tan-poles-port.o) crmvec-scalar.c crmvec-f16.c $(CR) $(CRWRAP) libcrf16.a -lm
 	rm -f tan-poles-crmvec.o tan-poles-port.o
 # aarch64 (cross-built; checked under qemu-user): the same vector code, with
 # SIMDe standing in for the x86 intrinsics (crmvec-simde.h; libsimde-dev):
@@ -196,13 +201,13 @@ $(A64OBJ) &: $(A64SRC) $(F16SRC)
 	$(if $(filter 1,$(A64PORT)),$(A64CC) -O3 -ffp-contract=off -fno-math-errno -fPIC -fvisibility=hidden $(PORTDEFS) -c -o $(A64)/port.o port/crmvec-port-a64.c)
 	$(A64CC) $(CFLAGS) $(FP) -fPIC -fvisibility=hidden -march=armv8-a+sve -c -o $(A64)/sve.o crmvec-sve.c
 
-$(A64)/libmvec.so.1 $(A64)/libsleefgnuabi.so.3: $(A64OBJ) $(CR)
-	$(A64CC) $(CFLAGS) $(FP) -fPIC -fvisibility=hidden -shared -Wl,-soname,$(notdir $@) -o $@ $(A64OBJ) $(CR) $(A64)/libcrf16.a -lm
+$(A64)/libmvec.so.1 $(A64)/libsleefgnuabi.so.3: $(A64OBJ) $(CR) crmvec-fpenv.c
+	$(A64CC) $(CFLAGS) $(FP) -fPIC -fvisibility=hidden -shared -Wl,-soname,$(notdir $@) -o $@ $(A64OBJ) $(CR) $(CRWRAP) $(A64)/libcrf16.a -lm
 
 # static, so qemu-aarch64 runs it without a sysroot
-$(A64)/aarch64-check: port/aarch64-check.c port/pow-parity.h $(A64OBJ) $(CR)
+$(A64)/aarch64-check: port/aarch64-check.c port/pow-parity.h $(A64OBJ) $(CR) crmvec-fpenv.c
 	$(A64CC) $(CFLAGS) $(FP) -march=armv8-a+sve -fopenmp -static -I. -o $@ port/aarch64-check.c \
-	  $(A64OBJ) $(CR) $(A64)/libcrf16.a -lm
+	  $(A64OBJ) $(CR) $(CRWRAP) $(A64)/libcrf16.a -lm
 
 # every name in sleef-gnuabi-aarch64.txt is exported by the SLEEF-named
 # library, and every AdvSIMD and SVE export carries the variant-PCS flag
@@ -282,7 +287,9 @@ ifeq ($(HOSTARCH),aarch64)
 check: all $(A64)/dropin
 	@set -e; v() { echo "$$1" | tee -a check.log | tail -1; echo "$$1" | tail -1 | grep -qE $(VERDICTS) || { echo "FAILED: $$2"; exit 1; }; }; \
 	: > check.log; \
-	if grep -qw sve /proc/cpuinfo; then v "$$($(A64)/aarch64-check sample)" "aarch64-check sample"; else echo "aarch64-check: skipped, no SVE"; fi; \
+	if grep -qw sve /proc/cpuinfo; then v "$$($(A64)/aarch64-check sample)" "aarch64-check sample"; \
+	  v "$$(CRTEST_FTZ=1 $(A64)/aarch64-check sample 4096)" "aarch64-check sample under flush-to-zero (FPCR.FZ, as -ffast-math programs run)"; \
+	  else echo "aarch64-check: skipped, no SVE"; fi; \
 	v "$$(LD_LIBRARY_PATH=$(A64) $(A64)/dropin 2>&1 | grep -v 'no version information')" "drop-in loops (gcc, crmvec-simd.h)"; \
 	v "$$(./simdcheck.sh $(CC) $(A64)/libmvec.so.1 2>&1)" "simdcheck (crmvec-simd.h: gcc vectorizes all 52 functions without -ffast-math)"; \
 	echo "make check: every verdict passed (details in check.log)"
@@ -302,7 +309,9 @@ check: all
 	@set -e; v() { echo "$$1" | tee -a check.log | tail -1; echo "$$1" | tail -1 | grep -qE $(VERDICTS) || { echo "FAILED: $$2"; exit 1; }; }; \
 	: > check.log; \
 	v "$$(./bcheck . 18)" bcheck; \
-	if grep -q ' avx ' /proc/cpuinfo; then v "$$(./cecheck c . 14)" "cecheck c"; v "$$(./cecheck d . 14)" "cecheck d"; else echo "cecheck c, cecheck d: skipped, no AVX"; fi; \
+	v "$$(CRTEST_FTZ=1 ./bcheck . 14)" "bcheck under flush-to-zero (FTZ and DAZ, as -ffast-math programs run)"; \
+	if grep -q ' avx ' /proc/cpuinfo; then v "$$(./cecheck c . 14)" "cecheck c"; v "$$(./cecheck d . 14)" "cecheck d"; \
+	  v "$$(CRTEST_FTZ=1 ./cecheck d . 12)" "cecheck d under flush-to-zero"; else echo "cecheck c, cecheck d: skipped, no AVX"; fi; \
 	if grep -q avx512f /proc/cpuinfo; then v "$$(./cecheck e . 12)" "cecheck e"; else echo "cecheck e: skipped, no AVX-512F"; fi; \
 	if grep -qw avx2 /proc/cpuinfo && grep -qw fma /proc/cpuinfo; then \
 	v "$$(./mpfrcheck 16 all)" "mpfrcheck, four rounding modes"; \

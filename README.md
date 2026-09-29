@@ -248,10 +248,30 @@ the check costs 5% of the median function's time. CORE-MATH is built with
 `sinf` rounding upward was wrong on 967 million of its 2^32 inputs.
 Like `libmvec`, the library sets no `errno`.
 
-**Subnormals under `-ffast-math`.** A program linked with gcc's `-ffast-math`
-starts with the CPU flushing subnormals to zero (FTZ and DAZ). Subnormal
-inputs and results are then flushed in this library too, as in the rest of
-that program, CORE-MATH's scalar code included.
+**Under `-ffast-math`.** A program linked with gcc's `-ffast-math` starts
+with the CPU flushing subnormals to zero (FTZ and DAZ on x86, FPCR.FZ on
+aarch64), and those are the programs that reach `libmvec` through glibc's
+headers. Until 2026-09-29 this library gave wrong answers there:
+- **`atan2`:** CORE-MATH's own `atan2` run with flush-to-zero loses an
+  intermediate. `atan2(0x1.c0cbdf9d92d81p+635, 0x1.467426ee5df9ap+1022)`
+  came out `0x1p-436` instead of `0x1.5ff071fa2400ep-387`, and other
+  inputs made it print "Unexpected worst-case found" and call `exit(1)`,
+  ending the program. Every entry point, x86 and aarch64.
+- **`logf`, `log2f`, `log10f`, `cbrtf`:** the AVX2, AVX and AVX-512 entry
+  points read a subnormal input as zero: `logf(1e-40)` came out −709.1,
+  not −92.1, and `cbrtf(1e-40)` 0.
+
+Now every call into CORE-MATH runs with flush-to-zero off and restores it
+after (`crmvec-fpenv.c`, `crmvec-fpenv.h`), and those four functions send
+subnormal inputs to CORE-MATH. What the library gives under flush-to-zero:
+for a normal input (or a zero, an infinity, a NaN), CORE-MATH's result,
+except that a result in the subnormal range, or rounding to the smallest
+normal, may come back as a zero of the same sign; a subnormal input may be
+read as zero, as the rest of such a program reads it. `bcheck`, `cecheck`
+and `aarch64-check` check exactly that with `CRTEST_FTZ=1`, `atan2` near
+its failures included, and `make check` runs them. The cost: the SSE2
+entry points that loop over CORE-MATH are 3% slower at the median (they
+read the control register once per call); the vector paths are unchanged.
 
 ## Checking it
 
@@ -279,6 +299,7 @@ CRTEST_SMOOTH=1 ./crtest time   # the same, on inputs that vary smoothly along t
 ./cecheck c          # the AVX entry points; `./cecheck d` every AVX2 one; `./cecheck e` (or `sde64 -spr -- ./cecheck e`) for AVX-512
 port/dropin-x86.sh   # loops gcc vectorized with -mavx and -mavx512f, against this library and glibc's
 CRTEST_ROUND=up ./crtest verify   # any check above in another rounding mode (also bcheck, cecheck, aarch64-check)
+CRTEST_FTZ=1 ./cecheck d          # with flush-to-zero on, as -ffast-math programs run (also bcheck, aarch64-check)
 ./pownf-search       # the proof for float pown with |n| > 2^24 (about 6 minutes on 8 threads)
 LD_LIBRARY_PATH=$PWD python3 check-pocl.py   # through PoCL (needs pyopencl)
 python3 check-pocl.py                        # the control, with glibc's libmvec

@@ -30,6 +30,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include "crtest-ftz.h"
 
 #define F1 "expf exp2f exp10f logf log2f log10f sinf cosf tanf acosf acoshf asinf asinhf atanf atanhf cbrtf coshf erff erfcf expm1f log1pf sinhf tanhf"
 #define D1 "exp log sin cos tan acos acosh asin asinh atan atanh cbrt cosh erf erfc exp2 exp10 expm1 log2 log10 log1p sinh tanh"
@@ -47,10 +48,10 @@ static uint64_t rng = 0x9e3779b97f4a7c15ULL;
 static uint64_t next(void) { rng ^= rng << 13; rng ^= rng >> 7; rng ^= rng << 17; return rng; }
 static float f_of(uint32_t u) { float f; memcpy(&f, &u, 4); return f; }
 static double d_of(uint64_t u) { double d; memcpy(&d, &u, 8); return d; }
-static int same_f(float a, float b) { return (a != a && b != b) || !memcmp(&a, &b, 4); }
-static int same_d(double a, double b) { return (a != a && b != b) || !memcmp(&a, &b, 8); }
-static float in_f(void) { uint64_t r = next(); return (r & 1) ? f_of((uint32_t)(r >> 32)) : (float)((double)(int64_t)(r >> 1) * 0x1p-58); }
-static double in_d(void) { uint64_t r = next(); return (r & 1) ? d_of(next()) : (double)(int64_t)r * 0x1p-58; }
+static int same_f(float a, float b) { return (a != a && b != b) || !memcmp(&a, &b, 4) || ftz_flushed_f(a, b); }
+static int same_d(double a, double b) { return (a != a && b != b) || !memcmp(&a, &b, 8) || ftz_flushed_d(a, b); }
+static float in_f(void) { uint64_t r = next(); return ftz_in_f((r & 1) ? f_of((uint32_t)(r >> 32)) : (float)((double)((int64_t)r >> 1) * 0x1p-58)); }
+static double in_d(void) { uint64_t r = next(); return ftz_in_d((r & 1) ? d_of(next()) : (double)(int64_t)r * 0x1p-58); }
 /* pown's ints, as bcheck's: small, moderate, any, and beyond 2^24 */
 static int in_i(void) { uint64_t r = next(); switch (r & 3) { case 0: return (int)((r >> 8) % 41) - 20; case 1: return (int)((r >> 8) % 4001) - 2000;
   case 2: return (int)(uint32_t)(r >> 16); default: return (int)((r >> 8) % 0x7f000000) * ((r >> 63) ? -1 : 1) | 0x1000001; } }
@@ -95,8 +96,8 @@ static long check_n(int fl, void *vec, void *ref)
     float xf[8], of[8]; double xd[4], od[4]; int n[8];
     for (int k = 0; k < 8; k++) { xf[k] = in_f(); n[k] = in_i(); }
     for (int k = 0; k < 4; k++) xd[k] = in_d();
-    if (fl) { call_n(vec, 1, xf, n, of); for (int k = 0; k < 8; k++) bad += !same_f(of[k], ((float (*)(float, int))ref)(xf[k], n[k])); }
-    else { call_n(vec, 0, xd, n, od); for (int k = 0; k < 4; k++) bad += !same_d(od[k], ((double (*)(double, int))ref)(xd[k], n[k])); }
+    if (fl) { FTZ_ON(); call_n(vec, 1, xf, n, of); FTZ_OFF(); for (int k = 0; k < 8; k++) bad += !same_f(of[k], ((float (*)(float, int))ref)(xf[k], n[k])); }
+    else { FTZ_ON(); call_n(vec, 0, xd, n, od); FTZ_OFF(); for (int k = 0; k < 4; k++) bad += !same_d(od[k], ((double (*)(double, int))ref)(xd[k], n[k])); }
   }
   return bad;
 }
@@ -108,10 +109,10 @@ static long check(int fl, int two, void *vec, void *ref)
     float xf[16], yf[16], of[16]; double xd[16], yd[16], od[16];
     for (int k = 0; k < lanes; k++) { xf[k] = in_f(); yf[k] = in_f(); xd[k] = in_d(); yd[k] = in_d(); }
     if (fl) {
-      (cls == 'e' ? call_e : call_c)(vec, 1, two, xf, yf, of);
+      FTZ_ON(); (cls == 'e' ? call_e : call_c)(vec, 1, two, xf, yf, of); FTZ_OFF();
       for (int k = 0; k < lanes; k++) bad += !same_f(of[k], two ? ((float (*)(float, float))ref)(xf[k], yf[k]) : ((float (*)(float))ref)(xf[k]));
     } else {
-      (cls == 'e' ? call_e : call_c)(vec, 0, two, xd, yd, od);
+      FTZ_ON(); (cls == 'e' ? call_e : call_c)(vec, 0, two, xd, yd, od); FTZ_OFF();
       for (int k = 0; k < lanes; k++) bad += !same_d(od[k], two ? ((double (*)(double, double))ref)(xd[k], yd[k]) : ((double (*)(double))ref)(xd[k]));
     }
   }
@@ -155,6 +156,7 @@ int main(int argc, char **argv)
   cls = argc > 1 ? argv[1][0] : 'c';
   if (cls != 'c' && cls != 'd' && cls != 'e') { printf("usage: cecheck c|d|e [dir [k]]\n"); return 2; }
   signal(SIGILL, ill);
+  ftz_init();
   const char *dir = argc > 2 ? argv[2] : ".";
   if (argc > 3) N = 1L << atoi(argv[3]);
   char p1[512], p2[512]; snprintf(p1, sizeof p1, "%s/libmvec.so.1", dir); snprintf(p2, sizeof p2, "%s/libcrref.so", dir);
@@ -168,6 +170,19 @@ int main(int argc, char **argv)
   bad += run(lib, ref, 1, 0, d ? F1 LF1 : F1, &fns); bad += run(lib, ref, 1, 1, d ? F2 LF2 : F2, &fns);
   bad += run(lib, ref, 0, 0, d ? D1 LD1 : D1, &fns); bad += run(lib, ref, 0, 1, d ? D2 LD2 : D2, &fns);
   if (d) { bad += run(lib, ref, 1, 1, "pownf", &fns); bad += run(lib, ref, 0, 1, "pown", &fns); }
+  if (ftz_mode) {   /* atan2 near its failures under FTZ (crtest-ftz.h) */
+    char sym[40]; snprintf(sym, sizeof sym, "_ZGV%cN%dvv_atan2", cls, cls == 'e' ? 8 : 4);
+    void *v = dlsym(lib, sym); double (*r)(double, double) = (double (*)(double, double))dlsym(ref, "cr_atan2");
+    long fb = 0, fn = 0; current = sym;
+    for (long i = 0; v && r && i < N; i++) {
+      double y[8], x[8], o[8]; int lanes = cls == 'e' ? 8 : 4;
+      for (int k = 0; k < lanes; k++) { y[k] = ftz_far(next(), 0); x[k] = ftz_far(next(), 1); }
+      FTZ_ON(); (cls == 'e' ? call_e : call_c)(v, 0, 1, y, x, o); FTZ_OFF();
+      for (int k = 0; k < lanes; k++) { fb += !same_d(o[k], r(y[k], x[k])); fn++; }
+    }
+    printf("atan2, x near 2^1022, under FTZ: %ld of %ld differ\n", fb, fn);
+    bad += fb + (!v || !r);
+  }
   char cmd[600]; snprintf(cmd, sizeof cmd, "nm -D --defined-only %s | awk '{print $3}' | grep '^_ZGV%c'", p1, cls);
   FILE *pp = popen(cmd, "r"); char line[80]; int exported = 0, untested = 0;
   while (pp && fgets(line, sizeof line, pp)) {
