@@ -102,6 +102,11 @@ Packages, from this repository:
 - **Debian and Ubuntu** (`debian/`, `dpkg-buildpackage -b`): built on Ubuntu
   24.04 for amd64 and, under emulation, arm64. The packaged libraries pass
   the checks below; on arm64, the gcc and clang drop-in loops under qemu.
+  From 2026-09-29 its `crmvec-run` names both architectures' directories,
+  so it is the same file in the amd64 and arm64 packages, which
+  `Multi-Arch: same` needs for them to be installed side by side (the
+  dynamic linker skips the other architecture's library). A cross build
+  uses the cross compiler.
 - **Fedora** (`crmvec.spec`, `rpmbuild -bb`): built and installed on Fedora
   44 (gcc 16), and its library passes the checks there. It does not claim to
   provide `libmvec.so.1` to other packages.
@@ -114,7 +119,10 @@ Packages, from this repository:
 All of them build without link-time optimization, and run `make clean`
 first, so a source tree holding an earlier build cannot ship it. The checks have run on
 the library as compiled file by file, not on code optimized across crmvec
-and CORE-MATH.
+and CORE-MATH. The libraries get the distribution's `CPPFLAGS` and
+`LDFLAGS` (its hardening flags) as well as its `CFLAGS` (from 2026-09-29;
+on Ubuntu, `_FORTIFY_SOURCE=3`, RELRO and immediate binding, and the amd64
+package's library passes `bcheck` and `cecheck c`, `d` and `e` built so).
 
 The Debian, Fedora and Nix recipes also run `make check` on the library
 they package, as part of the build (Debian's `nocheck` skips it). Checked
@@ -279,7 +287,7 @@ read the control register once per call); the vector paths are unchanged.
 ## Checking it
 
 ```
-make check           # a few minutes of what follows, one verdict per line, some also under flush-to-zero (on aarch64: aarch64-check sample, the drop-in loops, simdcheck)
+make check           # a few minutes of what follows, one verdict per line, some also under flush-to-zero (on aarch64: aarch64-check sample, or aarch64-check-advsimd without SVE, the drop-in loops, simdcheck)
 ./crtest verify      # one-argument floats: all 2^32 inputs each
 ./crtest verify64    # doubles: 2^31 random inputs each, CORE-MATH's hard cases, edge values
 ./crtest verify2     # the six two-argument functions: 2^30 random pairs each, 1,600 special pairs (pow and powf: 432 parity pairs too)
@@ -370,6 +378,24 @@ math the checks covered held up; the bugs were where no check went:
   (through `LD_LIBRARY_PATH`) and pass; internal calls could be taken by
   another library's copy; `crmvec-simd.h` under `-include` broke programs
   defining `_GNU_SOURCE`. All fixed the same day.
+- **Checks that could pass without checking:** `crtest` and `mpfrcheck`
+  given a misspelt mode or function tested nothing and printed their
+  verdict; `hypotf-midpoints` passed if its search found nothing;
+  `check-pocl.py` exited 0 when results differed; `rv64-dropin` compared
+  only f(x) + x (above, "Other CPUs: riscv64"); `tan-poles` hardly reached
+  its 800 large poles; on aarch64 without SVE, `make check` skipped every
+  entry point (now `aarch64-check-advsimd`: 3.6 million results under a
+  Cortex-A72 model, 0 differ). Fixed the same day; each fix shown to
+  fail where it should, except `check-pocl.py`'s (no PoCL in the cloud
+  session that made it).
+- **Ports and packaging:** riscv64's two untiered `fmin` aliases lacked
+  the variant calling-convention flag; the Debian package's `crmvec-run`
+  differed between amd64 and arm64 (so `Multi-Arch: same` could not
+  co-install them) and a cross build used the build machine's compiler;
+  the libraries ignored `CPPFLAGS` and `LDFLAGS`; editing CORE-MATH's
+  headers rebuilt nothing; `CC ?= gcc` never took effect (make's default
+  is `cc`); a native aarch64 `make check` needed a static glibc, which
+  Fedora and Nix don't install by default. Fixed the same day.
 
 The checks do see wrong answers when there are some. Each vector path was
 rebuilt with its rounding test disabled, and then failed its check: every
@@ -390,9 +416,12 @@ Double precision can't be checked exhaustively. There, correctness rests on
 CORE-MATH's proofs (and, for `atan2`, its measurement), on the transcription
 (tested on billions of inputs), and on two arguments of this library's own,
 both written out in `crmvec.c` and checked independently. For double `tan`,
-`tan-poles` tests its bound where it is tightest: 205,999 vectors whose
+`tan-poles` tests its bound where it is tightest: 410,462 vectors whose
 inputs all lie within 2^-12 of a pole are all sent to CORE-MATH, while with
-the bound set to zero 283,441 of their results come out wrong. For double
+the bound set to zero 479,914 of their results come out wrong. Half of those
+vectors (205,146) sit at the 800 random poles between 2^20 and 2^31; until
+2026-09-29 its offsets, counted in ulps, put only 683 vectors that close to
+them. For double
 `cos`, computed as `sin` with its table index shifted a quarter turn,
 `sincos-tables.py` shows that the part of the error that depends on the
 index is uniformly tiny for all 16,384 indices, so `sin`'s bound covers it.
@@ -484,6 +513,7 @@ results, 0 differ from CORE-MATH):
 make aarch64
 qemu-aarch64 -cpu max,sve-default-vector-length=64 build-aarch64/aarch64-check sample   # every entry point, three input sets
 qemu-aarch64 -cpu max build-aarch64/aarch64-check floats   # all 2^32 inputs of the 23 floats (hours)
+qemu-aarch64 -cpu cortex-a72 build-aarch64/aarch64-check-advsimd sample   # the same built without SVE: the AdvSIMD entry points, for CPUs without SVE
 port/port-build.sh    # the core on x86, aarch64 and riscv64: one output hash
 make sleef-exports    # all 644 of SLEEF's names, each flagged VARIANT_PCS
 port/sleef-dropin.sh  # loops vectorized by clang -fveclib=SLEEF, against this library and SLEEF 3.9's
@@ -598,10 +628,18 @@ How they were checked and timed:
   - **what got it there:** conversions, table rows and a 32-bit multiply
     that gcc 13 compiled lane by lane, now given one-instruction forms,
     and three polynomial loops unrolled (`port/codegen-audit.py` finds
-    such cases in a built library).
+    such cases in a built library);
+  - **on Cascade Lake** (an Intel Xeon cloud VM, 4 vCPUs, 2026-09-29; the
+    fastest of 3 interleaved runs per build, one pinned core): built by
+    gcc, 1.015x the intrinsics at the median (mean 0.98x), 21 of 52 at or
+    below parity, the slowest `erff` and `atan` at 1.17x and 1.15x; built
+    by clang, 0.94x at the median (mean 0.93x), 44 at or below parity, the
+    slowest `sinhf` and `cbrtf` at 1.13x and 1.11x. Both gain most on
+    `powf` (0.60x and 0.51x) and `log1p` (0.63x and 0.60x).
 
   On x86 the portable core does not replace the intrinsics yet, which is
-  why `PORT=1` is off by default.
+  why `PORT=1` is off by default (on Cascade Lake the clang-built core is
+  already faster at the median; the default has not changed).
 
 **Inside the library:** on x86, `make PORT=1` builds
 `libmvec.so.1` with all 52 functions taken from the portable core
@@ -741,6 +779,12 @@ all (`port/crmvec-port-rv64.c`):
 - **VLEN-agnostic:** each entry point runs the portable core over its
   argument in fixed 128-bit blocks. RVV 1.0 guarantees VLEN >= 128, so one
   build runs at any VLEN.
+- **Calling convention flag:** every export takes vectors, so each carries
+  `STO_RISCV_VARIANT_CC`, which makes the dynamic linker bind it eagerly
+  (a lazily bound call may clobber the vector registers its caller keeps
+  live). The compiler sets it on functions but not on aliases: the two
+  untiered `fmin` names lacked it until 2026-09-29. `make riscv64` checks
+  every export for it.
 - **Build requirements:** `gcc-riscv64-linux-gnu`, and clang 20 for the
   port file (gcc 13 turns its generic vectors into scalar code on
   riscv64). Don't add `-mrvv-vector-bits`: it fixes VLEN exactly, and code
@@ -776,6 +820,13 @@ Checked under qemu (no riscv64 hardware yet):
   1024. Through the bounds-zeroed build 682 differ; with `lgamma` taken
   from glibc and `ldexp` reading its exponents in reverse lane order,
   80,258 differ.
+  - **f(x) itself, from 2026-09-29:** each loop stored only f(x) + x (the
+    sum keeps x live across the call, to catch a clobbered register), and
+    adding x absorbed most 1-ulp errors. Through a stand-in whose `log` and
+    `logf` were 1 ulp off in every lane, that comparison saw 13,216 of
+    `log`'s 32,922 wrong results; the loops now store f(x) too, and it sees
+    all 32,922 (the other 32,614 inputs give NaN, which stays NaN). 0
+    differ through this library at VLEN 128 and 256.
 - **Against SLEEF 3.9's own** (`port/rv64-sleef.sh`, Debian's riscv64
   build, hash-pinned): 23,539 of the drop-in's 4,849,664 results differ
   from CORE-MATH at VLEN 256, and 23,609 at VLEN 128.

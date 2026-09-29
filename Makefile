@@ -111,7 +111,9 @@ headercheck: crmvec.h crmvec-f16.c crmvec-scalar.c
 #            SIMDe route on a Neoverse N2, and checked (every float on all
 #            2^32 inputs natively, make check, aarch64-check at three SVE
 #            lengths in all four rounding modes);
-#   x86:     off. The intrinsics are as fast or faster there.
+#   x86:     off. On Zen 3 the intrinsics are as fast or faster; on
+#            Cascade Lake the core built by clang takes 0.94 times their
+#            time at the median (2026-09-29, README "One portable source").
 # PORT=0 or PORT=1 on the command line sets both. The x86 file is built with
 # PORTCC (gcc or clang). Switching needs `make clean`: the objects do not
 # record which way they were built.
