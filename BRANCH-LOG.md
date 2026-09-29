@@ -26,38 +26,37 @@ edit. Each later commit on this branch adds its entry here.
      list, and needn't be;
    - run the fresh-copy gate and the privacy scan as for any publish, then
      publish; `crmvec-publish.sh --check` should then report a match.
-2. **Authorship was rewritten on 2026-09-29, and every hash changed.** The
-   commits were first authored `Claude <noreply@anthropic.com>` with a
-   `Claude-Session` trailer. `main`'s convention, and openpocl's rule for
-   anything public, is author `anun333 <anun333@posteo.net>` with only the
-   `Co-Authored-By` trailer. The cloud session learned that rule from
-   openpocl's CLAUDE.md, and on the owner's choice re-authored all 13
-   commits that way and force-pushed the branch; the trees are unchanged.
-   A clone of the branch from before then needs `git fetch && git reset
-   --hard origin/claude/beautiful-ramanujan-4gvzzd`. Old to new:
-   `6bc7ff0` → `bc8ead0`, `447d3c0` → `8face66`, `357fa92` → `fa1ed1e`,
-   `0806d7a` → `72840e9`, `46c2099` → `414f2f6`, `bed74e9` → `275098e`,
-   `41e9443` → `3b5e987`, `f946ba1` → `ca6b818`, `ec1904b` → `ba34c51`,
-   `5fe2314` → `9b3ed82`, `5a2e3c4` → `3e3b7d7`, `58cd0d4` → `b0a9852`,
-   `b1bf0c1` → `d6afef1`
-   The hashes in this log are the new ones.
-3. **It contains `main` as of `5bf6f82`** (merged in `fa1ed1e`, no
-   conflicts) and was 0 commits behind it on 2026-09-29. `git log
-   --oneline main..origin/claude/beautiful-ramanujan-4gvzzd` lists what it
-   adds.
-4. **The user asked that this branch not be merged by the cloud session**
+2. **Don't merge `main` to this branch as it stands; use the harness.**
+   It contains `main` as of `5bf6f82` (merged in `fa1ed1e`, no conflicts)
+   and was 0 commits behind it on 2026-09-29, so it would fast-forward, but
+   publishing goes through `crmvec-publish.sh` (item 1). `git log --oneline
+   main..origin/claude/beautiful-ramanujan-4gvzzd` lists what it adds.
+3. **The history was rewritten twice on 2026-09-29, on the owner's say.**
+   - **Authorship:** every commit re-authored `anun333
+     <anun333@posteo.net>` with only the `Co-Authored-By` trailer, as on
+     `main` (openpocl's rule for anything public). The cloud session's
+     commits were first authored as `Claude <noreply@anthropic.com>`.
+   - **Tidied:** after the first ten commits, 17 small ones were squashed
+     into six. Each remaining commit's tree is one that existed on the
+     branch at the time, so nothing was reordered or edited in between.
+   - GitHub shows these commits as "Unverified": they are unsigned and
+     authored as anun333, as `main`'s are. The cloud environment's own
+     check would re-author them as `Claude <noreply@anthropic.com>` to get
+     "Verified"; the owner kept anun333.
+   - Older hashes (in CI runs, and in anything written before) map to the
+     current ones in the appendix "Old hashes". A clone from before needs
+     `git fetch && git reset --hard origin/claude/beautiful-ramanujan-4gvzzd`.
+4. **The owner asked that this branch not be merged by the cloud session**
    ("let the other maintainer version of you do that"). Nothing here was
    pushed to `main`.
-5. **CI** was green on every head pushed before the rewrite (old hashes
-   `6bc7ff0`, `447d3c0`, `bed74e9`, `41e9443`, `5fe2314`; the last is run
-   36593612771). The rewrite changed no file, and its push runs CI again on
-   the new head.
-   - GitHub's x86-64 runners vary: the run for `447d3c0` (old hash) had
-     AVX-512, the later three didn't (their AVX-512 steps took 0 s).
-   - **So CI has not yet run the new AVX-512 code (`275098e`).** Only the
-     Cascade Lake VM of the cloud session has.
-   - The Zen 3 laptop has no AVX-512 either: use Intel SDE (`sde64 -skx --
-     ./cecheck e . 16`), or rerun CI until it lands on an AVX-512 runner.
+5. **CI:** 21 runs, 36570280138 to 36623226734, on the older hashes; 20
+   green. The one red run was `ce7ea02`'s: the SDE step's first version
+   failed and skipped the steps after it (now inside `38c0244`, which fixed
+   it).
+   - The 512-bit core ran natively in 5 of the 19 runs since it landed:
+     GitHub's x86-64 runners vary, and most lack AVX-512.
+   - Intel SDE would cover the rest, but Intel refuses GitHub's runners
+     (see "What's left", item 1).
 
 ## The review and the order of fixes
 
@@ -311,7 +310,7 @@ exit non-zero.
   README and the Makefile record the numbers; the decision is the
   maintainer's. Per-function table below.
 
-### `48acde7`: the AVX-512 entry points at depth, and Intel SDE in CI
+### `38c0244`: the AVX-512 entry points at depth, and Intel SDE in CI
 
 Items 1 and 2 of the further-work list the owner was given, re-ranked
 after openpocl's HANDOFF: correctness and coverage before more x86 speed,
@@ -340,37 +339,21 @@ which openpocl lists under "What not to spend time on".
     512-bit core specifically.
   - `hypot`: 0, as documented: its midpoint test is reached only by
     `hypot-midpoints`.
-- **CI:** where the runner lacks AVX-512 (most runs), a new step downloads
-  Intel SDE and runs `cecheck e . 10` under `-skx` (an emulated
-  Skylake-SP).
-  - Not testable from the cloud container: Intel's download site is
-    blocked there, and so are CI logs. The step reports the download's
-    sha256 and its verdict as notices, which the check-run annotations API
-    returns.
-  - **First run (`ce7ea02`, 2026-09-29):** both mirror URLs were refused
-    within a second ("Intel SDE could not be downloaded"). The failed step
-    skipped every step after it, so CI went red; the step had no
-    `continue-on-error`. The next commit:
-    - adds `continue-on-error`, so a download problem stays an error on
-      that step and no longer skips the others;
-    - also tries the link on Intel's current download page, and a browser
-      user-agent (Intel's CDN may refuse curl's);
-    - reports each URL's HTTP code in the error.
-    The README says CI "tries" SDE until a run shows it working.
-  - **Second run (`b72f91f`):** it landed on a runner with AVX-512. The
-    native steps ran (`cecheck e . 16` and every float input, 7 minutes)
-    and passed: CI's first check of the 512-bit core. The SDE step stood
-    aside, so its download path is still unexercised.
-  - **Then:** the step runs on every runner, at 2^6 calls a function where
-    the runner has AVX-512 and the native check already ran, so each run
-    tests the download. Otherwise it would wait for a runner without
-    AVX-512.
-  - **To do:** pin that sha256 once a run reports it.
-  - Two mirror URLs are tried (SDE 9.44.0, then 9.33.0).
-  - Heavier checks (`crtest verify64e`, `cecheck e . floats`) stay local;
-    under emulation they would take hours.
+- **CI:** a new step runs `cecheck e` under Intel SDE (`-skx`, an emulated
+  Skylake-SP) where the runner lacks AVX-512. The heavier checks
+  (`crtest verify64e`, `cecheck e . floats`) stay local; under emulation
+  they would take hours.
+  - Its first version had no `continue-on-error`: when the download
+    failed, it skipped every step after it and turned CI red. This commit
+    makes it non-blocking, tries two mirror URLs and the link on Intel's
+    download page with two user-agents, and reports each URL's HTTP code
+    as an annotation (CI logs were unreadable from the cloud container; the
+    check-run annotations API was not).
+  - `4036a4e` runs it on every runner, at fewer calls where the native check
+    already ran, so each run tests the download. The result: Intel answers
+    403 ("What's left", item 1).
 
-### `35f3ef8`: the conda recipe built for real, the sanitizers, and a fix they found
+### `2820c03` and `4cfada6`: a fix the sanitizers found, the conda recipe built for real, wider vector lengths
 
 Items 3 and 5 of the re-ranked list.
 
@@ -391,9 +374,9 @@ Items 3 and 5 of the re-ranked list.
   - What ran: `bcheck` (also under FTZ), `cecheck c`, `d` and `e` (`d` and
     `e` also under FTZ, `e` also rounding up), and `crtest verify64e` on
     `exp`, `tan`, `atan`, `erfc` and `log1p`, and `verify2e` on `pow`,
-    `atan2`, `powf` and `hypot`. The last finished after this entry was
-    first committed. It reported only the three `hypot` overflows (the
-    sanitized build predates the fix) and matched CORE-MATH on every pair.
+    `atan2`, `powf` and `hypot` (which reported only the three `hypot`
+    overflows, since the sanitized build predates the fix, and matched
+    CORE-MATH on every pair).
   - ASan: nothing.
   - UBSan: three signed overflows in the portable core's `hypot`
     (`port/port-atan2.h`), reached through `cecheck e`. Plus
@@ -402,7 +385,7 @@ Items 3 and 5 of the re-ranked list.
     - Whether the undefined-behaviour report sent to CORE-MATH on
       2026-09-27 covered that line isn't known here; check before
       mentioning it upstream.
-- **The fix (`35f3ef8`):** unsigned vector arithmetic, as CORE-MATH's
+- **The fix (`2820c03`):** unsigned vector arithmetic, as CORE-MATH's
   scalar `hypot` uses.
   - The machine code changed (register allocation and order), so it was
     checked by behaviour rather than by reading the diff:
@@ -425,22 +408,150 @@ Items 3 and 5 of the re-ranked list.
     a four-line `sed` of the 4-lane one, and could become an E mode like
     `crtest`'s.
 
-## Deliberately not done
+## What's left, for the maintainer
 
-- **`bcheck`'s `powr`/`pown` reference is the library's own scalar code.**
-  `mpfrcheck` is the independent oracle for those functions.
-- **Fidelity-only items from the review:**
+The cloud session stopped here on the owner's word (2026-09-29, about
+18:40 UTC): the rest is the maintainer's. The last change to code or CI
+is `4036a4e`; the commit after it only edits this log.
+
+### 1. The SDE step: Intel refuses the download (CI run 36614573701)
+
+- **Result, for `4036a4e` (then `f9fd253`):** the step ran (on a runner with
+  AVX-512, where it now runs too) and could not download SDE. Intel's mirror answered
+  **403** for both URLs (9.44.0 and 9.33.0), with curl's user-agent and a
+  browser's, and Intel's download page gave no link. The step's error
+  annotation reads: "Intel SDE could not be downloaded (page link: none;
+  tried: 403:curl:... 403:Mozilla/5.0:...)".
+- **The job is green anyway** (`continue-on-error`), and the steps after it
+  ran. The same run's native AVX-512 step ran for 10 minutes (`cecheck e`
+  and every float input) and passed.
+- **So CI checks the 512-bit core only on runners that have AVX-512:** 5
+  of the 19 runs since it landed (`275098e`, old hash `bed74e9`) did. The
+  choices for the maintainer:
+  - **drop the SDE step** (simplest; the `crtest verify64e`/`verify2e` and
+    `cecheck e . floats` runs on the Cascade Lake VM stand as the record);
+  - **get SDE some other way:** a third-party action such as
+    `petarpetrovt/setup-sde` (pin it by commit), or a copy kept where CI can
+    fetch it. Check Intel's licence before redistributing it;
+  - **run it on the laptop** before each release that touches `port/`:
+    `sde64 -skx -- ./cecheck e . 16`.
+
+### 2. The owner's decisions
+
+1. **Whether to send the CORE-MATH flush-to-zero follow-up.** The draft
+   and `repro.c` were sent to the owner through the app. It reproduces on
+   x86-64 and aarch64. Before sending, check whether the 2026-09-27
+   undefined-behaviour report already covered `cospi.c:179`, the shift
+   UBSan reports; add it if not.
+2. **x86's default.** `PORT=0` (the intrinsics) is still the default. The
+   portable core built by clang is 0.94x the intrinsics' time at the
+   median on Cascade Lake, and the gcc build 1.015x (1.00x on Zen 3). If
+   `PORT=1` becomes the default, `PORTCC=clang` is the faster build here.
+3. **The conda-forge `run_exports` reply** (the laptop session's item,
+   waiting on the owner).
+4. **The release:** everything on this branch, and the perf-a64 work on
+   `main`, is unreleased. The version is still 0.5.0 in the Makefile,
+   `crmvec.h`, `crmvec.spec`, `debian/changelog` and `conda/recipe.yaml`.
+   The conda recipe still builds the v0.5.0 tarball; a build of this
+   tree with conda-forge's toolchain passes (`4cfada6`'s entry).
+
+### 3. Optional work the cloud session saw and didn't do
+
+- **An AVX-512 mode for `hypot-midpoints`.** It exists only as a scratch
+  variant: a four-line `sed` of the 4-lane loop to `_ZGVeN8vv_hypot`, 8
+  lanes, built with `-mavx512f -mavx512dq`. It passes (400,000 midpoints,
+  0 differ), and its control (`HYPOT_NO_TEST` in `crmvec-port-e.o`)
+  gives 2,624. It could become an `e` mode like `crtest`'s.
+- **Fidelity only, no result the checks can see changes:**
+  - error-bound comments that understate (the log core's is 2^-34.19, not
+    2^-36);
   - fused multiply-adds CORE-MATH doesn't use (`atan` crmvec.c:2188,
-    `expm1` 1939, `atanh` 2913);
-  - error-bound comments that understate (log core 2^-34.19, not 2^-36).
-  None changes a result the checks can see.
-- **Not verified:** that the vendored CORE-MATH files are byte-identical to
-  upstream `a0fce68`. gitlab.inria.fr is blocked from the cloud container.
-- **Version strings are still 0.5.0.** Everything here, and the perf-a64
-  work on `main`, is unreleased.
-- **The conda-forge recipe** (staged-recipes#34976) builds 0.5.0. From
-  `ba34c51` on, a build of this branch links with conda's `LDFLAGS`. That
-  was checked here with simulated flags, not by conda-build.
+    `expm1` 1939, `atanh` 2913). Changing them means rerunning the 2^31
+    double checks. The cloud session would have skipped these.
+- **x86 speed, deprioritized by openpocl's HANDOFF:**
+  - the 512-bit core's three regressions against the old halves (`erff`
+    1.08x, `asinf` and `erfc` 4-6% slower);
+  - the +3% the flush-to-zero fix costs the SSE2 scalar loops (skip the
+    MXCSR write when the bits are already clear);
+  - the Intel timing at 5 rounds instead of 3.
+- **`bcheck`'s `powr`/`pown` reference is the library's own scalar code.**
+  `mpfrcheck` is the independent oracle for them, so this stays as is
+  unless someone wants a second one.
+
+### 4. Only possible from the laptop or other hardware
+
+- **AVX-512 timing on Zen 4**, where 512-bit units are 256 bits wide (the
+  hired EPYC 4564P timed only the old halves) and on Sapphire Rapids.
+  Native aarch64 and riscv64 timing.
+- **`check-pocl.py`'s new exit status** (`ca6b818`): not run, since it
+  needs openpocl's PoCL. Run it once each way: through crmvec (exit 0)
+  and the glibc control (exit 1).
+- **Fedora and Nix builds with the new `LDFLAGS`.** Fedora's `%build`
+  exports its flags, including the redhat-hardened-ld specs; not tested.
+- **The vendored CORE-MATH against upstream `a0fce68`,** byte for byte
+  (gitlab.inria.fr was blocked from the cloud container).
+- **`harness/prior-work.sh`** on each subject above, before folding it into
+  openpocl's docs.
+
+### 5. What dies with the cloud container
+
+- **The local branches `backup/pre-rewrite` and `backup/pre-tidy`:** the
+  branch before each history rewrite. Every tree in them is also a tree
+  on the branch, or between two of its commits, so nothing is lost.
+- **The raw Intel timing files** (the per-function table is in the
+  appendix below) and the scratch programs: the 8-lane `hypot-midpoints`,
+  the `hypot` old-against-new differential, the `rv64-dropin` 1-ulp
+  stand-in, the sanitizer builds.
+- **The rattler-build variant file used for the conda build:**
+  `c_compiler: [gcc]`, `c_compiler_version: ["14"]`, `c_stdlib:
+  [sysroot]`, `c_stdlib_version: ["2.28"]`. It was written from memory of
+  conda-forge's pinning, not from the pinning itself.
+
+## GPUs and other processor types: a compile probe (2026-09-29)
+
+Asked by the owner after the handoff. Compiled only, with clang 20; nothing
+ran, since the cloud container has no GPU. Scratch only, nothing in the
+repo changed.
+
+- **The portable core** (`port_log`, a stand-in for the rest) compiles for
+  every target tried. Each calls the CORE-MATH fallback for its hard lanes,
+  and each fuses its multiply-adds (7 per call):
+  - NVIDIA (`nvptx64`, sm_70, `fma.rn.f64`) and AMD (`amdgcn`, gfx906, the
+    MI50's, `v_fma_f64`), at VB=8, one double per work-item;
+  - POWER9 (`xvmaddadp`), IBM Z z14 (`vfmadb`), LoongArch LSX and LASX
+    (`vfmadd.d`).
+  - The exception is WebAssembly SIMD128: it has no fused multiply-add
+    that is guaranteed fused (relaxed-SIMD's isn't), so each one is a call
+    to `fma`, correct but slow.
+- **CORE-MATH itself on the GPUs:** 147 of the 148 compiles (74 files for
+  each GPU) succeed, with stand-in headers for `errno.h`, `fenv.h`,
+  `stdio.h` and `stdlib.h`. The one failure, and what the rest needs:
+  - `sin.c` on NVIDIA: the backend needs a helper for 128-bit multiplies
+    (`mul i128`), which NVPTX lacks ("Undefined external symbol"). AMD
+    compiles it. The fix would be supplying that helper, or 64x64-bit
+    high multiplies.
+  - The worst-case paths call `printf` and `exit` (`pow`, `atan2`,
+    `atan2pi`; `exit` is the same one as in the flush-to-zero report).
+    `fenv` (30 files) and `errno` (all 74) need device stand-ins; GPUs
+    round to nearest only.
+- **What a GPU build needs:** correct rounding holds only with contraction
+  off (CUDA's default `-fmad=true` breaks it), float denormals kept (not
+  flushed), IEEE division and square root, and fp64. The float functions
+  compute in double, so consumer GPUs (fp64 at 1/32 to 1/64 speed) pay for
+  it. The MI50 (1/2) and data-centre parts don't.
+- **The SIMT cost of the fallback (estimated, not measured):** a warp of
+  32 runs the slow path when any lane needs it. With a per-lane fallback
+  rate p, that is 1-(1-p)^32: 3% of warps at p = 0.1%, 27% at p = 1%.
+  Functions that fall back more often (`atan`'s fast test rejects 2-14%
+  of lanes) would suffer most.
+- **Where it would plug in:**
+  - on GPUs, through PoCL's kernel library, as the CPU CORE-MATH route
+    (`exp/coremath-kernellib`) does, compiled for the device;
+  - on POWER, s390x, LoongArch and WebAssembly, there is no libmvec to
+    stand in for. gcc's POWER `-mveclibabi=mass` names are the only
+    compiler-called ABI among them;
+  - half and bfloat16 (2^16 inputs, checkable exhaustively on any device)
+    fit NPUs and other accelerators without fp64 best.
 
 ## Where this belongs in openpocl
 
@@ -481,8 +592,9 @@ the laptop has something newer.
     of them (riscv64 `fmin`).
   - A `Multi-Arch: same` package can't carry a script that names the
     host's library directory.
-- **Open items:** the "Deliberately not done" list above goes to
-  `pr-fix-intents.md`'s Backlog.
+- **Open items:** "What's left, for the maintainer" above goes to
+  `pr-fix-intents.md`: the owner's decisions to "Order, and why", the rest
+  to the Backlog.
 
 ## Appendix: Cascade Lake, the AVX2 entry points per function
 
@@ -544,3 +656,28 @@ give each portable build's time as a multiple of it.
 | `atan2` | 7.58 | 0.94x | 0.87x |
 | `hypotf` | 1.39 | 0.85x | 0.89x |
 | `hypot` | 4.52 | 1.02x | 0.86x |
+
+## Appendix: old hashes
+
+The branch's commits as of the handoff, and the hashes they had before
+the two rewrites of 2026-09-29 (first authorship, then the tidy). CI runs
+and anything written earlier cite the older ones.
+
+| current | before the tidy | before the authorship rewrite |
+|---|---|---|
+| `bc8ead0` | `bc8ead0` | `6bc7ff0` |
+| `8face66` | `8face66` | `447d3c0` |
+| `fa1ed1e` | `fa1ed1e` | `357fa92` |
+| `72840e9` | `72840e9` | `0806d7a` |
+| `414f2f6` | `414f2f6` | `46c2099` |
+| `275098e` | `275098e` | `bed74e9` |
+| `3b5e987` | `3b5e987` | `41e9443` |
+| `ca6b818` | `ca6b818` | `f946ba1` |
+| `ba34c51` | `ba34c51` | `ec1904b` |
+| `9b3ed82` | `9b3ed82` | `5fe2314` |
+| `84ef5c2` | `3e3b7d7`, `b0a9852`, `d6afef1`, `38950c9` | `5a2e3c4`, `58cd0d4`, `b1bf0c1` |
+| `38c0244` | `48acde7`, `ce7ea02`, `b72f91f` | (after the rewrite) |
+| `2820c03` | `35f3ef8` | (after the rewrite) |
+| `4cfada6` | `4ac7409`, `43419d3` | (after the rewrite) |
+| `4036a4e` | `f9fd253` | (after the rewrite) |
+| the head (the tidy's last commit) | `6323587`, `63b16ec`, `deaad07`, `7e3fa59`, `412a5db`, `1bd6b8c` | (after the rewrite) |

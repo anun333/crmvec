@@ -578,6 +578,14 @@ functions in GCC/clang generic vector types, one source for every width.
   2026-09-29; `make E512=0` for the old way, Limits), and all 52 functions
   optionally (`make PORT=1`).
 
+"Portable" here means CPU vector units: the source is checked bit for bit
+on x86 (SSE2 to AVX-512), aarch64 (NEON, SVE at 128 to 2048 bits) and
+riscv64 (RVV at VLEN 128 to 1024). It also compiles unchanged for GPUs
+(NVIDIA and AMD), POWER, IBM Z, LoongArch and WebAssembly, but has been
+checked on none of them, and the library itself is a CPU drop-in: a GPU
+would take the code into its kernels (through PoCL, for instance), not
+load `libmvec.so.1`.
+
 `port/portable.h` has the helpers the vector extensions lack (FMA, select,
 rounding, any-lane, table rows). The functions:
 - **every float function (26):** `expf`, `exp2f`, `exp10f`, `logf`,
@@ -906,10 +914,10 @@ Checked under qemu (no riscv64 hardware yet):
     AVX2 checks of the same build still pass. Not yet timed on Zen 4, whose
     512-bit units are 256 bits wide.
   - **CI** runs `cecheck e` natively where GitHub's runner has AVX-512,
-    which is a minority of runs. It also tries Intel SDE (`-skx`) on every
-    runner, with fewer calls where the native check ran. The first try
-    couldn't download SDE (2026-09-29), and a failed download doesn't stop
-    the other steps.
+    which is a minority of runs. A step that would run them under Intel
+    SDE (`-skx`) elsewhere can't: Intel's site refuses GitHub's runners
+    (HTTP 403, 2026-09-29). The step reports that and doesn't stop the
+    others.
   - **Before**, on a hired AMD EPYC 4564P (Zen 4), where every check above
     passed, the halves were 8% slower per element than the AVX2 entry
     points, while glibc's 512-bit code is 23% faster than its AVX2 code: 4.5x
