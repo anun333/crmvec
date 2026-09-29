@@ -96,9 +96,10 @@ PORT    ?=
 X86PORT := $(if $(PORT),$(PORT),0)
 A64PORT := $(if $(PORT),$(PORT),1)
 PORTCC  ?= $(CC)
+PORTDEFS ?=   # extra -D flags for the port object only (speed experiments)
 PORTOBJ := $(if $(filter 1,$(X86PORT)),crmvec-port.o)
 crmvec-port.o: port/crmvec-port.c port/portable.h port/port-log.h port/port-exp.h port/port-expf.h port/port-sincos.h port/port-sinf.h port/port-hypf.h port/port-erff.h port/port-logf.h port/port-powf.h port/port-log1pf.h port/port-atanf.h port/port-tanf.h port/port-dfast.h port/port-erf.h port/port-tanh.h port/port-pow.h port/port-expm1.h port/port-sinhcosh.h port/port-asinh.h port/port-atanh.h port/port-atan.h port/port-asin.h port/port-atan2.h port/port-cbrt.h crmvec-powf-tab.h crmvec-atan2-tab.h crmvec-asin-tab.h crmvec-atan-tab.h crmvec-erf-tab.h crmvec-pow-tab.h crmvec-erff-tab.h crmvec-erfcf-tab.h crmvec-rows-tab.h crmvec-exp-tab.h crmvec-sin-tab.h
-	$(PORTCC) -O3 -ffp-contract=off -fno-math-errno -mavx2 -mfma -fPIC -c -o $@ port/crmvec-port.c
+	$(PORTCC) -O3 -ffp-contract=off -fno-math-errno -mavx2 -mfma -fPIC $(PORTDEFS) -c -o $@ port/crmvec-port.c
 
 crmvec.o: crmvec.c $(HDR) $(PORTOBJ)
 	$(CC) $(CFLAGS) $(FPV) -DCRMVEC_PORT=$(X86PORT) -fPIC -c -o $@ crmvec.c
@@ -191,7 +192,7 @@ $(A64OBJ) &: $(A64SRC) $(F16SRC)
 	rm -rf $(A64)/f16src && mkdir -p $(A64)/f16src && for f in $(F16SRC); do $(A64CC) $(CFLAGS) $(FP) -fPIC -fvisibility=hidden -c -o $(A64)/f16src/$$(echo $$f | tr / -).o $$f || exit 1; done
 	rm -f $(A64)/libcrf16.a && ar rcs $(A64)/libcrf16.a $(A64)/f16src/*.o
 	$(A64CC) $(CFLAGS) $(FP) -DCRMVEC_PORT=$(A64PORT) -fPIC -fvisibility=hidden -c -o $(A64)/advsimd.o crmvec-aarch64.c
-	$(if $(filter 1,$(A64PORT)),$(A64CC) -O3 -ffp-contract=off -fno-math-errno -fPIC -fvisibility=hidden -c -o $(A64)/port.o port/crmvec-port-a64.c)
+	$(if $(filter 1,$(A64PORT)),$(A64CC) -O3 -ffp-contract=off -fno-math-errno -fPIC -fvisibility=hidden $(PORTDEFS) -c -o $(A64)/port.o port/crmvec-port-a64.c)
 	$(A64CC) $(CFLAGS) $(FP) -fPIC -fvisibility=hidden -march=armv8-a+sve -c -o $(A64)/sve.o crmvec-sve.c
 
 $(A64)/libmvec.so.1 $(A64)/libsleefgnuabi.so.3: $(A64OBJ) $(CR)

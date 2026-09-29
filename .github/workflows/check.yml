@@ -118,3 +118,12 @@ jobs:
         with:
           name: check-arm64
           path: check.log
+      - name: "Experiment, perf-a64 only (remove before merging): asinf/acosf variants on this runner"
+        run: |
+          for r in 1 2; do
+            for v in plain PORT_ASCF_SQRT_ALWAYS PORT_ASINF_ATAN; do
+              d=""; [ $v = plain ] || d="-D$v"
+              make clean >/dev/null && make -j"$(nproc)" PORTDEFS="$d" >/dev/null
+              build-aarch64/nbench build-aarch64/libmvec.so.1 /usr/lib/aarch64-linux-gnu/libmvec.so.1 | grep -E "^(asinf|acosf) " | sed "s/^/round $r $v: /"
+            done
+          done
