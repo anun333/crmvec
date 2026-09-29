@@ -89,12 +89,15 @@ PORT_INLINE vd port_hypot_fast(vd x, vd y, vl *redo)
   vd dz = dr2 - fmad_v(th, th, -r2), tl = rsq * dz;
   vd th2 = th + tl; tl = tl - (th2 - th); th = th2;                /* fasttwosum */
   vl ex = (vl)th & EMSK, ey = (vl)port_abs(tl);
-  vl aidr = (ey + splatl(0x3feLL << 52)) - ex;
-  vl mid = (vl)((vu)((aidr - splatl(0x3c90000000000000LL)) + splatl(16)) >> 5);
-  vl midm = (vl)((vu)((aidr - splatl(0x3c80000000000000LL)) + splatl(16)) >> 5);
+  /* in unsigned vectors, as CORE-MATH's u64: on the lanes decided elsewhere
+     (inf, NaN, far apart) these wrap, which is undefined for signed ones
+     (UBSan, 2026-09-29); the machine code is the same */
+  vl aidr = (vl)(((vu)ey + (vu)splatl(0x3feLL << 52)) - (vu)ex);
+  vl mid = (vl)((((vu)aidr - (vu)splatl(0x3c90000000000000LL)) + (vu)splatl(16)) >> 5);
+  vl midm = (vl)((((vu)aidr - (vu)splatl(0x3c80000000000000LL)) + (vu)splatl(16)) >> 5);
   vl hard = ((mid == splatl(0)) | (midm == splatl(0)))
           | (((vu)splatl(0x39b0000000000000LL) > (vu)aidr) | ((vu)aidr > (vu)splatl((long long)0x3c9fffffffffff80ULL)));
-  vl rb = (vl)th - off;
+  vl rb = (vl)((vu)th - (vu)off);
   vl ovf = rb > splatl((0x7ffLL << 52) - 1);                        /* rb is positive or above 2^63 on no input here */
 #ifdef HYPOT_NO_TEST   /* the control: the midpoint test switched off */
   hard = splatl(0);
