@@ -115,26 +115,17 @@ PORT_INLINE vd port_ascf_poly31(vd z, const double *b)
               z16 * (((B_(8) + z2 * B_(9)) + z4 * (B_(10) + z2 * B_(11))) + z8 * ((B_(12) + z2 * B_(13)) + z4 * (B_(14) + z2 * B_(15)))));
 #undef B_
 }
-/* PORT_ASCF_SQRT_ALWAYS (experiment): compute the sqrt path for every half,
-   no branch; the branch is taken at random for uniform inputs */
-#ifdef PORT_ASCF_SQRT_ALWAYS
+/* The sqrt path is computed only when some lane of the half needs it, a
+   branch taken at random for uniform inputs. Measured 2026-09-28/29
+   (uniform inputs, same-run comparisons): on the N2 the branch costs more
+   than it saves (always computing: asinf 9.98 -> 9.42 ns, acosf 9.46 ->
+   8.78), on Zen 3 the opposite (asinf 2.89 -> 3.12, acosf 2.73 -> 3.18:
+   a 256-bit square root costs more there). So aarch64 always computes it. */
+#if defined(__aarch64__) && !defined(PORT_ASCF_BRANCH)
 #define PORT_ASCF_GATE(m) 1
 #else
 #define PORT_ASCF_GATE(m) anyl(m)
 #endif
-#ifdef PORT_ASINF_ATAN   /* experiment: the atan-based asinf of 0.5.0 */
-PORT_INLINE vd port_asinf_half(vd x, vl *redo)
-{
-  const vd ONE = splatd(1.0);
-  vl bad = port_nonfinite(x) | (port_abs(x) > ONE);
-  x = seld_v(bad, splatd(0.0), x);
-  vd ax = port_abs(x);
-  vd t = ax / sqrtd_v((ONE - ax) * (ONE + ax));
-  vd y = (vd)((vl)port_atan_d(t) | ((vl)x & splatl(INT64_MIN)));
-  *redo = bad;
-  return y;
-}
-#else
 PORT_INLINE vd port_asinf_half(vd x, vl *redo)
 {
   const vl SIGN = splatl(INT64_MIN);
@@ -158,7 +149,6 @@ PORT_INLINE vd port_asinf_half(vd x, vl *redo)
         | (sq & ((ax == splatd(0x1.55688ap-1)) | (ax == splatd(0x1.107434p-1))));   /* CORE-MATH's two listed inputs */
   return y;
 }
-#endif
 PORT_INLINE vd port_acosf_half(vd x, vl *redo)
 {
   const vl SIGN = splatl(INT64_MIN);
