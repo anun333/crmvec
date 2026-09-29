@@ -59,6 +59,8 @@ PORT_INLINE vd port_atan_fast3(vd x, vl *redo, vl *inr)
     vl ut = (vl)((vu)u >> (51 - 16));
     vl ut2 = (vl)((vu)port_mul_epu32(ut, ut) >> 16);
     vl c0, c1, c2;
+    /* one element at a time: rows3d reads the same bits with fewer lane
+       moves but measured 6% slower here under gcc 13 on Zen 3 (2026-09-28) */
     { int64_t ix[ND]; memcpy(ix, &i, VB);
       for (int k = 0; k < ND; k++) { c0[k] = ATAN_C[ix[k]][0]; c1[k] = ATAN_C[ix[k]][1]; c2[k] = ATAN_C[ix[k]][2]; } }
     vl jj = (vl)((vu)c0 << 16) + port_mul_epu32(ut, c1);

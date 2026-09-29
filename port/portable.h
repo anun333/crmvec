@@ -76,8 +76,25 @@ PORT_INLINE vd seld_v(vl m, vd a, vd b) { return (vd)((m & (vl)a) | (~m & (vl)b)
    for |a| < 2^(p-2) in round-to-nearest, the only mode this code runs in
    (crmvec's guard sends the others to CORE-MATH); gcc left roundevenf
    scalar, where this is one add and one subtract on every target */
-PORT_INLINE vf roundf_v(vf a) { vf c = splatf(0x1.8p23f); return (a + c) - c; }
-PORT_INLINE vd roundd_v(vd a) { vd c = splatd(0x1.8p52); return (a + c) - c; }
+PORT_INLINE vf roundf_v(vf a)
+{
+#if defined(__AVX__) && VB == 32 && !defined(PORT_NO_X86_ROUND)
+  /* x86: crmvec.c's vroundps, which takes two dependent additions off the
+     critical path (exp2f 13% slower than the intrinsics without it,
+     2026-09-28); the same result wherever the additions are exact */
+  return (vf)_mm256_round_ps((__m256)a, _MM_FROUND_TO_NEAREST_INT | _MM_FROUND_NO_EXC);
+#else
+  vf c = splatf(0x1.8p23f); return (a + c) - c;
+#endif
+}
+PORT_INLINE vd roundd_v(vd a)
+{
+#if defined(__AVX__) && VB == 32 && !defined(PORT_NO_X86_ROUND)
+  return (vd)_mm256_round_pd((__m256d)a, _MM_FROUND_TO_NEAREST_INT | _MM_FROUND_NO_EXC);
+#else
+  vd c = splatd(0x1.8p52); return (a + c) - c;
+#endif
+}
 
 /* (double) e for |e| < 2^51, exactly, by the same constant: x86 before
    AVX-512DQ has no packed int64 -> double conversion, and gcc converts
@@ -279,6 +296,22 @@ PORT_INLINE void rows4d(const double (*T)[4], vl idx, vd *c0, vd *c1, vd *c2, vd
   vd a, b, c, d; int64_t ix[ND]; memcpy(ix, &idx, VB);
   for (int i = 0; i < ND; i++) { const double *r = T[ix[i]]; a[i] = r[0]; b[i] = r[1]; c[i] = r[2]; d[i] = r[3]; }
   *c0 = a; *c1 = b; *c2 = c; *c3 = d;
+#endif
+}
+
+/* a * b for a and b that fit in int32 (as sign-extended int64 lanes):
+   crmvec's _mm256_mul_epi32. The same product as the 64-bit multiply, which
+   neither AVX2 nor NEON has: gcc emulates it with three 32-bit multiplies,
+   shifts and adds (2026-09-28, the log2 family's index), where vpmuldq or
+   smull is one instruction. */
+PORT_INLINE vl port_mul_epi32(vl a, vl b)
+{
+#if defined(__AVX2__) && VB == 32 && !defined(PORT_NO_X86_CVT)
+  return (vl)_mm256_mul_epi32((__m256i)a, (__m256i)b);
+#elif defined(PORT_NEON_CVT)
+  return (vl)vmull_s32(vmovn_s64((int64x2_t)a), vmovn_s64((int64x2_t)b));
+#else
+  return a * b;
 #endif
 }
 
