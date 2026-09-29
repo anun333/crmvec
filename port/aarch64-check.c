@@ -323,6 +323,43 @@ static void all_floats(void)
 #undef D2
 }
 
+/* pow and powf on pow-parity.h's pairs (x = +-1 and its neighbours, y
+   near +-2^52: the sign, or NaN), through every entry point, SVE with
+   every lane active. Added 2026-09-29, with the portable core's fix. */
+#include "pow-parity.h"
+static void parity(void)
+{
+  const int nd = (int)svcntd(), nf = (int)svcntw();   /* at most 32 and 64 (2048-bit SVE) */
+  double px[POW_PARITY_N], py[POW_PARITY_N]; long b2 = 0, bs = 0, b4 = 0, c2 = 0, c4 = 0, bsf = 0, b2f = 0;
+  int np = pow_parity_pairs(0, px, py);
+  for (int i = 0; i < np; i += 2) {
+    double y[2]; vst1q_f64(y, _ZGVnN2vv_pow(vld1q_f64(px + i), vld1q_f64(py + i)));
+    for (int k = 0; k < 2; k++) b2 += !same_d(y[k], cr_pow(px[i + k], py[i + k]));
+  }
+  for (int i = 0; i < np; i += nd) {
+    double x[32], w[32], z[32]; for (int k = 0; k < nd; k++) { x[k] = px[(i + k) % np]; w[k] = py[(i + k) % np]; }
+    svst1_f64(svptrue_b64(), z, _ZGVsMxvv_pow(svld1_f64(svptrue_b64(), x), svld1_f64(svptrue_b64(), w), svptrue_b64()));
+    for (int k = 0; k < nd; k++) bs += !same_d(z[k], cr_pow(x[k], w[k]));
+  }
+  report("_ZGVnN2vv_pow (parity)", b2, np); report("_ZGVsMxvv_pow (parity)", bs, ((np + nd - 1) / nd) * nd);
+  np = pow_parity_pairs(1, px, py);
+  for (int i = 0; i < np; i += 4) {
+    float x[4], w[4], y[4]; for (int k = 0; k < 4; k++) { x[k] = (float)px[i + k]; w[k] = (float)py[i + k]; }
+    vst1q_f32(y, _ZGVnN4vv_powf(vld1q_f32(x), vld1q_f32(w)));
+    for (int k = 0; k < 4; k++) b4 += !same_f(y[k], cr_powf(x[k], w[k]));
+    vst1_f32(y, _ZGVnN2vv_powf(vld1_f32(x), vld1_f32(w)));
+    for (int k = 0; k < 2; k++) b2f += !same_f(y[k], cr_powf(x[k], w[k]));
+    c4 += 4; c2 += 2;
+  }
+  for (int i = 0; i < np; i += nf) {
+    float x[64], w[64], z[64]; for (int k = 0; k < nf; k++) { x[k] = (float)px[(i + k) % np]; w[k] = (float)py[(i + k) % np]; }
+    svst1_f32(svptrue_b32(), z, _ZGVsMxvv_powf(svld1_f32(svptrue_b32(), x), svld1_f32(svptrue_b32(), w), svptrue_b32()));
+    for (int k = 0; k < nf; k++) bsf += !same_f(z[k], cr_powf(x[k], w[k]));
+  }
+  report("_ZGVnN4vv_powf (parity)", b4, c4); report("_ZGVnN2vv_powf (parity)", b2f, c2);
+  report("_ZGVsMxvv_powf (parity)", bsf, ((np + nf - 1) / nf) * nf);
+}
+
 /* CRTEST_ROUND=up|down|zero: run in that rounding mode (added 2026-09-27) */
 static int set_round_env(void)
 {
@@ -337,7 +374,7 @@ int main(int argc, char **argv)
 {
   if (set_round_env()) return 2;
   if (argc > 1 && !strcmp(argv[1], "floats")) all_floats();
-  else { long n = argc > 2 ? atol(argv[2]) : 1 << 14; sample(n); lanes(n / 16); }
+  else { long n = argc > 2 ? atol(argv[2]) : 1 << 14; sample(n); parity(); lanes(n / 16); }
   printf("VERDICT: %s (%ld results checked, %ld differ)\n", bad_total ? "DIFFERS from CORE-MATH" : "IDENTICAL to CORE-MATH on every input tried",
          checked_total, bad_total);
   return bad_total != 0;

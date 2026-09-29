@@ -259,7 +259,7 @@ that program, CORE-MATH's scalar code included.
 make check           # a few minutes of what follows, one verdict per line (on aarch64: aarch64-check sample, the drop-in loops, simdcheck)
 ./crtest verify      # one-argument floats: all 2^32 inputs each
 ./crtest verify64    # doubles: 2^31 random inputs each, CORE-MATH's hard cases, edge values
-./crtest verify2     # the six two-argument functions: 2^30 random pairs each, 1,600 special pairs
+./crtest verify2     # the six two-argument functions: 2^30 random pairs each, 1,600 special pairs (pow and powf: 432 parity pairs too)
 ./bcheck             # every SSE2 entry point of libmvec.so.1 against CORE-MATH
 ./emu-check.sh       # the same on an emulated Core 2 (qemu-x86_64 -cpu Conroe: no AVX), then cecheck c and d on a Sandy Bridge (AVX, no AVX2)
 ./hypot-midpoints    # double hypot on inputs whose result is exactly halfway between two doubles
@@ -514,7 +514,12 @@ How they were checked and timed:
     bounds zeroed, every one of them comes out wrong somewhere: from 42
     inputs (`cbrt`) to 1,269,827 (`atan`);
   - `pow`, `atan2` and `hypot` match on 2^30 random pairs and 1,600
-    special pairs each. With the bounds zeroed, `pow` gets 13,673 wrong,
+    special pairs each, and `pow` and `powf` on 432 parity pairs (x = ±1
+    and its neighbours, y within 4 ulps of ±2^50 … ±2^53, where the sign
+    turns on whether y is odd). Until 2026-09-29 the portable `pow` got
+    those wrong on every target (`pow(-1, 2^52 + 2)` was −1): its integer
+    test was exact only below 2^51, and no random or special pair reached
+    it. With the bounds zeroed, `pow` gets 13,673 wrong,
     `atan2` 1,383,016, and `hypot` 2,624 of 400,000 exact-midpoint inputs
     (`hypot-midpoints`);
   - `generic-log` and `generic-exp` match `cr_log` and `cr_exp` on 67

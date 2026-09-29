@@ -57,6 +57,7 @@ float cr_powf(float, float), cr_atan2f(float, float), cr_hypotf(float, float);
 __m256d _ZGVdN4vv_pow(__m256d, __m256d), _ZGVdN4vv_atan2(__m256d, __m256d), _ZGVdN4vv_hypot(__m256d, __m256d);
 double cr_pow(double, double), cr_atan2(double, double), cr_hypot(double, double);
 #include "crtest-hard.h"   /* EXP_HARD, COS_HARD, TAN_HARD */
+#include "port/pow-parity.h"   /* pow_parity_pairs */
 
 /* lo < hi: uniform timing range; lo == hi == 0: log-uniform positive.
    Timing ranges keep every input on glibc's fast path: until 2026-09-26
@@ -316,10 +317,16 @@ static int verify2(int argc, char **argv)
         if (P2[f].is_float) for (int k = 0; k < 8; k++) { x[k] = (float)x[k]; y[k] = (float)y[k]; }
         sb += eval_pairs(f, x, y, firstmsg, sizeof firstmsg); sn += 8;
       }
+    unsigned long long pb = 0, pn = 0; char pmsg[80] = "";   /* pow and powf: the parity pairs (port/pow-parity.h) */
+    if (!strcmp(P2[f].name, "pow") || !strcmp(P2[f].name, "powf")) {
+      double px[POW_PARITY_N], py[POW_PARITY_N];
+      for (int i = 0, np = pow_parity_pairs(P2[f].is_float, px, py); i < np; i += 8) { pb += eval_pairs(f, px + i, py + i, firstmsg, sizeof firstmsg); pn += 8; }
+      snprintf(pmsg, sizeof pmsg, " | parity %llu: %llu", pn, pb);
+    }
     const char *const *L = SETS[P2[f].kind];
-    printf("%-6s random %llu pairs: %llu differ (%s %llu, %s %llu, %s %llu, %s %llu) | specials %llu: %llu%s\n",
-           P2[f].name, n, bad[0] + bad[1] + bad[2] + bad[3], L[0], bad[0], L[1], bad[1], L[2], bad[2], L[3], bad[3], sn, sb, firstmsg);
-    bad_fns += (bad[0] + bad[1] + bad[2] + bad[3] + sb) != 0;
+    printf("%-6s random %llu pairs: %llu differ (%s %llu, %s %llu, %s %llu, %s %llu) | specials %llu: %llu%s%s\n",
+           P2[f].name, n, bad[0] + bad[1] + bad[2] + bad[3], L[0], bad[0], L[1], bad[1], L[2], bad[2], L[3], bad[3], sn, sb, pmsg, firstmsg);
+    bad_fns += (bad[0] + bad[1] + bad[2] + bad[3] + sb + pb) != 0;
   }
   printf("VERDICT: %s\n", bad_fns ? "DIFFERS from CORE-MATH" : "IDENTICAL to CORE-MATH on every pair tried");
   return bad_fns;

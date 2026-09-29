@@ -14,10 +14,20 @@ float cr_powf(float, float);
 #define POWF_OFF 468   /* powf.c's margin; the control rebuilds with 0 */
 #endif
 
-/* round(a) == a, for any double: every double of magnitude >= 2^52 is an
-   integer, and below that roundd_v is exact (inf counts as integral, nan
-   does not, as with _mm256_round_pd) */
-PORT_INLINE vl port_isint(vd a) { return (port_abs(a) >= splatd(0x1p52)) | (roundd_v(a) == a); }
+/* round(a) == a, for any double (inf counts as integral, nan does not, as
+   with _mm256_round_pd): every double of magnitude >= 2^52 is an integer,
+   and below that |a| + 2^52 lies in [2^52, 2^53), where the doubles are
+   the integers, so the addition rounds |a| to an integer and subtracting
+   2^52 is exact. roundd_v (1.5 * 2^52) is exact only below 2^51; built on
+   it, this test called odd integers in [2^51, 2^52) non-integers and
+   half-integers in (-2^52, -2^51] integers, so until 2026-09-29 pow(-1,
+   2^52 + 2) came out -1, and pow(-1, -(2^52 - 1/2)) -1 instead of NaN, on
+   every build of the portable core (aarch64, riscv64, x86 PORT=1). */
+PORT_INLINE vl port_isint(vd a)
+{
+  vd b = port_abs(a), c = splatd(0x1p52);
+  return (b >= c) | (((b + c) - c) == b);
+}
 
 PORT_INLINE vd port_powf_half(vd x, vd y, vl *redo)
 {

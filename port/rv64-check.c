@@ -96,6 +96,36 @@ static long run(const struct fn *f, int set, long n, int report)
   return bad;
 }
 
+/* pow and powf on pow-parity.h's pairs (x = +-1 and its neighbours, y
+   near +-2^52: the sign, or NaN), VLMAX lanes at a time. Added 2026-09-29,
+   with the portable core's fix (port_isint). */
+#include "pow-parity.h"
+static long parity(long *tot)
+{
+  long bad = 0; double px[POW_PARITY_N], py[POW_PARITY_N];
+  for (size_t k = 0; k < sizeof FN / sizeof FN[0]; k++) {
+    int fl = FN[k].kind == KF2;
+    if (!(fl || FN[k].kind == KD2) || strcmp(FN[k].name, fl ? "powf" : "pow")) continue;
+    int np = pow_parity_pairs(fl, px, py);
+    size_t vl = fl ? __riscv_vsetvlmax_e32m2() : __riscv_vsetvlmax_e64m2();
+    float xf[vl], yf[vl], rf[vl]; double xd[vl], yd[vl], rd[vl];
+    for (int i = 0; i < np; i += (int)vl) {
+      for (size_t j = 0; j < vl; j++) { xd[j] = px[(i + j) % np]; yd[j] = py[(i + j) % np]; xf[j] = (float)xd[j]; yf[j] = (float)yd[j]; }
+      if (fl) {
+        __riscv_vse32_v_f32m2(rf, ((vfloat32m2_t (*)(vfloat32m2_t, vfloat32m2_t))FN[k].v)(__riscv_vle32_v_f32m2(xf, vl), __riscv_vle32_v_f32m2(yf, vl)), vl);
+        for (size_t j = 0; j < vl; j++) { float w = ((float (*)(float, float))FN[k].cr)(xf[j], yf[j]);
+          if (!same_f(w, rf[j]) && bad++ < 3) printf("  powf(%a, %a) = %a, want %a\n", xf[j], yf[j], rf[j], w); }
+      } else {
+        __riscv_vse64_v_f64m2(rd, ((vfloat64m2_t (*)(vfloat64m2_t, vfloat64m2_t))FN[k].v)(__riscv_vle64_v_f64m2(xd, vl), __riscv_vle64_v_f64m2(yd, vl)), vl);
+        for (size_t j = 0; j < vl; j++) { double w = ((double (*)(double, double))FN[k].cr)(xd[j], yd[j]);
+          if (!same_d(w, rd[j]) && bad++ < 3) printf("  pow(%a, %a) = %a, want %a\n", xd[j], yd[j], rd[j], w); }
+      }
+      *tot += (long)vl;
+    }
+  }
+  return bad;
+}
+
 /* the other 34 names (lane by lane in the library): against the same
    scalar functions, so what this checks is the plumbing -- argument and
    result types (int32 vectors for ilogb and ldexp), pointer outputs
@@ -239,6 +269,9 @@ int main(int argc, char **argv)
   }
   fesetround(FE_TONEAREST);
   printf("to nearest: %ld of %ld differ; other three modes: %ld of %ld differ\n", bad, total, mbad, mtotal);
+  long ptot = 0, pbad = parity(&ptot);
+  printf("pow and powf on pow-parity.h's pairs (x = +-1, y near +-2^52): %ld of %ld differ\n", pbad, ptot);
+  bad += pbad;
   long xtot = 0, xbad = extras(n, &xtot);
   printf("the other 42 names (CORE-MATH or libm, lane by lane, then %ld edge cases): %ld of %ld differ\n", NE * NE * NI, xbad, xtot);
   printf("VERDICT: %s\n", bad || mbad || xbad ? "DIFFERS from CORE-MATH" : "IDENTICAL to CORE-MATH on every input tried");

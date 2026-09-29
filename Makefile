@@ -110,7 +110,7 @@ crmvec-avx2.o: crmvec.c $(HDR) $(PORTOBJ)
 libmvec.so.1: crmvec.o $(LIBC) $(HDR) $(CR) libcrf16.a crmvec-exports.map
 	$(CC) $(CFLAGS) $(FP) -fPIC -shared -Wl,-soname,libmvec.so.1 -Wl,--version-script=crmvec-exports.map -o $@ crmvec.o $(PORTOBJ) $(LIBC) $(CR) libcrf16.a -lm
 
-crtest: crtest.c crtest-hard.h crmvec-avx2.o $(LIBC) $(HDR) $(CR) libcrf16.a
+crtest: crtest.c crtest-hard.h port/pow-parity.h crmvec-avx2.o $(LIBC) $(HDR) $(CR) libcrf16.a
 	$(CC) $(CFLAGS) $(FP) -mavx2 -mfma -fopenmp -o $@ crtest.c crmvec-avx2.o $(PORTOBJ) $(LIBC) $(CR) libcrf16.a -lm -ldl
 
 libcrref.so: crref.c crmvec-scalar.c crmvec-pownf-tab.h $(CR)
@@ -199,7 +199,7 @@ $(A64)/libmvec.so.1 $(A64)/libsleefgnuabi.so.3: $(A64OBJ) $(CR)
 	$(A64CC) $(CFLAGS) $(FP) -fPIC -fvisibility=hidden -shared -Wl,-soname,$(notdir $@) -o $@ $(A64OBJ) $(CR) $(A64)/libcrf16.a -lm
 
 # static, so qemu-aarch64 runs it without a sysroot
-$(A64)/aarch64-check: port/aarch64-check.c $(A64OBJ) $(CR)
+$(A64)/aarch64-check: port/aarch64-check.c port/pow-parity.h $(A64OBJ) $(CR)
 	$(A64CC) $(CFLAGS) $(FP) -march=armv8-a+sve -fopenmp -static -I. -o $@ port/aarch64-check.c \
 	  $(A64OBJ) $(CR) $(A64)/libcrf16.a -lm
 
@@ -251,7 +251,7 @@ $(RV64)/libsleef.so.3: $(RV64)/port.o $(RV64)/libcr.a
 # every Sleef_*rvvm2 entry point (the 52, then the other 42 names)
 # against scalar CORE-MATH or libm (static, so qemu-riscv64 runs it without
 # a sysroot)
-$(RV64)/rv64-check: port/rv64-check.c $(RV64)/port.o $(RV64)/libcr.a
+$(RV64)/rv64-check: port/rv64-check.c port/pow-parity.h $(RV64)/port.o $(RV64)/libcr.a
 	$(RVCLANG) $(RVFLAGS) -O2 -ffp-contract=off -c -o $(RV64)/rv64-check.o port/rv64-check.c
 	$(RVCC) -static -o $@ $(RV64)/rv64-check.o $(RV64)/port.o $(RV64)/libcr.a -lm
 
