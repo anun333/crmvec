@@ -8,6 +8,9 @@
                             where they loop over CORE-MATH
      cecheck e [dir [k]]    the AVX-512 entry points (sde64 -spr -- on a
                             CPU without AVX-512)
+     cecheck c|d|e dir floats   every input of the 23 one-argument floats
+                            through that class's entry points (OpenMP
+                            threads; added 2026-09-29 for the 512-bit core)
      cecheck d [dir [k]]    the AVX2 entry points, every one the library
                             exports (the lane functions, pown's int vector
                             and the __*_finite names too): clang calls them
@@ -150,6 +153,32 @@ static int set_round_env(void)
   printf("rounding mode: %s\n", r); return 0;
 }
 
+/* every float input of the 23 one-argument floats through the class's entry points */
+static int all_floats(void *lib, void *ref)
+{
+  char buf[512]; strcpy(buf, F1); long bad_fns = 0; int lanes = cls == 'e' ? 16 : 8;
+  for (char *f = strtok(buf, " "); f; f = strtok(NULL, " ")) {
+    char sym[40], rsym[40];
+    snprintf(sym, sizeof sym, "_ZGV%cN%dv_%s", cls, lanes, f); snprintf(rsym, sizeof rsym, "cr_%s", f);
+    void *v = dlsym(lib, sym); float (*r)(float) = (float (*)(float))dlsym(ref, rsym);
+    if (!v || !r) { printf("  %s MISSING\n", f); bad_fns++; continue; }
+    long bad = 0;
+#pragma omp parallel for reduction(+ : bad) schedule(static)
+    for (long hi = 0; hi < 65536; hi++) {
+      float x[16], y[16];
+      for (uint32_t lo = 0; lo < 65536; lo += lanes) {
+        for (int k = 0; k < lanes; k++) { uint32_t w = (uint32_t)(hi << 16) | (lo + k); memcpy(&x[k], &w, 4); x[k] = ftz_in_f(x[k]); }
+        FTZ_ON(); (cls == 'e' ? call_e : call_c)(v, 1, 0, x, x, y); FTZ_OFF();
+        for (int k = 0; k < lanes; k++) bad += !same_f(y[k], r(x[k]));
+      }
+    }
+    printf("%-8s all 2^32 inputs through %s: %ld differ\n", f, sym, bad); fflush(stdout);
+    bad_fns += bad != 0;
+  }
+  printf("VERDICT: %s\n", bad_fns ? "FAILED" : "CORRECTLY ROUNDED on every input, every function");
+  return bad_fns != 0;
+}
+
 int main(int argc, char **argv)
 {
   if (set_round_env()) return 2;
@@ -158,7 +187,8 @@ int main(int argc, char **argv)
   signal(SIGILL, ill);
   ftz_init();
   const char *dir = argc > 2 ? argv[2] : ".";
-  if (argc > 3) N = 1L << atoi(argv[3]);
+  int all = argc > 3 && !strcmp(argv[3], "floats");
+  if (argc > 3 && !all) N = 1L << atoi(argv[3]);
   char p1[512], p2[512]; snprintf(p1, sizeof p1, "%s/libmvec.so.1", dir); snprintf(p2, sizeof p2, "%s/libcrref.so", dir);
   void *lib = dlopen(p1, RTLD_NOW | RTLD_LOCAL), *ref = dlopen(p2, RTLD_NOW | RTLD_LOCAL);
   if (!lib || !ref) { printf("VOID: cannot load %s\n", dlerror()); return 2; }
@@ -166,6 +196,7 @@ int main(int argc, char **argv)
   printf("class %c; this CPU: avx %d, avx2 %d, fma %d, avx512f %d\n", cls, __builtin_cpu_supports("avx"), __builtin_cpu_supports("avx2"),
          __builtin_cpu_supports("fma"), __builtin_cpu_supports("avx512f"));
   int fns = 0; long bad = 0;
+  if (all) return all_floats(lib, ref);
   int d = cls == 'd';
   bad += run(lib, ref, 1, 0, d ? F1 LF1 : F1, &fns); bad += run(lib, ref, 1, 1, d ? F2 LF2 : F2, &fns);
   bad += run(lib, ref, 0, 0, d ? D1 LD1 : D1, &fns); bad += run(lib, ref, 0, 1, d ? D2 LD2 : D2, &fns);

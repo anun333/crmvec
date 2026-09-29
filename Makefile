@@ -125,12 +125,25 @@ PORTOBJ := $(if $(filter 1,$(X86PORT)),crmvec-port.o)
 crmvec-port.o: port/crmvec-port.c port/portable.h port/port-log.h port/port-exp.h port/port-expf.h port/port-sincos.h port/port-sinf.h port/port-hypf.h port/port-erff.h port/port-logf.h port/port-powf.h port/port-log1pf.h port/port-atanf.h port/port-tanf.h port/port-dfast.h port/port-erf.h port/port-tanh.h port/port-pow.h port/port-expm1.h port/port-sinhcosh.h port/port-asinh.h port/port-atanh.h port/port-atan.h port/port-asin.h port/port-atan2.h port/port-cbrt.h crmvec-powf-tab.h crmvec-atan2-tab.h crmvec-asin-tab.h crmvec-atan-tab.h crmvec-erf-tab.h crmvec-pow-tab.h crmvec-erff-tab.h crmvec-erfcf-tab.h crmvec-rows-tab.h crmvec-exp-tab.h crmvec-sin-tab.h
 	$(PORTCC) -O3 -ffp-contract=off -fno-math-errno -mavx2 -mfma -fPIC $(PORTDEFS) -c -o $@ port/crmvec-port.c
 
+# E512 (x86, from 2026-09-29): the AVX-512 entry points run the portable
+# core built for 512-bit vectors (port/crmvec-port-e.c) where the CPU has
+# AVX512F and AVX512DQ; E512=0 keeps the AVX2 code on each half. Built with
+# PORTCC, like crmvec-port.o. Switching needs `make clean`.
+E512    ?= 1
+ifneq ($(filter-out 0 1,$(E512)),)
+$(error E512 must be 0 or 1, not "$(E512)")
+endif
+EOBJ    := $(if $(filter 1,$(E512)),crmvec-port-e.o)
+crmvec-port-e.o: port/crmvec-port-e.c port/portable.h $(wildcard port/port-*.h) $(HDR) crmvec-functions.h
+	$(PORTCC) -O3 -ffp-contract=off -fno-math-errno -mavx512f -mavx512dq -mfma -fPIC $(PORTDEFS) -c -o $@ port/crmvec-port-e.c
+PORTOBJ += $(EOBJ)
+
 crmvec.o: crmvec.c $(HDR) $(PORTOBJ)
-	$(CC) $(CFLAGS) $(FPV) -DCRMVEC_PORT=$(X86PORT) -fPIC -c -o $@ crmvec.c
+	$(CC) $(CFLAGS) $(FPV) -DCRMVEC_PORT=$(X86PORT) -DCRMVEC_E512=$(E512) -fPIC -c -o $@ crmvec.c
 
 # for the checks built with -mavx2 (crtest, hypot-midpoints), as before
 crmvec-avx2.o: crmvec.c $(HDR) $(PORTOBJ)
-	$(CC) $(CFLAGS) $(FPV) -DCRMVEC_PORT=$(X86PORT) -mavx2 -mfma -c -o $@ crmvec.c
+	$(CC) $(CFLAGS) $(FPV) -DCRMVEC_PORT=$(X86PORT) -DCRMVEC_E512=$(E512) -mavx2 -mfma -c -o $@ crmvec.c
 
 libmvec.so.1: crmvec.o $(LIBC) crmvec-fpenv.c $(HDR) $(CR) libcrf16.a crmvec-exports.map
 	$(CC) $(CFLAGS) $(FP) -fPIC -shared -Wl,-z,defs -Wl,-Bsymbolic-functions -Wl,-soname,libmvec.so.1 -Wl,--version-script=crmvec-exports.map -o $@ crmvec.o $(PORTOBJ) $(LIBC) $(CR) $(CRWRAP) libcrf16.a -lm
@@ -161,7 +174,7 @@ lcheck: lcheck.c
 # under emu-check.sh's qemu -cpu SandyBridge; cecheck e natively or under
 # Intel SDE); baseline x86-64 like bcheck
 cecheck: cecheck.c crtest-ftz.h
-	$(CC) $(CFLAGS) -o $@ cecheck.c -ldl -lm
+	$(CC) $(CFLAGS) -fopenmp -o $@ cecheck.c -ldl -lm
 
 # the SSE2 entry points' speed (crtest times the AVX2 ones); baseline x86-64
 # like the programs that call them. bvdecide.py turns its output into crmvec-bvec.h.
@@ -191,9 +204,9 @@ pownf-search: pownf-search.c crmvec-pownf-tab.h $(PWS)
 
 # cr_tan renamed to a counter inside crmvec.c only, to see which lanes go to it
 tan-poles: tan-poles.c tan-poles.h $(LIB) crmvec-fpenv.c $(HDR) $(CR) libcrf16.a $(PORTOBJ)
-	$(CC) $(CFLAGS) $(FPV) -DCRMVEC_PORT=$(X86PORT) -mavx2 -mfma -Dcr_tan=cnt_tan -c -o tan-poles-crmvec.o crmvec.c
-	$(if $(PORTOBJ),$(PORTCC) -O3 -ffp-contract=off -fno-math-errno -mavx2 -mfma -Dcr_tan=cnt_tan -c -o tan-poles-port.o port/crmvec-port.c)
-	$(CC) $(CFLAGS) $(FP) -mavx2 -mfma -o $@ tan-poles.c tan-poles-crmvec.o $(if $(PORTOBJ),tan-poles-port.o) crmvec-scalar.c crmvec-f16.c $(CR) $(CRWRAP) libcrf16.a -lm
+	$(CC) $(CFLAGS) $(FPV) -DCRMVEC_PORT=$(X86PORT) -DCRMVEC_E512=$(E512) -mavx2 -mfma -Dcr_tan=cnt_tan -c -o tan-poles-crmvec.o crmvec.c
+	$(if $(filter crmvec-port.o,$(PORTOBJ)),$(PORTCC) -O3 -ffp-contract=off -fno-math-errno -mavx2 -mfma -Dcr_tan=cnt_tan -c -o tan-poles-port.o port/crmvec-port.c)
+	$(CC) $(CFLAGS) $(FP) -mavx2 -mfma -o $@ tan-poles.c tan-poles-crmvec.o $(if $(filter crmvec-port.o,$(PORTOBJ)),tan-poles-port.o) $(EOBJ) crmvec-scalar.c crmvec-f16.c $(CR) $(CRWRAP) libcrf16.a -lm
 	rm -f tan-poles-crmvec.o tan-poles-port.o
 # aarch64 (cross-built; checked under qemu-user): the same vector code, with
 # SIMDe standing in for the x86 intrinsics (crmvec-simde.h; libsimde-dev):
@@ -292,7 +305,7 @@ $(RV64)/rv64-dropin: port/rv64-dropin-loop.c port/rv64-dropin-extra.c port/rv64-
 	$(RVCC) -o $@ $(RV64)/dropin-main.o $(RV64)/dropin-loop.o $(RV64)/dropin-extra.o $(RV64)/libcr.a $(RV64)/libsleef.so.3 -lm
 
 clean:
-	rm -f check.log libmvec.so.1 crmvec.o crmvec-avx2.o crmvec-port.o crtest libcrref.so bcheck hypot-midpoints hypotf-midpoints tan-poles bbench ebench mpfrcheck pownf-search libcrf16.a f16check cecheck lcheck
+	rm -f check.log libmvec.so.1 crmvec.o crmvec-avx2.o crmvec-port.o crmvec-port-e.o crtest libcrref.so bcheck hypot-midpoints hypotf-midpoints tan-poles bbench ebench mpfrcheck pownf-search libcrf16.a f16check cecheck lcheck
 	rm -rf $(A64) $(RV64) build-sleef build-f16
 
 # a few minutes of the checks, for users and packagers (the full list is the

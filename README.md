@@ -31,7 +31,7 @@ reproducible across libraries.
 | AVX2 (`_ZGVdN8v_*`, `_ZGVdN4v_*`) | vector code, with scalar CORE-MATH for the lanes it can't decide; on a CPU with AVX but not AVX2 (clang calls these names for code built with `-mavx`), scalar CORE-MATH |
 | SSE2 (`_ZGVbN4v_*`, `_ZGVbN2v_*`) | on a CPU with AVX2 and FMA, 36 of the 52 run the AVX2 code on their lanes (where that measured faster with half its lanes idle); the others, and every one on older CPUs, loop over scalar CORE-MATH |
 | AVX (`_ZGVcN8v_*`, `_ZGVcN4v_*`) | what gcc calls for code built with `-mavx`: the AVX2 code on a CPU that has it, else scalar CORE-MATH |
-| AVX-512 (`_ZGVeN16v_*`, `_ZGVeN8v_*`) | what gcc calls for code built with `-mavx512f`: the AVX2 code on each half |
+| AVX-512 (`_ZGVeN16v_*`, `_ZGVeN8v_*`) | what gcc calls for code built with `-mavx512f`: on a CPU with AVX512F and AVX512DQ, the portable core built for 512-bit vectors (`port/crmvec-port-e.c`); else the AVX2 code on each half |
 
 With glibc's `__*_finite` names for `exp`, `log` and `pow`, that is 116
 symbols: every one LLVM's x86 vectorizer can call through `libmvec` in LLVM
@@ -297,6 +297,7 @@ CRTEST_SMOOTH=1 ./crtest time   # the same, on inputs that vary smoothly along t
 ./f16check           # half and bfloat16: every input of every one-argument function, four modes, against MPFR
 ./simdcheck.sh       # crmvec-simd.h: gcc vectorizes all 52 functions without -ffast-math, and this library exports every name it calls
 ./cecheck c          # the AVX entry points; `./cecheck d` every AVX2 one; `./cecheck e` (or `sde64 -spr -- ./cecheck e`) for AVX-512
+./cecheck e . floats # every input of the 23 one-argument floats through the AVX-512 entry points (also c, d)
 port/dropin-x86.sh   # loops gcc vectorized with -mavx and -mavx512f, against this library and glibc's
 CRTEST_ROUND=up ./crtest verify   # any check above in another rounding mode (also bcheck, cecheck, aarch64-check)
 CRTEST_FTZ=1 ./cecheck d          # with flush-to-zero on, as -ffast-math programs run (also bcheck, aarch64-check)
@@ -771,8 +772,9 @@ Checked under qemu (no riscv64 hardware yet):
   lengths under emulation. riscv64 is checked under emulation only, and not
   timed. The x86 vector paths need AVX2 and FMA; without them,
   the SSE2 entry points loop over scalar CORE-MATH.
-- Timed on one Zen 3 laptop CPU, a hired Zen 4 (below), and GitHub's
-  shared Neoverse N2 runners.
+- Timed on one Zen 3 laptop CPU, a hired Zen 4 (below), a Cascade Lake
+  cloud VM (the AVX-512 entry points, below), and GitHub's shared Neoverse
+  N2 runners.
 - **The x86 library needs gcc** (13.3 here; the packages build it with gcc
   13.2 and 16). clang passes the 256-bit arguments of a `target("avx2")`
   function in memory unless the whole file is built with `-mavx`, silently.
@@ -782,12 +784,23 @@ Checked under qemu (no riscv64 hardware yet):
   clang still builds the checks. This was found by an audit on 2026-09-27,
   after the README had said the clang build passed every check; the fix
   for clang would be one file per instruction set.
-- The AVX-512 entry points split into two AVX2 calls rather than using
-  512-bit code. They are checked under Intel's emulator (SDE) and natively
-  on a hired AMD EPYC 4564P (Zen 4), where every check above passes. There,
-  per element, they are 8% slower than the AVX2 entry points, while glibc's
-  512-bit code is 23% faster than its AVX2 code. So against glibc they are
-  4.5x at the median, where the AVX2 entry points are 2.9x (`./ebench`).
+- The AVX-512 entry points run 512-bit code only since 2026-09-29: the
+  portable core built for 512-bit vectors (`port/crmvec-port-e.c`), on a
+  CPU with AVX512F and AVX512DQ, in round-to-nearest (`make E512=0` keeps
+  the old way, the AVX2 code on each half).
+  - **Timed** on one Cascade Lake Xeon (a 4-vCPU cloud VM, two `ebench`
+    runs, 2026-09-29): 0.70 times the old entry points' time at the median,
+    from 0.34 (`log1p`) to 1.08 (`erff`; `asinf` and `erfc` also 4-6%
+    slower); against glibc's 512-bit code, 3.3x at the median instead of
+    4.8x.
+  - **Checked** there natively: every input of the 23 one-argument floats
+    (`cecheck e . floats`), and `cecheck e` in all four rounding modes and
+    under flush-to-zero. Not yet timed on Zen 4, whose 512-bit units are
+    256 bits wide.
+  - **Before**, on a hired AMD EPYC 4564P (Zen 4), where every check above
+    passed, the halves were 8% slower per element than the AVX2 entry
+    points, while glibc's 512-bit code is 23% faster than its AVX2 code: 4.5x
+    against glibc at the median, where the AVX2 entry points are 2.9x.
 - Most of the functions added for OpenCL and SLEEF, and all the half and
   bfloat16 ones, have no vector code yet. Each lane or element runs
   CORE-MATH's scalar function, or the C library's for exact operations, at
