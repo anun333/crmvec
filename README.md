@@ -309,6 +309,7 @@ CRTEST_SMOOTH=1 ./crtest time   # the same, on inputs that vary smoothly along t
 ./simdcheck.sh       # crmvec-simd.h: gcc vectorizes all 52 functions without -ffast-math, and this library exports every name it calls
 ./cecheck c          # the AVX entry points; `./cecheck d` every AVX2 one; `./cecheck e` (or `sde64 -spr -- ./cecheck e`) for AVX-512
 ./cecheck e . floats # every input of the 23 one-argument floats through the AVX-512 entry points (also c, d)
+./crtest verify64e   # verify64 through the AVX-512 entry points (and verify2e: verify2); AVX512F and AVX512DQ, or sde64 -skx --
 port/dropin-x86.sh   # loops gcc vectorized with -mavx and -mavx512f, against this library and glibc's
 CRTEST_ROUND=up ./crtest verify   # any check above in another rounding mode (also bcheck, cecheck, aarch64-check)
 CRTEST_FTZ=1 ./cecheck d          # with flush-to-zero on, as -ffast-math programs run (also bcheck, aarch64-check)
@@ -877,8 +878,18 @@ Checked under qemu (no riscv64 hardware yet):
     4.8x.
   - **Checked** there natively: every input of the 23 one-argument floats
     (`cecheck e . floats`), and `cecheck e` in all four rounding modes and
-    under flush-to-zero. Not yet timed on Zen 4, whose 512-bit units are
-    256 bits wide.
+    under flush-to-zero. The doubles and pairs get what `crtest` gives the
+    AVX2 entry points (`crtest verify64e`, `verify2e`): 2^31 inputs per
+    double, CORE-MATH's hard cases and the edge values, 2^30 pairs per pair
+    function and the 432 parity pairs, 0 differ. With the bounds of the
+    512-bit core zeroed, those modes find errors in every double tried (40
+    in `cbrt` to 2,967,824 in `tan`), and in `pow` and `atan2`, while the
+    AVX2 checks of the same build still pass. Not yet timed on Zen 4, whose
+    512-bit units are 256 bits wide.
+  - **CI** runs `cecheck e` natively where GitHub's runner has AVX-512.
+    Where it doesn't, which is most runs, it tries Intel SDE (`-skx`); the
+    first try couldn't download SDE (2026-09-29), and a failed download
+    doesn't stop the other steps.
   - **Before**, on a hired AMD EPYC 4564P (Zen 4), where every check above
     passed, the halves were 8% slower per element than the AVX2 entry
     points, while glibc's 512-bit code is 23% faster than its AVX2 code: 4.5x

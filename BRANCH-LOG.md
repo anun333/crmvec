@@ -148,6 +148,8 @@ reproduced before it was made, and shown to fail without the fix (a
     - The cause in `atan2`: `rdh = 1/dh` is subnormal when |dh| > 2^1022,
       and FTZ flushes it to 0. Over 2 million inputs with |dh| > 2^1022:
       0 right, 700 wrong, 90,167 `exit(1)`.
+    - All four reproduce on aarch64 with FPCR.FZ too (qemu, 2026-09-29),
+      where that `atan2` gives `0x1p-841` instead of x86's `0x1p-840`.
 
 ### `414f2f6`: build and checks (findings 5, 6, 7, 8, 4)
 
@@ -308,6 +310,57 @@ exit non-zero.
   and Zen 3 measured 1.00x for gcc, with clang not measured there. The
   README and the Makefile record the numbers; the decision is the
   maintainer's. Per-function table below.
+
+### `48acde7`: the AVX-512 entry points at depth, and Intel SDE in CI
+
+Items 1 and 2 of the further-work list the owner was given, re-ranked
+after openpocl's HANDOFF: correctness and coverage before more x86 speed,
+which openpocl lists under "What not to spend time on".
+
+- **Why:** the 512-bit core (E512) had every float input, but the doubles
+  and pairs only `cecheck e`'s samples (raw bits, or values within ±32),
+  and CI's runners mostly lack AVX-512.
+- **Decision:** AVX-512 twins of `crtest`'s own checks, `verify64e` and
+  `verify2e`, rather than a new program. They reuse its generators, hard
+  cases, edges and parity pairs, 8 or 16 lanes a call.
+  - The AVX2 modes are unchanged: `cbrt` and `hypot` give the same counts
+    as before.
+- **Result:** all 23 doubles (2^31 inputs each, plus hard cases and edges)
+  and all six pair functions (2^30 pairs each, plus specials and parity):
+  0 differ. About 17 minutes on the Cascade Lake VM.
+- **Control:** the 512-bit core built with its bounds zeroed, and nothing
+  else changed (`PORTDEFS` reaches only `crmvec-port-e.o` in the default
+  x86 build).
+  - `verify64e` finds errors in all seven doubles tried: 40 (`cbrt`) to
+    2,967,824 (`tan`).
+  - `verify2e` finds 13,673 in `pow` and 1,383,016 in `atan2`. These are
+    the portable core's control counts at 256 bits, since the double pairs
+    use the same seeds.
+  - `verify64` on the same binary passes, so the new modes reach the
+    512-bit core specifically.
+  - `hypot`: 0, as documented: its midpoint test is reached only by
+    `hypot-midpoints`.
+- **CI:** where the runner lacks AVX-512 (most runs), a new step downloads
+  Intel SDE and runs `cecheck e . 10` under `-skx` (an emulated
+  Skylake-SP).
+  - Not testable from the cloud container: Intel's download site is
+    blocked there, and so are CI logs. The step reports the download's
+    sha256 and its verdict as notices, which the check-run annotations API
+    returns.
+  - **First run (`ce7ea02`, 2026-09-29):** both mirror URLs were refused
+    within a second ("Intel SDE could not be downloaded"). The failed step
+    skipped every step after it, so CI went red; the step had no
+    `continue-on-error`. The next commit:
+    - adds `continue-on-error`, so a download problem stays an error on
+      that step and no longer skips the others;
+    - also tries the link on Intel's current download page, and a browser
+      user-agent (Intel's CDN may refuse curl's);
+    - reports each URL's HTTP code in the error.
+    The README says CI "tries" SDE until a run shows it working.
+  - **To do:** pin that sha256 once a run reports it.
+  - Two mirror URLs are tried (SDE 9.44.0, then 9.33.0).
+  - Heavier checks (`crtest verify64e`, `cecheck e . floats`) stay local;
+    under emulation they would take hours.
 
 ## Deliberately not done
 

@@ -12,6 +12,13 @@
      crtest verify2 [f...]   two arguments (powf, pow, atan2f, atan2, hypotf,
                              hypot): 2^30 random pairs each, in four sets per
                              kind (see P2), plus every pair of 40 specials
+     crtest verify64e [f...], crtest verify2e [f...]
+                             the same through the AVX-512 entry points
+                             (_ZGVeN8v_, _ZGVeN8vv_, _ZGVeN16vv_), 8 or 16
+                             lanes a call, on a CPU with AVX512F and
+                             AVX512DQ (added 2026-09-29: the 512-bit core
+                             had every float input, cecheck e . floats, but
+                             only samples of the doubles and pairs)
      CRTEST_ROUND=up|down|zero  run verify, verify64 or verify2 in that
                              rounding mode (added 2026-09-27)
      crtest time             one core, min of 7 passes after a warm-up: crmvec
@@ -56,6 +63,18 @@ __m256 _ZGVdN8vv_powf(__m256, __m256), _ZGVdN8vv_atan2f(__m256, __m256), _ZGVdN8
 float cr_powf(float, float), cr_atan2f(float, float), cr_hypotf(float, float);
 __m256d _ZGVdN4vv_pow(__m256d, __m256d), _ZGVdN4vv_atan2(__m256d, __m256d), _ZGVdN4vv_hypot(__m256d, __m256d);
 double cr_pow(double, double), cr_atan2(double, double), cr_hypot(double, double);
+/* the AVX-512 entry points (verify64e, verify2e): called only from the
+   target("avx512f") helpers below, on a CPU that has it */
+typedef __m512d (*v8e)(__m512d);
+#undef D1
+#define D1(n) __m512d _ZGVeN8v_##n(__m512d);
+D1(exp) D1(log) D1(sin) D1(cos) D1(tan)
+D1(acos) D1(acosh) D1(asin) D1(asinh) D1(atan) D1(atanh) D1(cbrt) D1(cosh) D1(erf) D1(erfc)
+D1(exp10) D1(exp2) D1(expm1) D1(log10) D1(log1p) D1(log2) D1(sinh) D1(tanh)
+#undef D1
+__m512 _ZGVeN16vv_powf(__m512, __m512), _ZGVeN16vv_atan2f(__m512, __m512), _ZGVeN16vv_hypotf(__m512, __m512);
+__m512d _ZGVeN8vv_pow(__m512d, __m512d), _ZGVeN8vv_atan2(__m512d, __m512d), _ZGVeN8vv_hypot(__m512d, __m512d);
+static int e512;   /* verify64e, verify2e: the AVX-512 entry points instead of the AVX2 ones */
 #include "crtest-hard.h"   /* EXP_HARD, COS_HARD, TAN_HARD */
 #include "port/pow-parity.h"   /* pow_parity_pairs */
 
@@ -78,8 +97,8 @@ static const struct { const char *name; v8 vec; float (*cr)(float); float lo, hi
 
 #define NOHARD 0, 0
 #define HARDOF(a) a, sizeof a / sizeof a[0]
-#define DE(n, lo, hi, tlo, thi, hard) {#n, _ZGVdN4v_##n, cr_##n, lo, hi, tlo, thi, hard}
-static const struct { const char *name; v4 vec; double (*cr)(double); double lo, hi, tlo, thi; const double *hard; int nhard; } D[] = {
+#define DE(n, lo, hi, tlo, thi, hard) {#n, _ZGVdN4v_##n, _ZGVeN8v_##n, cr_##n, lo, hi, tlo, thi, hard}
+static const struct { const char *name; v4 vec; v8e vece; double (*cr)(double); double lo, hi, tlo, thi; const double *hard; int nhard; } D[] = {
   DE(exp, -746.0, 710.0, -700.0, 700.0, HARDOF(EXP_HARD)),
   DE(log, 0, 0, 0, 0, NOHARD),
   DE(sin, -100.0, 100.0, -100.0, 100.0, NOHARD),
@@ -149,12 +168,18 @@ static int verify(int argc, char **argv)
 
 /* ---- double, one argument: sampled ------------------------------------ */
 
-/* checks 4 inputs of D[f]; returns how many differ, recording the first */
-static int check4(unsigned f, const double *xs, uint64_t *first)
+__attribute__((target("avx512f,avx512dq"))) static void call8e(v8e g, const double *x, double *y)
+{ _mm512_storeu_pd(y, g(_mm512_loadu_pd(x))); }
+
+/* checks LANES() inputs of D[f] (4, or 8 through the AVX-512 entry point);
+   returns how many differ, recording the first */
+#define LANES() (e512 ? 8 : 4)
+static int checkn(unsigned f, const double *xs, uint64_t *first)
 {
-  double ys[4]; _mm256_storeu_pd(ys, D[f].vec(_mm256_loadu_pd(xs)));
+  double ys[8];
+  if (e512) call8e(D[f].vece, xs, ys); else _mm256_storeu_pd(ys, D[f].vec(_mm256_loadu_pd(xs)));
   int bad = 0;
-  for (int i = 0; i < 4; i++) {
+  for (int i = 0; i < LANES(); i++) {
     double r = D[f].cr(xs[i]);
     if (!same_d(r, ys[i])) {
       bad++; if (!*first) *first = u_of(xs[i]) | 1;   /* |1: never 0, even for x = +0 */
@@ -186,14 +211,16 @@ static int verify64(int argc, char **argv)
                                 0x1p31, -0x1p31, 0x1p52, 0x1.62e42fefa39fp+9, -0x1.6232bdd7abcd2p+9,
                                 -0x1.74910d52d3052p+9, -745.2, 709.5, -708.0};
   int bad_fns = 0;
+  const int L = LANES();
+  if (e512) printf("the AVX-512 entry points (_ZGVeN8v_)\n");
   for (unsigned f = 0; f < ND; f++) {
     if (!wanted(D[f].name, argc, argv)) continue;
     unsigned long long bad = 0, n = 0; uint64_t first = 0;
 #pragma omp parallel for reduction(+ : bad, n) schedule(static)
-    for (long long blk = 0; blk < (1LL << 29); blk++) {            /* 2^29 blocks of 4 = 2^31 */
-      uint64_t s = (uint64_t)blk * 0x1000193ULL + 20260926 + f, fst = 0; double xs[4];
-      for (int i = 0; i < 4; i++) { uint64_t r = splitmix(&s); xs[i] = (blk & 1) ? main_input(f, r) : wide_input(r); }
-      int b = check4(f, xs, &fst); bad += b; n += 4;
+    for (long long blk = 0; blk < (1LL << 31) / L; blk++) {        /* blocks of 4 (or 8): 2^31 inputs */
+      uint64_t s = (uint64_t)blk * 0x1000193ULL + 20260926 + f, fst = 0; double xs[8];
+      for (int i = 0; i < L; i++) { uint64_t r = splitmix(&s); xs[i] = (blk & 1) ? main_input(f, r) : wide_input(r); }
+      int b = checkn(f, xs, &fst); bad += b; n += L;
       if (b) {
 #pragma omp critical
         if (!first) first = fst;
@@ -201,16 +228,16 @@ static int verify64(int argc, char **argv)
     }
     unsigned long long hb = 0, hn = 0; uint64_t hf = 0;
     for (int c = 0; c < D[f].nhard; c++)
-      for (int d = -1000; d < 1000; d += 4) {
-        double xs[4]; for (int i = 0; i < 4; i++) xs[i] = d_of(u_of(D[f].hard[c]) + d + i);
-        hb += check4(f, xs, &hf); hn += 4;
+      for (int d = -1000; d < 1000; d += L) {
+        double xs[8]; for (int i = 0; i < L; i++) xs[i] = d_of(u_of(D[f].hard[c]) + d + i);
+        hb += checkn(f, xs, &hf); hn += L;
       }
     unsigned long long eb = 0, en = 0; uint64_t ef = 0;
     for (unsigned c = 0; c < sizeof edge / sizeof edge[0]; c++)
-      for (int d = -64; d < 64; d += 4) {
-        double xs[4];
-        for (int i = 0; i < 4; i++) xs[i] = isnan(edge[c]) || isinf(edge[c]) ? edge[c] : d_of(u_of(edge[c]) + d + i);
-        eb += check4(f, xs, &ef); en += 4;
+      for (int d = -64; d < 64; d += L) {
+        double xs[8];
+        for (int i = 0; i < L; i++) xs[i] = isnan(edge[c]) || isinf(edge[c]) ? edge[c] : d_of(u_of(edge[c]) + d + i);
+        eb += checkn(f, xs, &ef); en += L;
       }
     printf("%-4s random %llu: %llu differ | hard %llu: %llu | edges %llu: %llu", D[f].name, n, bad, hn, hb, en, eb);
     uint64_t fst = first ? first : hf ? hf : ef;
@@ -227,11 +254,16 @@ static int verify64(int argc, char **argv)
 /* two-argument functions: kind 0 = pow-like (main range, integer y, x near 1,
    raw bits), kind 1 = atan2/hypot-like (both uniform, both log-uniform with
    random signs, one tiny against one huge, raw bits) */
-static const struct { const char *name; int is_float, kind; v8v vf; float (*cf)(float, float); v4v vd; double (*cd)(double, double); } P2[] = {
-  {"powf", 1, 0, _ZGVdN8vv_powf, cr_powf, 0, 0}, {"pow", 0, 0, 0, 0, _ZGVdN4vv_pow, cr_pow},
-  {"atan2f", 1, 1, _ZGVdN8vv_atan2f, cr_atan2f, 0, 0}, {"atan2", 0, 1, 0, 0, _ZGVdN4vv_atan2, cr_atan2},
-  {"hypotf", 1, 1, _ZGVdN8vv_hypotf, cr_hypotf, 0, 0}, {"hypot", 0, 1, 0, 0, _ZGVdN4vv_hypot, cr_hypot},
+typedef __m512 (*v16ev)(__m512, __m512);
+typedef __m512d (*v8ev)(__m512d, __m512d);
+static const struct { const char *name; int is_float, kind; v8v vf; float (*cf)(float, float); v4v vd; double (*cd)(double, double);
+                      v16ev vfe; v8ev vde; } P2[] = {
+  {"powf", 1, 0, _ZGVdN8vv_powf, cr_powf, 0, 0, _ZGVeN16vv_powf, 0}, {"pow", 0, 0, 0, 0, _ZGVdN4vv_pow, cr_pow, 0, _ZGVeN8vv_pow},
+  {"atan2f", 1, 1, _ZGVdN8vv_atan2f, cr_atan2f, 0, 0, _ZGVeN16vv_atan2f, 0}, {"atan2", 0, 1, 0, 0, _ZGVdN4vv_atan2, cr_atan2, 0, _ZGVeN8vv_atan2},
+  {"hypotf", 1, 1, _ZGVdN8vv_hypotf, cr_hypotf, 0, 0, _ZGVeN16vv_hypotf, 0}, {"hypot", 0, 1, 0, 0, _ZGVdN4vv_hypot, cr_hypot, 0, _ZGVeN8vv_hypot},
 };
+/* pairs per call: 8, or through the AVX-512 entry points 16 floats or 8 doubles */
+#define PAIRS(f) (e512 && P2[f].is_float ? 16 : 8)
 #define NP2 (sizeof P2 / sizeof P2[0])
 static const char *SETS[2][4] = {{"main", "integer y", "x near 1", "raw bits"}, {"uniform", "log-uniform", "tiny vs huge", "raw bits"}};
 
@@ -263,21 +295,29 @@ static void pair_input(uint64_t *s, int kind, int set, double *x, double *y, int
   if (is_float) { *x = (float)*x; *y = (float)*y; }
 }
 
+__attribute__((target("avx512f,avx512dq"))) static void call16ev(v16ev g, const float *x, const float *y, float *r)
+{ _mm512_storeu_ps(r, g(_mm512_loadu_ps(x), _mm512_loadu_ps(y))); }
+__attribute__((target("avx512f,avx512dq"))) static void call8ev(v8ev g, const double *x, const double *y, double *r)
+{ _mm512_storeu_pd(r, g(_mm512_loadu_pd(x), _mm512_loadu_pd(y))); }
+
+/* evaluates PAIRS(f) pairs */
 static int eval_pairs(unsigned f, const double *x, const double *y, char *firstmsg, size_t cap)
 {
-  int b = 0;
+  int b = 0, np = PAIRS(f);
   if (P2[f].is_float) {
-    float xf[8], yf[8], r[8];
-    for (int i = 0; i < 8; i++) { xf[i] = (float)x[i]; yf[i] = (float)y[i]; }
-    _mm256_storeu_ps(r, P2[f].vf(_mm256_loadu_ps(xf), _mm256_loadu_ps(yf)));
-    for (int i = 0; i < 8; i++) { float w = P2[f].cf(xf[i], yf[i]); if (!same_f(r[i], w)) {
+    float xf[16], yf[16], r[16];
+    for (int i = 0; i < np; i++) { xf[i] = (float)x[i]; yf[i] = (float)y[i]; }
+    if (e512) call16ev(P2[f].vfe, xf, yf, r);
+    else _mm256_storeu_ps(r, P2[f].vf(_mm256_loadu_ps(xf), _mm256_loadu_ps(yf)));
+    for (int i = 0; i < np; i++) { float w = P2[f].cf(xf[i], yf[i]); if (!same_f(r[i], w)) {
       b++;
 #pragma omp critical
       if (!firstmsg[0]) snprintf(firstmsg, cap, " (first: %s(%a, %a) = %a, want %a)", P2[f].name, xf[i], yf[i], r[i], w);
     } }
   } else {
     double r[8];
-    for (int h = 0; h < 8; h += 4) _mm256_storeu_pd(r + h, P2[f].vd(_mm256_loadu_pd(x + h), _mm256_loadu_pd(y + h)));
+    if (e512) call8ev(P2[f].vde, x, y, r);
+    else for (int h = 0; h < 8; h += 4) _mm256_storeu_pd(r + h, P2[f].vd(_mm256_loadu_pd(x + h), _mm256_loadu_pd(y + h)));
     for (int i = 0; i < 8; i++) { double w = P2[f].cd(x[i], y[i]); if (!same_d(r[i], w)) {
       b++;
 #pragma omp critical
@@ -295,32 +335,34 @@ static int verify2(int argc, char **argv)
                               0x1.0000000000001p0, 0x1.fffffffffffffp-1, 127.0, 128.0, -149.0, 1023.0, 1024.0, -1075.0, 0.75, 7.0};
   const int nsp = sizeof sp / sizeof sp[0];
   int bad_fns = 0;
+  if (e512) printf("the AVX-512 entry points (_ZGVeN16vv_, _ZGVeN8vv_)\n");
   for (unsigned f = 0; f < NP2; f++) {
     if (!wanted(P2[f].name, argc, argv)) continue;
     unsigned long long bad[4] = {0}, n = 0; char firstmsg[200] = "";
+    const int P = PAIRS(f);
 #pragma omp parallel for reduction(+ : n) schedule(static)
-    for (long long blk = 0; blk < (1LL << 27); blk++) {    /* 2^27 blocks of 8 pairs = 2^30 */
+    for (long long blk = 0; blk < (1LL << 30) / P; blk++) {    /* blocks of 8 (or 16) pairs: 2^30 */
       uint64_t s = (uint64_t)blk * 0x9e3779b1ULL + 7 + f; int set = blk & 3;
-      double x[8], y[8]; for (int i = 0; i < 8; i++) pair_input(&s, P2[f].kind, set, &x[i], &y[i], P2[f].is_float);
+      double x[16], y[16]; for (int i = 0; i < P; i++) pair_input(&s, P2[f].kind, set, &x[i], &y[i], P2[f].is_float);
       int b = eval_pairs(f, x, y, firstmsg, sizeof firstmsg);
       if (b) {
 #pragma omp atomic
         bad[set] += b;
       }
-      n += 8;
+      n += P;
     }
     unsigned long long sb = 0, sn = 0;                      /* every pair of specials */
     for (int i = 0; i < nsp; i++)
-      for (int j = 0; j < nsp; j += 8) {
-        double x[8], y[8];
-        for (int k = 0; k < 8; k++) { x[k] = sp[i]; y[k] = sp[(j + k) % nsp]; }
-        if (P2[f].is_float) for (int k = 0; k < 8; k++) { x[k] = (float)x[k]; y[k] = (float)y[k]; }
-        sb += eval_pairs(f, x, y, firstmsg, sizeof firstmsg); sn += 8;
+      for (int j = 0; j < nsp; j += P) {
+        double x[16], y[16];
+        for (int k = 0; k < P; k++) { x[k] = sp[i]; y[k] = sp[(j + k) % nsp]; }
+        if (P2[f].is_float) for (int k = 0; k < P; k++) { x[k] = (float)x[k]; y[k] = (float)y[k]; }
+        sb += eval_pairs(f, x, y, firstmsg, sizeof firstmsg); sn += P;
       }
     unsigned long long pb = 0, pn = 0; char pmsg[80] = "";   /* pow and powf: the parity pairs (port/pow-parity.h) */
     if (!strcmp(P2[f].name, "pow") || !strcmp(P2[f].name, "powf")) {
       double px[POW_PARITY_N], py[POW_PARITY_N];
-      for (int i = 0, np = pow_parity_pairs(P2[f].is_float, px, py); i < np; i += 8) { pb += eval_pairs(f, px + i, py + i, firstmsg, sizeof firstmsg); pn += 8; }
+      for (int i = 0, np = pow_parity_pairs(P2[f].is_float, px, py); i < np; i += P) { pb += eval_pairs(f, px + i, py + i, firstmsg, sizeof firstmsg); pn += P; }
       snprintf(pmsg, sizeof pmsg, " | parity %llu: %llu", pn, pb);
     }
     const char *const *L = SETS[P2[f].kind];
@@ -512,8 +554,13 @@ static int names_ok(int argc, char **argv, int f, int d, int p)
 int main(int argc, char **argv)
 {
   const char *m = argc > 1 ? argv[1] : "verify";
-  int t = !strcmp(m, "time"), v1 = !strcmp(m, "verify"), v64 = !strcmp(m, "verify64"), v2 = !strcmp(m, "verify2");
-  if (!(t || v1 || v64 || v2)) { printf("VOID: crtest %s: not a mode (verify, verify64, verify2, time)\n", m); return 2; }
+  e512 = !strcmp(m, "verify64e") || !strcmp(m, "verify2e");
+  int t = !strcmp(m, "time"), v1 = !strcmp(m, "verify"), v64 = !strcmp(m, "verify64") || !strcmp(m, "verify64e"),
+      v2 = !strcmp(m, "verify2") || !strcmp(m, "verify2e");
+  if (!(t || v1 || v64 || v2)) { printf("VOID: crtest %s: not a mode (verify, verify64, verify2, verify64e, verify2e, time)\n", m); return 2; }
+  if (e512 && !(__builtin_cpu_supports("avx512f") && __builtin_cpu_supports("avx512dq"))) {
+    printf("VOID: crtest %s needs AVX512F and AVX512DQ (sde64 -skx -- on a CPU without)\n", m); return 2;
+  }
   if (!names_ok(argc, argv, t || v1, t || v64, t || v2)) return 2;
   if (!own_build()) return 2;
   if (set_round()) { printf("VOID: rounding mode not set on every thread\n"); return 2; }
