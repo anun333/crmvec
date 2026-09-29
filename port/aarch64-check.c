@@ -12,9 +12,22 @@
                                through _ZGVnN4v_ (threads: OMP_NUM_THREADS)
    Inputs are built from integer bits, never through libm, so every ISA sees
    the same ones (glibc's own exp and exp2 differ between x86-64 and the
-   others in the last bit). NaNs compare equal to NaNs. */
+   others in the last bit). NaNs compare equal to NaNs.
+   Built without SVE (-march=armv8-a: aarch64-check-advsimd, from
+   2026-09-29) it checks the AdvSIMD entry points only, and runs on CPUs
+   without SVE (Cortex-A72, Neoverse N1, Apple M1-M4), where make check
+   skipped every check until then; SV_ keeps the SVE parts out. */
 #include <arm_neon.h>
+#ifdef __ARM_FEATURE_SVE
 #include <arm_sve.h>
+#define SV_(...) __VA_ARGS__
+#define SVCNTD() ((int)svcntd())
+#define SVCNTW() ((int)svcntw())
+#else
+#define SV_(...)
+#define SVCNTD() 0
+#define SVCNTW() 0
+#endif
 #include <fenv.h>
 #include <stdint.h>
 #include <stdio.h>
@@ -23,12 +36,12 @@
 
 #define VPCS __attribute__((aarch64_vector_pcs))
 #define F1(n) float cr_##n(float); VPCS float32x4_t _ZGVnN4v_##n(float32x4_t); VPCS float32x2_t _ZGVnN2v_##n(float32x2_t); \
-  svfloat32_t _ZGVsMxv_##n(svfloat32_t, svbool_t);
-#define D1(n) double cr_##n(double); VPCS float64x2_t _ZGVnN2v_##n(float64x2_t); svfloat64_t _ZGVsMxv_##n(svfloat64_t, svbool_t);
+  SV_(svfloat32_t _ZGVsMxv_##n(svfloat32_t, svbool_t);)
+#define D1(n) double cr_##n(double); VPCS float64x2_t _ZGVnN2v_##n(float64x2_t); SV_(svfloat64_t _ZGVsMxv_##n(svfloat64_t, svbool_t);)
 #define F2(n) float cr_##n(float, float); VPCS float32x4_t _ZGVnN4vv_##n(float32x4_t, float32x4_t); \
-  VPCS float32x2_t _ZGVnN2vv_##n(float32x2_t, float32x2_t); svfloat32_t _ZGVsMxvv_##n(svfloat32_t, svfloat32_t, svbool_t);
+  VPCS float32x2_t _ZGVnN2vv_##n(float32x2_t, float32x2_t); SV_(svfloat32_t _ZGVsMxvv_##n(svfloat32_t, svfloat32_t, svbool_t);)
 #define D2(n) double cr_##n(double, double); VPCS float64x2_t _ZGVnN2vv_##n(float64x2_t, float64x2_t); \
-  svfloat64_t _ZGVsMxvv_##n(svfloat64_t, svfloat64_t, svbool_t);
+  SV_(svfloat64_t _ZGVsMxvv_##n(svfloat64_t, svfloat64_t, svbool_t);)
 #include "crmvec-functions.h"
 #undef F1
 #undef D1
@@ -98,8 +111,9 @@ static void report(const char *entry, long bad, long n) { if (bad) printf("%-22s
 
 static void sample(long N)
 {
-  const int nd = (int)svcntd(), nf = (int)svcntw();
-  printf("SVE vector length: %d doubles, %d floats\n", nd, nf);
+  const int nd = SVCNTD(), nf = SVCNTW();
+  if (nd) printf("SVE vector length: %d doubles, %d floats\n", nd, nf);
+  else printf("built without SVE: the AdvSIMD entry points only\n");
 #define F1(n) {                                                                              \
     double hi, lo = lo_of(#n, &hi); long b4 = 0, b2 = 0, bs = 0, ns = 0;                       \
     for (int set = 0; set < 3; set++) for (long i = 0; i < N; i += 4) {                       \
@@ -109,8 +123,8 @@ static void sample(long N)
       for (int k = 0; k < 4; k++) b4 += !same_f(y[k], cr_##n(x[k]));                          \
       vst1_f32(y, _ZGVnN2v_##n(vld1_f32(x)));                                                  \
       for (int k = 0; k < 2; k++) b2 += !same_f(y[k], cr_##n(x[k]));                          \
-      svbool_t pg = svcmpne_n_f32(svptrue_b32(), svld1_f32(svptrue_b32(), m), 0);             \
-      svst1_f32(svptrue_b32(), z, _ZGVsMxv_##n(svld1_f32(svptrue_b32(), x), pg));             \
+      SV_(svbool_t pg = svcmpne_n_f32(svptrue_b32(), svld1_f32(svptrue_b32(), m), 0);         \
+      svst1_f32(svptrue_b32(), z, _ZGVsMxv_##n(svld1_f32(svptrue_b32(), x), pg));)            \
       for (int k = 0; k < nf; k++) if (m[k] != 0) { bs += !same_f(z[k], cr_##n(x[k])); ns++; } \
     }                                                                                          \
     report("_ZGVnN4v_" #n, b4, 3 * N); report("_ZGVnN2v_" #n, b2, 3 * N / 2); report("_ZGVsMxv_" #n, bs, ns); }
@@ -122,8 +136,8 @@ static void sample(long N)
       vst1q_f64(y, _ZGVnN2v_##n(vld1q_f64(x)));                                               \
       for (int k = 0; k < 2; k++) b2 += !same_d(y[k], cr_##n(x[k]));                          \
       if (i % 8 == 0) {                                                                        \
-        svbool_t pg = svcmpne_n_f64(svptrue_b64(), svld1_f64(svptrue_b64(), m), 0);           \
-        svst1_f64(svptrue_b64(), z, _ZGVsMxv_##n(svld1_f64(svptrue_b64(), x), pg));           \
+        SV_(svbool_t pg = svcmpne_n_f64(svptrue_b64(), svld1_f64(svptrue_b64(), m), 0);       \
+        svst1_f64(svptrue_b64(), z, _ZGVsMxv_##n(svld1_f64(svptrue_b64(), x), pg));)          \
         for (int k = 0; k < nd; k++) if (m[k] != 0) { bs += !same_d(z[k], cr_##n(x[k])); ns++; } } \
     }                                                                                          \
     report("_ZGVnN2v_" #n, b2, 3 * N); report("_ZGVsMxv_" #n, bs, ns); }
@@ -139,8 +153,8 @@ static void sample(long N)
       for (int k = 0; k < 4; k++) b4 += !same_f(y[k], cr_##n(x[k], w[k]));                    \
       vst1_f32(y, _ZGVnN2vv_##n(vld1_f32(x), vld1_f32(w)));                                    \
       for (int k = 0; k < 2; k++) b2 += !same_f(y[k], cr_##n(x[k], w[k]));                    \
-      svbool_t pg = svcmpne_n_f32(svptrue_b32(), svld1_f32(svptrue_b32(), m), 0);             \
-      svst1_f32(svptrue_b32(), z, _ZGVsMxvv_##n(svld1_f32(svptrue_b32(), x), svld1_f32(svptrue_b32(), w), pg)); \
+      SV_(svbool_t pg = svcmpne_n_f32(svptrue_b32(), svld1_f32(svptrue_b32(), m), 0);         \
+      svst1_f32(svptrue_b32(), z, _ZGVsMxvv_##n(svld1_f32(svptrue_b32(), x), svld1_f32(svptrue_b32(), w), pg));) \
       for (int k = 0; k < nf; k++) if (m[k] != 0) { bs += !same_f(z[k], cr_##n(x[k], w[k])); ns++; } \
     }                                                                                          \
     report("_ZGVnN4vv_" #n, b4, 3 * N); report("_ZGVnN2vv_" #n, b2, 3 * N / 2); report("_ZGVsMxvv_" #n, bs, ns); }
@@ -155,8 +169,8 @@ static void sample(long N)
       vst1q_f64(y, _ZGVnN2vv_##n(vld1q_f64(x), vld1q_f64(w)));                                \
       for (int k = 0; k < 2; k++) b2 += !same_d(y[k], cr_##n(x[k], w[k]));                    \
       if (i % 8 == 0) {                                                                        \
-        svbool_t pg = svcmpne_n_f64(svptrue_b64(), svld1_f64(svptrue_b64(), m), 0);           \
-        svst1_f64(svptrue_b64(), z, _ZGVsMxvv_##n(svld1_f64(svptrue_b64(), x), svld1_f64(svptrue_b64(), w), pg)); \
+        SV_(svbool_t pg = svcmpne_n_f64(svptrue_b64(), svld1_f64(svptrue_b64(), m), 0);       \
+        svst1_f64(svptrue_b64(), z, _ZGVsMxvv_##n(svld1_f64(svptrue_b64(), x), svld1_f64(svptrue_b64(), w), pg));) \
         for (int k = 0; k < nd; k++) if (m[k] != 0) { bs += !same_d(z[k], cr_##n(x[k], w[k])); ns++; } } \
     }                                                                                          \
     report("_ZGVnN2vv_" #n, b2, 3 * N); report("_ZGVsMxvv_" #n, bs, ns); }
@@ -193,88 +207,89 @@ static int gi(void)
     T a[64], b[64], c[64], r[64], o[64], o2[64], m[64]; int set = it % 3;                        \
     for (int k = 0; k < 64; k++) { a[k] = (T)gen(set, -8, 8, FL); b[k] = (T)gen((set + k) % 3, -8, 8, FL); \
       c[k] = (T)gen((set + 2 * k) % 3, -8, 8, FL); m[k] = rnd() & 1; }                          \
-    (void)b; (void)c; (void)o; (void)o2;                                                        \
-    svbool_t pg = CMP(PT, SVLD(PT, m), 0);
+    (void)b; (void)c; (void)o; (void)o2; (void)m;                                              \
+    SV_(svbool_t pg = CMP(PT, SVLD(PT, m), 0);)
 #define KTAIL(PRE, NL, name, nname) }                                                                    \
-  report(#PRE nname #name, bn, NL * N); report("_ZGVsMx" nname #name, bm, nm); report("_ZGVsNx" nname #name, bu, nu); }
+  report(#PRE nname #name, bn, NL * N); report("_ZGVsMx" nname #name, bm, nm); report("_ZGVsNx" nname #name, bu, nu); \
+  (void)bm; (void)bu; (void)nm; (void)nu; }
 /* one, two, three floating arguments */
 #define K1(T, VN, NL, VST, VLD, SV, SVST, SVLD, PT, CMP, CNT, SAME, FL, PRE, IS, VI, VSTI, VLDI, W, NM, e) {                                                                       \
-  VPCS VN PRE##v_##NM(VN); SV _ZGVsMxv_##NM(SV, svbool_t); SV _ZGVsNxv_##NM(SV);                \
+  VPCS VN PRE##v_##NM(VN); SV_(SV _ZGVsMxv_##NM(SV, svbool_t); SV _ZGVsNxv_##NM(SV);)          \
   KHEAD(T, FL, CMP, PT, SVLD)                                                                                      \
     VST(r, PRE##v_##NM(VLD(a))); for (int k = 0; k < NL; k++) { T x = a[k]; bn += !SAME(r[k], e); } \
-    SVST(PT, r, _ZGVsMxv_##NM(SVLD(PT, a), pg));                                                \
+    SV_(SVST(PT, r, _ZGVsMxv_##NM(SVLD(PT, a), pg));                                            \
     for (int k = 0; k < CNT; k++) if (m[k] != 0) { T x = a[k]; bm += !SAME(r[k], e); nm++; }    \
-    SVST(PT, r, _ZGVsNxv_##NM(SVLD(PT, a))); for (int k = 0; k < CNT; k++) { T x = a[k]; bu += !SAME(r[k], e); nu++; } \
+    SVST(PT, r, _ZGVsNxv_##NM(SVLD(PT, a))); for (int k = 0; k < CNT; k++) { T x = a[k]; bu += !SAME(r[k], e); nu++; }) \
   KTAIL(PRE, NL, NM, "v_")
 #define K2(T, VN, NL, VST, VLD, SV, SVST, SVLD, PT, CMP, CNT, SAME, FL, PRE, IS, VI, VSTI, VLDI, W, NM, e) {                                                                       \
-  VPCS VN PRE##vv_##NM(VN, VN); SV _ZGVsMxvv_##NM(SV, SV, svbool_t); SV _ZGVsNxvv_##NM(SV, SV); \
+  VPCS VN PRE##vv_##NM(VN, VN); SV_(SV _ZGVsMxvv_##NM(SV, SV, svbool_t); SV _ZGVsNxvv_##NM(SV, SV);) \
   KHEAD(T, FL, CMP, PT, SVLD)                                                                                      \
     VST(r, PRE##vv_##NM(VLD(a), VLD(b))); for (int k = 0; k < NL; k++) { T x = a[k], y = b[k]; bn += !SAME(r[k], e); } \
-    SVST(PT, r, _ZGVsMxvv_##NM(SVLD(PT, a), SVLD(PT, b), pg));                                  \
+    SV_(SVST(PT, r, _ZGVsMxvv_##NM(SVLD(PT, a), SVLD(PT, b), pg));                              \
     for (int k = 0; k < CNT; k++) if (m[k] != 0) { T x = a[k], y = b[k]; bm += !SAME(r[k], e); nm++; } \
     SVST(PT, r, _ZGVsNxvv_##NM(SVLD(PT, a), SVLD(PT, b)));                                      \
-    for (int k = 0; k < CNT; k++) { T x = a[k], y = b[k]; bu += !SAME(r[k], e); nu++; }         \
+    for (int k = 0; k < CNT; k++) { T x = a[k], y = b[k]; bu += !SAME(r[k], e); nu++; })        \
   KTAIL(PRE, NL, NM, "vv_")
 #define K3(T, VN, NL, VST, VLD, SV, SVST, SVLD, PT, CMP, CNT, SAME, FL, PRE, IS, VI, VSTI, VLDI, W, NM, e) {                                                                       \
-  VPCS VN PRE##vvv_##NM(VN, VN, VN); SV _ZGVsMxvvv_##NM(SV, SV, SV, svbool_t); SV _ZGVsNxvvv_##NM(SV, SV, SV); \
+  VPCS VN PRE##vvv_##NM(VN, VN, VN); SV_(SV _ZGVsMxvvv_##NM(SV, SV, SV, svbool_t); SV _ZGVsNxvvv_##NM(SV, SV, SV);) \
   KHEAD(T, FL, CMP, PT, SVLD)                                                                                      \
     VST(r, PRE##vvv_##NM(VLD(a), VLD(b), VLD(c)));                                              \
     for (int k = 0; k < NL; k++) { T x = a[k], y = b[k], z = c[k]; bn += !SAME(r[k], e); }       \
-    SVST(PT, r, _ZGVsMxvvv_##NM(SVLD(PT, a), SVLD(PT, b), SVLD(PT, c), pg));                    \
+    SV_(SVST(PT, r, _ZGVsMxvvv_##NM(SVLD(PT, a), SVLD(PT, b), SVLD(PT, c), pg));                \
     for (int k = 0; k < CNT; k++) if (m[k] != 0) { T x = a[k], y = b[k], z = c[k]; bm += !SAME(r[k], e); nm++; } \
     SVST(PT, r, _ZGVsNxvvv_##NM(SVLD(PT, a), SVLD(PT, b), SVLD(PT, c)));                        \
-    for (int k = 0; k < CNT; k++) { T x = a[k], y = b[k], z = c[k]; bu += !SAME(r[k], e); nu++; } \
+    for (int k = 0; k < CNT; k++) { T x = a[k], y = b[k], z = c[k]; bu += !SAME(r[k], e); nu++; }) \
   KTAIL(PRE, NL, NM, "vvv_")
 /* int result */
 #define KI(T, VN, NL, VST, VLD, SV, SVST, SVLD, PT, CMP, CNT, SAME, FL, PRE, IS, VI, VSTI, VLDI, W, NM, e) {                                                                       \
-  VPCS VI PRE##v_##NM(VN); svint32_t _ZGVsMxv_##NM(SV, svbool_t); svint32_t _ZGVsNxv_##NM(SV);  \
+  VPCS VI PRE##v_##NM(VN); SV_(svint32_t _ZGVsMxv_##NM(SV, svbool_t); svint32_t _ZGVsNxv_##NM(SV);) \
   KHEAD(T, FL, CMP, PT, SVLD)                                                                                      \
     int32_t ri[64];                                                                             \
     VSTI(ri, PRE##v_##NM(VLD(a))); for (int k = 0; k < NL; k++) { T x = a[k]; bn += ri[k] != (e); } \
-    svst1_s32(svptrue_b32(), ri, _ZGVsMxv_##NM(SVLD(PT, a), pg));                               \
+    SV_(svst1_s32(svptrue_b32(), ri, _ZGVsMxv_##NM(SVLD(PT, a), pg));                           \
     for (int k = 0; k < CNT; k++) if (m[k] != 0) { T x = a[k]; bm += ri[IS * k] != (e); nm++; } \
     svst1_s32(svptrue_b32(), ri, _ZGVsNxv_##NM(SVLD(PT, a)));                                   \
-    for (int k = 0; k < CNT; k++) { T x = a[k]; bu += ri[IS * k] != (e); nu++; }                \
+    for (int k = 0; k < CNT; k++) { T x = a[k]; bu += ri[IS * k] != (e); nu++; })               \
   KTAIL(PRE, NL, NM, "v_")
 /* a floating argument and an int */
 #define KN(T, VN, NL, VST, VLD, SV, SVST, SVLD, PT, CMP, CNT, SAME, FL, PRE, IS, VI, VSTI, VLDI, W, NM, e) {                                                                       \
-  VPCS VN PRE##vv_##NM(VN, VI); SV _ZGVsMxvv_##NM(SV, svint32_t, svbool_t); SV _ZGVsNxvv_##NM(SV, svint32_t); \
+  VPCS VN PRE##vv_##NM(VN, VI); SV_(SV _ZGVsMxvv_##NM(SV, svint32_t, svbool_t); SV _ZGVsNxvv_##NM(SV, svint32_t);) \
   KHEAD(T, FL, CMP, PT, SVLD)                                                                                      \
     int32_t ki[64], kn[4]; for (int k = 0; k < 64; k++) ki[k] = gi();                           \
     for (int k = 0; k < NL; k++) kn[k] = ki[IS * k];                                            \
     VST(r, PRE##vv_##NM(VLD(a), VLDI(kn))); for (int k = 0; k < NL; k++) { T x = a[k]; int n = kn[k]; bn += !SAME(r[k], e); } \
-    svint32_t kv = svld1_s32(svptrue_b32(), ki);                                                 \
+    SV_(svint32_t kv = svld1_s32(svptrue_b32(), ki);                                             \
     SVST(PT, r, _ZGVsMxvv_##NM(SVLD(PT, a), kv, pg));                                           \
     for (int k = 0; k < CNT; k++) if (m[k] != 0) { T x = a[k]; int n = ki[IS * k]; bm += !SAME(r[k], e); nm++; } \
     SVST(PT, r, _ZGVsNxvv_##NM(SVLD(PT, a), kv));                                               \
-    for (int k = 0; k < CNT; k++) { T x = a[k]; int n = ki[IS * k]; bu += !SAME(r[k], e); nu++; } \
+    for (int k = 0; k < CNT; k++) { T x = a[k]; int n = ki[IS * k]; bu += !SAME(r[k], e); nu++; }) \
   KTAIL(PRE, NL, NM, "vv_")
 /* a result and a second one through a linear pointer (modf) */
 #define KP(T, VN, NL, VST, VLD, SV, SVST, SVLD, PT, CMP, CNT, SAME, FL, PRE, IS, VI, VSTI, VLDI, W, NM, e) {                                                                       \
-  VPCS VN PRE##v##W##_##NM(VN, T *); SV _ZGVsMxv##W##_##NM(SV, T *, svbool_t); SV _ZGVsNxv##W##_##NM(SV, T *); \
+  VPCS VN PRE##v##W##_##NM(VN, T *); SV_(SV _ZGVsMxv##W##_##NM(SV, T *, svbool_t); SV _ZGVsNxv##W##_##NM(SV, T *);) \
   KHEAD(T, FL, CMP, PT, SVLD)                                                                                      \
     VST(r, PRE##v##W##_##NM(VLD(a), o));                                                        \
     for (int k = 0; k < NL; k++) { T x = a[k], q, *p = &q; T w = e; bn += !SAME(r[k], w) || !SAME(o[k], q); } \
-    for (int k = 0; k < 64; k++) o[k] = (T)12345;                                               \
+    SV_(for (int k = 0; k < 64; k++) o[k] = (T)12345;                                           \
     SVST(PT, r, _ZGVsMxv##W##_##NM(SVLD(PT, a), o, pg));                                        \
     for (int k = 0; k < CNT; k++) { T x = a[k], q, *p = &q; T w = e;                            \
       if (m[k] != 0) bm += !SAME(r[k], w) || !SAME(o[k], q); else bm += o[k] != (T)12345; nm++; } \
     SVST(PT, r, _ZGVsNxv##W##_##NM(SVLD(PT, a), o));                                            \
-    for (int k = 0; k < CNT; k++) { T x = a[k], q, *p = &q; T w = e; bu += !SAME(r[k], w) || !SAME(o[k], q); nu++; } \
+    for (int k = 0; k < CNT; k++) { T x = a[k], q, *p = &q; T w = e; bu += !SAME(r[k], w) || !SAME(o[k], q); nu++; }) \
   KTAIL(PRE, NL, NM, "v" #W "_")
 /* two results through linear pointers (sincos, sincospi) */
 #define KPP(T, VN, NL, VST, VLD, SV, SVST, SVLD, PT, CMP, CNT, SAME, FL, PRE, IS, VI, VSTI, VLDI, W, NM, e) {                                                                      \
-  VPCS void PRE##v##W##W##_##NM(VN, T *, T *); void _ZGVsMxv##W##W##_##NM(SV, T *, T *, svbool_t); \
-  void _ZGVsNxv##W##W##_##NM(SV, T *, T *);                                                      \
+  VPCS void PRE##v##W##W##_##NM(VN, T *, T *); SV_(void _ZGVsMxv##W##W##_##NM(SV, T *, T *, svbool_t); \
+  void _ZGVsNxv##W##W##_##NM(SV, T *, T *);)                                                     \
   KHEAD(T, FL, CMP, PT, SVLD)                                                                                      \
     PRE##v##W##W##_##NM(VLD(a), o, o2);                                                         \
     for (int k = 0; k < NL; k++) { T x = a[k], s1, s2, *p = &s1, *q = &s2; e; bn += !SAME(o[k], s1) || !SAME(o2[k], s2); } \
-    for (int k = 0; k < 64; k++) o[k] = o2[k] = (T)12345;                                       \
+    SV_(for (int k = 0; k < 64; k++) o[k] = o2[k] = (T)12345;                                   \
     _ZGVsMxv##W##W##_##NM(SVLD(PT, a), o, o2, pg);                                              \
     for (int k = 0; k < CNT; k++) { T x = a[k], s1, s2, *p = &s1, *q = &s2; e;                  \
       if (m[k] != 0) bm += !SAME(o[k], s1) || !SAME(o2[k], s2); else bm += o[k] != (T)12345 || o2[k] != (T)12345; nm++; } \
     _ZGVsNxv##W##W##_##NM(SVLD(PT, a), o, o2);                                                   \
-    for (int k = 0; k < CNT; k++) { T x = a[k], s1, s2, *p = &s1, *q = &s2; e; bu += !SAME(o[k], s1) || !SAME(o2[k], s2); nu++; } \
+    for (int k = 0; k < CNT; k++) { T x = a[k], s1, s2, *p = &s1, *q = &s2; e; bu += !SAME(o[k], s1) || !SAME(o2[k], s2); nu++; }) \
   KTAIL(PRE, NL, NM, "v" #W #W "_")
 #define K1_(...) K1(__VA_ARGS__)
 #define K2_(...) K2(__VA_ARGS__)
@@ -286,7 +301,7 @@ static int gi(void)
 
 static void lanes(long N)
 {
-  const int nd = (int)svcntd(), nf = (int)svcntw();
+  const int nd = SVCNTD(), nf = SVCNTW(); (void)nd; (void)nf;
 #define LD1(NM, e) K1_(TY_D, NM, e)
 #define LF1(NM, e) K1_(TY_F, NM, e)
 #define SD1(NM, e) K1_(TY_D, NM, e)
@@ -308,7 +323,8 @@ static void lanes(long N)
 #define SDPP(NM, e) KPP_(TY_D, NM, e)
 #define SFPP(NM, e) KPP_(TY_F, NM, e)
 #include "crmvec-lanes.h"
-  /* the 26: unmasked SVE entry points (the others are checked in sample) */
+  /* the 26: unmasked SVE entry points (the others are checked in sample;
+     without SVE this repeats sample's AdvSIMD check on other inputs) */
 #define F1(n) K1_(TY_F, n, cr_##n(x))
 #define D1(n) K1_(TY_D, n, cr_##n(x))
 #define F2(n) K2_(TY_F, n, cr_##n(x, y))
@@ -352,19 +368,20 @@ static void all_floats(void)
 #include "pow-parity.h"
 static void parity(void)
 {
-  const int nd = (int)svcntd(), nf = (int)svcntw();   /* at most 32 and 64 (2048-bit SVE) */
+  const int nd = SVCNTD(), nf = SVCNTW();   /* at most 32 and 64 (2048-bit SVE); 0 without */
   double px[POW_PARITY_N], py[POW_PARITY_N]; long b2 = 0, bs = 0, b4 = 0, c2 = 0, c4 = 0, bsf = 0, b2f = 0;
+  (void)nd; (void)nf; (void)bs; (void)bsf;
   int np = pow_parity_pairs(0, px, py);
   for (int i = 0; i < np; i += 2) {
     double y[2]; vst1q_f64(y, _ZGVnN2vv_pow(vld1q_f64(px + i), vld1q_f64(py + i)));
     for (int k = 0; k < 2; k++) b2 += !same_d(y[k], cr_pow(px[i + k], py[i + k]));
   }
-  for (int i = 0; i < np; i += nd) {
+  SV_(for (int i = 0; i < np; i += nd) {
     double x[32], w[32], z[32]; for (int k = 0; k < nd; k++) { x[k] = px[(i + k) % np]; w[k] = py[(i + k) % np]; }
     svst1_f64(svptrue_b64(), z, _ZGVsMxvv_pow(svld1_f64(svptrue_b64(), x), svld1_f64(svptrue_b64(), w), svptrue_b64()));
     for (int k = 0; k < nd; k++) bs += !same_d(z[k], cr_pow(x[k], w[k]));
-  }
-  report("_ZGVnN2vv_pow (parity)", b2, np); report("_ZGVsMxvv_pow (parity)", bs, ((np + nd - 1) / nd) * nd);
+  })
+  report("_ZGVnN2vv_pow (parity)", b2, np); SV_(report("_ZGVsMxvv_pow (parity)", bs, ((np + nd - 1) / nd) * nd);)
   np = pow_parity_pairs(1, px, py);
   for (int i = 0; i < np; i += 4) {
     float x[4], w[4], y[4]; for (int k = 0; k < 4; k++) { x[k] = (float)px[i + k]; w[k] = (float)py[i + k]; }
@@ -374,13 +391,13 @@ static void parity(void)
     for (int k = 0; k < 2; k++) b2f += !same_f(y[k], cr_powf(x[k], w[k]));
     c4 += 4; c2 += 2;
   }
-  for (int i = 0; i < np; i += nf) {
+  SV_(for (int i = 0; i < np; i += nf) {
     float x[64], w[64], z[64]; for (int k = 0; k < nf; k++) { x[k] = (float)px[(i + k) % np]; w[k] = (float)py[(i + k) % np]; }
     svst1_f32(svptrue_b32(), z, _ZGVsMxvv_powf(svld1_f32(svptrue_b32(), x), svld1_f32(svptrue_b32(), w), svptrue_b32()));
     for (int k = 0; k < nf; k++) bsf += !same_f(z[k], cr_powf(x[k], w[k]));
-  }
+  })
   report("_ZGVnN4vv_powf (parity)", b4, c4); report("_ZGVnN2vv_powf (parity)", b2f, c2);
-  report("_ZGVsMxvv_powf (parity)", bsf, ((np + nf - 1) / nf) * nf);
+  SV_(report("_ZGVsMxvv_powf (parity)", bsf, ((np + nf - 1) / nf) * nf);)
 }
 
 /* under CRTEST_FTZ: atan2 with x near 2^1022, where CORE-MATH's atan2 run

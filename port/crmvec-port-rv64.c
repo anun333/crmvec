@@ -240,9 +240,14 @@ RV_PD(Sleef_sincospidx_u05rvvm2, rv_sincospi) RV_PF(Sleef_sincospifx_u05rvvm2, r
 RV_PD(Sleef_sincospidx_u35rvvm2, rv_sincospi) RV_PF(Sleef_sincospifx_u35rvvm2, rv_sincospif)
 RV_PD(Sleef_modfdx_rvvm2, rv_modf) RV_PF(Sleef_modffx_rvvm2, rv_modff)
 
-/* SLEEF's spelling of fmin, untiered (LLVM's table adds u10) */
+/* SLEEF's spelling of fmin, untiered (LLVM's table adds u10). The compiler
+   marks a function that takes vectors STO_RISCV_VARIANT_CC, so the dynamic
+   linker binds calls to it eagerly and a caller's vector registers survive
+   lazy binding, but not an alias of one (until 2026-09-29 these two had no
+   flag); make riscv64 checks every Sleef_ export for it. */
 EXPORT vfloat64m2_t Sleef_fmindx_rvvm2(vfloat64m2_t, vfloat64m2_t) __attribute__((alias("Sleef_fmindx_u10rvvm2")));
 EXPORT vfloat32m2_t Sleef_fminfx_rvvm2(vfloat32m2_t, vfloat32m2_t) __attribute__((alias("Sleef_fminfx_u10rvvm2")));
+__asm__(".variant_cc Sleef_fmindx_rvvm2\n.variant_cc Sleef_fminfx_rvvm2");
 
 /* sincospi at u10 is LLVM's name only (SLEEF has u05 and u35), so it keeps
    the pointer outputs of LLVM's table (_ZGVrNxvl8l8) */

@@ -7,13 +7,20 @@ export DEB_BUILD_MAINT_OPTIONS = hardening=+all optimize=-lto
 include /usr/share/dpkg/architecture.mk
 %:
 	dh $@
+# through dh_auto_*, which pass the cross compiler (CC) when cross-building
+# (until 2026-09-29 a cross build compiled for the build machine)
 override_dh_auto_build:
-	$(MAKE) lib
+	dh_auto_build -- lib
+# crmvec-run names both architectures' directories, so that it is the same
+# file in each (Multi-Arch: same)
 override_dh_auto_install:
-	$(MAKE) install PREFIX=/usr LIBDIR=/usr/lib/$(DEB_HOST_MULTIARCH) DESTDIR=$(CURDIR)/debian/crmvec
+	dh_auto_install -- PREFIX=/usr LIBDIR=/usr/lib/$(DEB_HOST_MULTIARCH) \
+	  CRMRUN=/usr/lib/x86_64-linux-gnu/crmvec:/usr/lib/aarch64-linux-gnu/crmvec
 override_dh_auto_test:
 ifeq (,$(filter nocheck,$(DEB_BUILD_OPTIONS)))
+ifeq ($(DEB_BUILD_ARCH),$(DEB_HOST_ARCH))
 	$(MAKE) check
+endif
 endif
 override_dh_auto_clean:
 	$(MAKE) clean

@@ -6,7 +6,11 @@
 # otherwise fold floating-point constants assuming round-to-nearest, and
 # CORE-MATH is correctly rounded in all four modes only without that (its
 # own gcc builds use the flag); 33 of its 72 files compile differently.
-CC      ?= gcc
+# make's built-in CC is cc, so "CC ?= gcc" never applied (until 2026-09-29);
+# a CC from the command line or the environment still wins
+ifeq ($(origin CC),default)
+CC      := gcc
+endif
 .DEFAULT_GOAL := all
 VERSION := 0.5.0
 # install locations (make install PREFIX=... DESTDIR=...): the libraries go
@@ -19,11 +23,18 @@ INCDIR  ?= $(PREFIX)/include
 BINDIR  ?= $(PREFIX)/bin
 PKGDIR  ?= $(LIBDIR)/pkgconfig
 CRMDIR  := $(LIBDIR)/crmvec
+# the library path crmvec-run sets: CRMDIR, or a list of directories (the
+# Debian package names both architectures' so that crmvec-run is the same
+# file in each, as Multi-Arch: same needs; the dynamic linker skips a
+# library built for another architecture)
+CRMRUN  ?= $(CRMDIR)
 HOSTARCH := $(shell $(CC) -dumpmachine | cut -d- -f1)
 # the aarch64 build directory (defined here: rules below name it before the
 # aarch64 section, and make expands a rule's prerequisites as it reads it)
 A64     := build-aarch64
 CFLAGS  ?= -O2
+# CPPFLAGS and LDFLAGS (a distribution's hardening flags) go into the
+# libraries' compiles and links (from 2026-09-29; before, only CFLAGS did)
 FP      := -ffp-contract=off -frounding-math
 # crmvec.c's vector code runs only in round-to-nearest (crm_rn sends the
 # other modes to CORE-MATH), so it is built without -frounding-math, which
@@ -61,13 +72,13 @@ CRWRAP  := crmvec-fpenv.c $(foreach n,$(shell grep -o 'CRW_[A-Z0-9]*([a-z0-9]*)'
 F16SRC  := $(wildcard f16/*.c) $(wildcard bf16/*.c)
 libcrf16.a: $(F16SRC)
 	rm -rf build-f16 && mkdir -p build-f16
-	for f in $(F16SRC); do $(CC) $(CFLAGS) $(FP) -fPIC -fvisibility=hidden -c -o build-f16/$$(echo $$f | tr / -).o $$f || exit 1; done
+	for f in $(F16SRC); do $(CC) $(CFLAGS) $(CPPFLAGS) $(FP) -fPIC -fvisibility=hidden -c -o build-f16/$$(echo $$f | tr / -).o $$f || exit 1; done
 	rm -f $@ && ar rcs $@ build-f16/*.o
 
 ifeq ($(HOSTARCH),aarch64)
 # a native aarch64 build: the aarch64 rules below with this compiler; the
 # x86 checks do not build here
-all: lib $(A64)/aarch64-check $(A64)/nbench
+all: lib $(A64)/aarch64-check $(A64)/aarch64-check-advsimd $(A64)/nbench
 lib: $(A64)/libmvec.so.1 $(A64)/libsleefgnuabi.so.3
 LIBS_BUILT = $(A64)/libmvec.so.1 $(A64)/libsleefgnuabi.so.3
 else
@@ -84,7 +95,7 @@ install: lib crmvec.h crmvec-simd.h crmvec.pc.in crmvec-run.in
 	install -m 644 crmvec.h $(DESTDIR)$(INCDIR)/crmvec.h
 	install -m 644 crmvec-simd.h $(DESTDIR)$(INCDIR)/crmvec-simd.h
 	sed -e 's|@CRMDIR@|$(CRMDIR)|g' -e 's|@INCDIR@|$(INCDIR)|g' -e 's|@VERSION@|$(VERSION)|g' crmvec.pc.in > $(DESTDIR)$(PKGDIR)/crmvec.pc
-	sed -e 's|@CRMDIR@|$(CRMDIR)|g' crmvec-run.in > $(DESTDIR)$(BINDIR)/crmvec-run
+	sed -e 's|@CRMDIR@|$(CRMRUN)|g' crmvec-run.in > $(DESTDIR)$(BINDIR)/crmvec-run
 	chmod 755 $(DESTDIR)$(BINDIR)/crmvec-run
 
 # crmvec.h declares what the library defines: compile the definitions with it
@@ -123,7 +134,7 @@ PORTCC  ?= $(CC)
 PORTDEFS ?=   # extra -D flags for the port object only (speed experiments)
 PORTOBJ := $(if $(filter 1,$(X86PORT)),crmvec-port.o)
 crmvec-port.o: port/crmvec-port.c port/portable.h port/port-log.h port/port-exp.h port/port-expf.h port/port-sincos.h port/port-sinf.h port/port-hypf.h port/port-erff.h port/port-logf.h port/port-powf.h port/port-log1pf.h port/port-atanf.h port/port-tanf.h port/port-dfast.h port/port-erf.h port/port-tanh.h port/port-pow.h port/port-expm1.h port/port-sinhcosh.h port/port-asinh.h port/port-atanh.h port/port-atan.h port/port-asin.h port/port-atan2.h port/port-cbrt.h crmvec-powf-tab.h crmvec-atan2-tab.h crmvec-asin-tab.h crmvec-atan-tab.h crmvec-erf-tab.h crmvec-pow-tab.h crmvec-erff-tab.h crmvec-erfcf-tab.h crmvec-rows-tab.h crmvec-exp-tab.h crmvec-sin-tab.h
-	$(PORTCC) -O3 -ffp-contract=off -fno-math-errno -mavx2 -mfma -fPIC $(PORTDEFS) -c -o $@ port/crmvec-port.c
+	$(PORTCC) $(CPPFLAGS) -O3 -ffp-contract=off -fno-math-errno -mavx2 -mfma -fPIC $(PORTDEFS) -c -o $@ port/crmvec-port.c
 
 # E512 (x86, from 2026-09-29): the AVX-512 entry points run the portable
 # core built for 512-bit vectors (port/crmvec-port-e.c) where the CPU has
@@ -135,18 +146,18 @@ $(error E512 must be 0 or 1, not "$(E512)")
 endif
 EOBJ    := $(if $(filter 1,$(E512)),crmvec-port-e.o)
 crmvec-port-e.o: port/crmvec-port-e.c port/portable.h $(wildcard port/port-*.h) $(HDR) crmvec-functions.h
-	$(PORTCC) -O3 -ffp-contract=off -fno-math-errno -mavx512f -mavx512dq -mfma -fPIC $(PORTDEFS) -c -o $@ port/crmvec-port-e.c
+	$(PORTCC) $(CPPFLAGS) -O3 -ffp-contract=off -fno-math-errno -mavx512f -mavx512dq -mfma -fPIC $(PORTDEFS) -c -o $@ port/crmvec-port-e.c
 PORTOBJ += $(EOBJ)
 
 crmvec.o: crmvec.c $(HDR) $(PORTOBJ)
-	$(CC) $(CFLAGS) $(FPV) -DCRMVEC_PORT=$(X86PORT) -DCRMVEC_E512=$(E512) -fPIC -c -o $@ crmvec.c
+	$(CC) $(CFLAGS) $(CPPFLAGS) $(FPV) -DCRMVEC_PORT=$(X86PORT) -DCRMVEC_E512=$(E512) -fPIC -c -o $@ crmvec.c
 
 # for the checks built with -mavx2 (crtest, hypot-midpoints), as before
 crmvec-avx2.o: crmvec.c $(HDR) $(PORTOBJ)
 	$(CC) $(CFLAGS) $(FPV) -DCRMVEC_PORT=$(X86PORT) -DCRMVEC_E512=$(E512) -mavx2 -mfma -c -o $@ crmvec.c
 
 libmvec.so.1: crmvec.o $(LIBC) crmvec-fpenv.c $(HDR) $(CR) libcrf16.a crmvec-exports.map
-	$(CC) $(CFLAGS) $(FP) -fPIC -shared -Wl,-z,defs -Wl,-Bsymbolic-functions -Wl,-soname,libmvec.so.1 -Wl,--version-script=crmvec-exports.map -o $@ crmvec.o $(PORTOBJ) $(LIBC) $(CR) $(CRWRAP) libcrf16.a -lm
+	$(CC) $(CFLAGS) $(CPPFLAGS) $(FP) $(LDFLAGS) -fPIC -shared -Wl,-z,defs -Wl,-Bsymbolic-functions -Wl,-soname,libmvec.so.1 -Wl,--version-script=crmvec-exports.map -o $@ crmvec.o $(PORTOBJ) $(LIBC) $(CR) $(CRWRAP) libcrf16.a -lm
 
 crtest: crtest.c crtest-hard.h port/pow-parity.h crmvec-avx2.o $(LIBC) crmvec-fpenv.c $(HDR) $(CR) libcrf16.a
 	$(CC) $(CFLAGS) $(FP) -mavx2 -mfma -fopenmp -o $@ crtest.c crmvec-avx2.o $(PORTOBJ) $(LIBC) $(CR) $(CRWRAP) libcrf16.a -lm -ldl
@@ -191,7 +202,7 @@ ebench: ebench.c
 # its controls call CORE-MATH's pow directly, which the library does not export
 # they load libmvec.so.1 from their own directory through an RPATH (not a
 # RUNPATH, which LD_LIBRARY_PATH would override), and check that they did
-mpfrcheck: mpfrcheck.c crtest-own.h libmvec.so.1 pow/pow.c powf.c
+mpfrcheck: mpfrcheck.c crtest-own.h crmvec-pownf-tab.h libmvec.so.1 pow/pow.c powf.c
 	$(CC) $(CFLAGS) $(FP) -mavx2 -mfma -fopenmp -o $@ mpfrcheck.c pow/pow.c powf.c libmvec.so.1 -Wl,--disable-new-dtags,-rpath,'$$ORIGIN' -lmpfr -lm
 
 # crmvec-f16.c's functions against MPFR on every input, all four modes
@@ -222,25 +233,39 @@ A64CC   ?= aarch64-linux-gnu-gcc
 endif
 A64SRC  := $(LIB) crmvec-aarch64.c crmvec-sve.c $(HDR) $(CR) $(if $(filter 1,$(A64PORT)),port/crmvec-port-a64.c port/portable.h port/port-log.h port/port-exp.h port/port-expf.h port/port-sincos.h port/port-sinf.h port/port-hypf.h port/port-erff.h port/port-logf.h port/port-powf.h port/port-log1pf.h port/port-atanf.h port/port-tanf.h port/port-dfast.h port/port-erf.h port/port-tanh.h port/port-pow.h port/port-expm1.h port/port-sinhcosh.h port/port-asinh.h port/port-atanh.h port/port-atan.h port/port-asin.h port/port-atan2.h port/port-cbrt.h)
 A64OBJ  := $(A64)/crmvec.o $(A64)/scalar.o $(A64)/f16.o $(A64)/advsimd.o $(A64)/sve.o $(if $(filter 1,$(A64PORT)),$(A64)/port.o)
-aarch64: $(A64)/libmvec.so.1 $(A64)/libsleefgnuabi.so.3 $(A64)/aarch64-check
+aarch64: $(A64)/libmvec.so.1 $(A64)/libsleefgnuabi.so.3 $(A64)/aarch64-check $(A64)/aarch64-check-advsimd
 
+# one recipe builds all of A64OBJ: a grouped target (&:), which GNU make
+# before 4.3 reads as a target named & instead
+ifeq ($(filter grouped-target,$(.FEATURES)),)
+ifneq ($(filter aarch64,$(HOSTARCH))$(filter aarch64 sleef-exports $(A64)/%,$(MAKECMDGOALS)),)
+$(error the aarch64 build needs GNU make 4.3 or later (grouped targets); this is $(MAKE_VERSION))
+endif
+endif
 $(A64OBJ) &: $(A64SRC) $(F16SRC)
 	mkdir -p $(A64)
-	$(A64CC) $(CFLAGS) $(FP) -fPIC -fvisibility=hidden -c -o $(A64)/crmvec.o crmvec.c
-	$(A64CC) $(CFLAGS) $(FP) -fPIC -fvisibility=hidden -c -o $(A64)/scalar.o crmvec-scalar.c
-	$(A64CC) $(CFLAGS) $(FP) -fPIC -fvisibility=hidden -c -o $(A64)/f16.o crmvec-f16.c
-	rm -rf $(A64)/f16src && mkdir -p $(A64)/f16src && for f in $(F16SRC); do $(A64CC) $(CFLAGS) $(FP) -fPIC -fvisibility=hidden -c -o $(A64)/f16src/$$(echo $$f | tr / -).o $$f || exit 1; done
+	$(A64CC) $(CFLAGS) $(CPPFLAGS) $(FP) -fPIC -fvisibility=hidden -c -o $(A64)/crmvec.o crmvec.c
+	$(A64CC) $(CFLAGS) $(CPPFLAGS) $(FP) -fPIC -fvisibility=hidden -c -o $(A64)/scalar.o crmvec-scalar.c
+	$(A64CC) $(CFLAGS) $(CPPFLAGS) $(FP) -fPIC -fvisibility=hidden -c -o $(A64)/f16.o crmvec-f16.c
+	rm -rf $(A64)/f16src && mkdir -p $(A64)/f16src && for f in $(F16SRC); do $(A64CC) $(CFLAGS) $(CPPFLAGS) $(FP) -fPIC -fvisibility=hidden -c -o $(A64)/f16src/$$(echo $$f | tr / -).o $$f || exit 1; done
 	rm -f $(A64)/libcrf16.a && ar rcs $(A64)/libcrf16.a $(A64)/f16src/*.o
-	$(A64CC) $(CFLAGS) $(FP) -DCRMVEC_PORT=$(A64PORT) -fPIC -fvisibility=hidden -c -o $(A64)/advsimd.o crmvec-aarch64.c
-	$(if $(filter 1,$(A64PORT)),$(A64CC) -O3 -ffp-contract=off -fno-math-errno -fPIC -fvisibility=hidden $(PORTDEFS) -c -o $(A64)/port.o port/crmvec-port-a64.c)
-	$(A64CC) $(CFLAGS) $(FP) -fPIC -fvisibility=hidden -march=armv8-a+sve -c -o $(A64)/sve.o crmvec-sve.c
+	$(A64CC) $(CFLAGS) $(CPPFLAGS) $(FP) -DCRMVEC_PORT=$(A64PORT) -fPIC -fvisibility=hidden -c -o $(A64)/advsimd.o crmvec-aarch64.c
+	$(if $(filter 1,$(A64PORT)),$(A64CC) $(CPPFLAGS) -O3 -ffp-contract=off -fno-math-errno -fPIC -fvisibility=hidden $(PORTDEFS) -c -o $(A64)/port.o port/crmvec-port-a64.c)
+	$(A64CC) $(CFLAGS) $(CPPFLAGS) $(FP) -fPIC -fvisibility=hidden -march=armv8-a+sve -c -o $(A64)/sve.o crmvec-sve.c
 
 $(A64)/libmvec.so.1 $(A64)/libsleefgnuabi.so.3: $(A64OBJ) $(CR) crmvec-fpenv.c
-	$(A64CC) $(CFLAGS) $(FP) -fPIC -fvisibility=hidden -shared -Wl,-z,defs -Wl,-Bsymbolic-functions -Wl,-soname,$(notdir $@) -o $@ $(A64OBJ) $(CR) $(CRWRAP) $(A64)/libcrf16.a -lm
+	$(A64CC) $(CFLAGS) $(CPPFLAGS) $(FP) $(LDFLAGS) -fPIC -fvisibility=hidden -shared -Wl,-z,defs -Wl,-Bsymbolic-functions -Wl,-soname,$(notdir $@) -o $@ $(A64OBJ) $(CR) $(CRWRAP) $(A64)/libcrf16.a -lm
 
-# static, so qemu-aarch64 runs it without a sysroot
+# static when cross-built, so qemu-aarch64 runs it without a sysroot (a
+# native build links dynamically: Fedora and Nix ship no static glibc by
+# default). aarch64-check-advsimd is the same check built without SVE, for
+# CPUs that lack it (added 2026-09-29).
+A64STATIC := $(if $(filter aarch64,$(HOSTARCH)),,-static)
 $(A64)/aarch64-check: port/aarch64-check.c port/pow-parity.h $(A64OBJ) $(CR) crmvec-fpenv.c
-	$(A64CC) $(CFLAGS) $(FP) -march=armv8-a+sve -fopenmp -static -I. -o $@ port/aarch64-check.c \
+	$(A64CC) $(CFLAGS) $(FP) -march=armv8-a+sve -fopenmp $(A64STATIC) -I. -o $@ port/aarch64-check.c \
+	  $(A64OBJ) $(CR) $(CRWRAP) $(A64)/libcrf16.a -lm
+$(A64)/aarch64-check-advsimd: port/aarch64-check.c port/pow-parity.h $(A64OBJ) $(CR) crmvec-fpenv.c
+	$(A64CC) $(CFLAGS) $(FP) -march=armv8-a -fopenmp $(A64STATIC) -I. -o $@ port/aarch64-check.c \
 	  $(A64OBJ) $(CR) $(CRWRAP) $(A64)/libcrf16.a -lm
 
 # every name in sleef-gnuabi-aarch64.txt is exported by the SLEEF-named
@@ -287,6 +312,8 @@ $(RV64)/libcr.a: $(CR)
 
 $(RV64)/libsleef.so.3: $(RV64)/port.o $(RV64)/libcr.a
 	$(RVCC) -shared -fPIC -Wl,-z,defs -Wl,-Bsymbolic-functions -Wl,-soname,libsleef.so.3 -o $@ $(RV64)/port.o $(RV64)/libcr.a -lm
+	@n=$$(riscv64-linux-gnu-readelf -W --dyn-syms $@ | awk '$$8 ~ /^Sleef_/ && $$7 != "UND" && !/VARIANT_CC/' | tee /dev/stderr | wc -l); \
+	 [ "$$n" = 0 ] || { echo "$@: $$n Sleef_ exports without VARIANT_CC (above)"; rm -f $@; exit 1; }
 
 # every Sleef_*rvvm2 entry point (the 52, then the other 42 names)
 # against scalar CORE-MATH or libm (static, so qemu-riscv64 runs it without
@@ -327,15 +354,16 @@ wrapcheck: lib
 	 if [ -n "$$m" ] || [ "$$n" -eq 0 ]; then echo "wrapcheck: not wrapped (add to crmvec-fpenv.c): $$m-- FAILED"; exit 1; fi; \
 	 echo "wrapcheck: $$n CORE-MATH functions in $$lib, EVERY CALL WRAPPED"
 ifeq ($(HOSTARCH),aarch64)
-# on aarch64: every entry point against CORE-MATH (the checker is built with
-# SVE, so it runs only where the CPU has it), the simd header, and loops gcc
-# vectorized through this library against CORE-MATH (the drop-in check)
+# on aarch64: every entry point against CORE-MATH (on a CPU without SVE the
+# AdvSIMD ones, through aarch64-check-advsimd; until 2026-09-29 it skipped
+# them all), the simd header, and loops gcc vectorized through this library
+# against CORE-MATH (the drop-in check)
 check: all $(A64)/dropin
 	@set -e; v() { echo "$$1" | tee -a check.log | tail -1; echo "$$1" | tail -1 | grep -qE $(VERDICTS) || { echo "FAILED: $$2"; exit 1; }; }; \
 	: > check.log; \
-	if grep -qw sve /proc/cpuinfo; then v "$$($(A64)/aarch64-check sample)" "aarch64-check sample"; \
-	  v "$$(CRTEST_FTZ=1 $(A64)/aarch64-check sample 4096)" "aarch64-check sample under flush-to-zero (FPCR.FZ, as -ffast-math programs run)"; \
-	  else echo "aarch64-check: skipped, no SVE"; fi; \
+	if grep -qw sve /proc/cpuinfo; then ck=$(A64)/aarch64-check; else ck=$(A64)/aarch64-check-advsimd; echo "no SVE: the AdvSIMD entry points only ($$ck)"; fi; \
+	v "$$($$ck sample)" "$$ck sample"; \
+	v "$$(CRTEST_FTZ=1 $$ck sample 4096)" "$$ck sample under flush-to-zero (FPCR.FZ, as -ffast-math programs run)"; \
 	v "$$(LD_LIBRARY_PATH=$(A64) $(A64)/dropin 2>&1 | grep -v 'no version information')" "drop-in loops (gcc, crmvec-simd.h)"; \
 	v "$$(./simdcheck.sh $(CC) $(A64)/libmvec.so.1 2>&1)" "simdcheck (crmvec-simd.h: gcc vectorizes all 52 functions without -ffast-math)"; \
 	v "$$($(MAKE) -s wrapcheck 2>&1)" "wrapcheck (every CORE-MATH function called with flush-to-zero off)"; \
@@ -344,6 +372,7 @@ check: all $(A64)/dropin
 # the AdvSIMD entry points' speed, one column per library (bbench's twin):
 # nbench build-aarch64/libmvec.so.1 /usr/lib/aarch64-linux-gnu/libmvec.so.1
 $(A64)/nbench: port/nbench.c
+	mkdir -p $(A64)
 	$(A64CC) $(CFLAGS) -o $@ port/nbench.c -ldl -lm
 
 # loops gcc vectorizes with crmvec-simd.h (no -ffast-math), linked against
@@ -376,5 +405,12 @@ endif
 
 print-sources:   # for the export script: every CORE-MATH source the build uses
 	@echo $(CR)
+
+# CORE-MATH's own headers, for every target built from its sources (the
+# rules above list only the .c files; until 2026-09-29 editing one rebuilt
+# nothing)
+CRH     := log/dint.h log10/dint.h pow/pow.h pow/dint.h pow/qint.h atan2/tint.h atan2pi/tint.h
+libmvec.so.1 crtest libcrref.so hypot-midpoints hypotf-midpoints tan-poles mpfrcheck pownf-search \
+  $(A64)/libmvec.so.1 $(A64)/libsleefgnuabi.so.3 $(A64)/aarch64-check $(A64)/aarch64-check-advsimd $(RV64)/libcr.a: $(CRH)
 
 .PHONY: all lib install headercheck wrapcheck check clean print-sources aarch64 sleef-exports riscv64
