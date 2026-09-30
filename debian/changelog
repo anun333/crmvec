@@ -1,3 +1,16 @@
+crmvec (0.6.1) unstable; urgency=medium
+
+  * Builds and runs with glibc before 2.25 (conda-forge links against 2.17).
+    CORE-MATH's code calls roundeven on x86-64 without SSE4.1, and glibc has
+    it only since 2.25, so 0.6.0 failed to link there under -z defs. The
+    library now has its own exact roundeven and roundevenf; roundeven-check
+    compares them with the C library's.
+  * riscv64: rv64-bench times the 52 entry points of any libsleef.so.3
+    against scalar loops; crmvec-port-rv64.c takes its block size from -DVB
+    (the default is unchanged).
+
+ -- anun333 <anun333@posteo.net>  Wed, 30 Sep 2026 16:18:47 -0500
+
 crmvec (0.6.0) unstable; urgency=medium
 
   * x86: the AVX2 names (_ZGVd*) run on CPUs with AVX but not AVX2. clang

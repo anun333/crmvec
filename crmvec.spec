@@ -11,7 +11,7 @@
 %global debug_package %{nil}
 
 Name:           crmvec
-Version:        0.6.0
+Version:        0.6.1
 Release:        1%{?dist}
 Summary:        Correctly rounded vector math (a drop-in libmvec)
 License:        MIT
@@ -61,6 +61,16 @@ make check
 %{_libdir}/pkgconfig/crmvec.pc
 
 %changelog
+* Wed Sep 30 2026 anun333 <anun333@posteo.net> - 0.6.1-1
+- Builds and runs with glibc before 2.25 (conda-forge links against 2.17).
+  CORE-MATH's code calls roundeven on x86-64 without SSE4.1, and glibc has
+  it only since 2.25, so 0.6.0 failed to link there under -z defs. The
+  library now has its own exact roundeven and roundevenf; roundeven-check
+  compares them with the C library's.
+- riscv64: rv64-bench times the 52 entry points of any libsleef.so.3
+  against scalar loops; crmvec-port-rv64.c takes its block size from -DVB
+  (the default is unchanged).
+
 * Wed Sep 30 2026 anun333 <anun333@posteo.net> - 0.6.0-1
 - x86: the AVX2 names (_ZGVd*) run on CPUs with AVX but not AVX2. clang calls
   them for -mavx code, and they died of SIGILL on Sandy and Ivy Bridge,

@@ -12,7 +12,7 @@ ifeq ($(origin CC),default)
 CC      := gcc
 endif
 .DEFAULT_GOAL := all
-VERSION := 0.6.0
+VERSION := 0.6.1
 # install locations (make install PREFIX=... DESTDIR=...): the libraries go
 # to a directory of their own, so that nothing replaces the system's
 # libmvec.so.1 until a program asks for it (crmvec-run, or the rpath that
@@ -60,7 +60,7 @@ HDR     := $(wildcard crmvec-*.h)
 # 2026-09-29)
 # the library's own sources, beside CORE-MATH's
 LIB     := crmvec.c crmvec-scalar.c crmvec-f16.c
-LIBC    := crmvec-scalar.c crmvec-f16.c
+LIBC    := crmvec-scalar.c crmvec-f16.c crmvec-roundeven.c
 # the libraries' calls to CORE-MATH go through crmvec-fpenv.c, which runs
 # them with flush-to-zero off (2026-09-29): linked with --wrap=cr_<name> for
 # every name listed there (the checks link CORE-MATH directly)
@@ -87,7 +87,7 @@ all: lib $(A64)/aarch64-check $(A64)/aarch64-check-advsimd $(A64)/nbench
 lib: $(A64)/libmvec.so.1 $(A64)/libsleefgnuabi.so.3
 LIBS_BUILT = $(A64)/libmvec.so.1 $(A64)/libsleefgnuabi.so.3
 else
-all: libmvec.so.1 crtest libcrref.so bcheck cecheck lcheck hypot-midpoints hypotf-midpoints tan-poles bbench ebench mpfrcheck pownf-search f16check headercheck
+all: libmvec.so.1 crtest libcrref.so bcheck cecheck lcheck hypot-midpoints hypotf-midpoints tan-poles bbench ebench mpfrcheck pownf-search f16check headercheck roundeven-check
 lib: libmvec.so.1
 LIBS_BUILT = libmvec.so.1
 endif
@@ -196,6 +196,11 @@ cecheck: cecheck.c crtest-ftz.h
 
 # the SSE2 entry points' speed (crtest times the AVX2 ones); baseline x86-64
 # like the programs that call them. bvdecide.py turns its output into crmvec-bvec.h.
+# crmvec-roundeven.c's roundeven and roundevenf (linked into the library,
+# which then runs on glibc before 2.25) against the C library's
+roundeven-check: roundeven-check.c crmvec-roundeven.c
+	$(CC) $(CFLAGS) $(FP) -o $@ roundeven-check.c -lm
+
 bbench: bbench.c
 	$(CC) $(CFLAGS) -o $@ bbench.c -ldl -lm
 
@@ -306,7 +311,7 @@ RVCC    ?= riscv64-linux-gnu-gcc
 RVCLANG ?= clang-20
 RVFLAGS := --target=riscv64-linux-gnu -march=rv64gcv -mabi=lp64d
 PORTHDR := port/portable.h $(wildcard port/port-*.h)
-riscv64: $(RV64)/libsleef.so.3 $(RV64)/rv64-check $(RV64)/rv64-dropin
+riscv64: $(RV64)/libsleef.so.3 $(RV64)/rv64-check $(RV64)/rv64-dropin $(RV64)/rv64-bench
 
 $(RV64)/port.o: port/crmvec-port-rv64.c $(PORTHDR) $(HDR)
 	mkdir -p $(RV64)
@@ -338,8 +343,15 @@ $(RV64)/rv64-dropin: port/rv64-dropin-loop.c port/rv64-dropin-extra.c port/rv64-
 	$(RVCC) $(CFLAGS) $(FPV) -c -o $(RV64)/dropin-main.o port/rv64-dropin-main.c
 	$(RVCC) -o $@ $(RV64)/dropin-main.o $(RV64)/dropin-loop.o $(RV64)/dropin-extra.o $(RV64)/libcr.a $(RV64)/libsleef.so.3 -lm
 
+# the 52 entry points' speed, one column per library (nbench's twin; needs
+# real hardware, qemu times nothing):
+#   rv64-bench build-riscv64/libsleef.so.3 /usr/lib/riscv64-linux-gnu/libsleef.so.3
+$(RV64)/rv64-bench: port/rv64-bench.c $(RV64)/libcr.a
+	$(RVCLANG) $(RVFLAGS) -O2 -c -o $(RV64)/rv64-bench.o port/rv64-bench.c
+	$(RVCC) -o $@ $(RV64)/rv64-bench.o $(RV64)/libcr.a -ldl -lm
+
 clean:
-	rm -f check.log libmvec.so.1 crmvec.o crmvec-avx2.o crmvec-port.o crmvec-port-e.o crtest libcrref.so bcheck hypot-midpoints hypotf-midpoints tan-poles bbench ebench mpfrcheck pownf-search libcrf16.a f16check cecheck lcheck
+	rm -f check.log libmvec.so.1 crmvec.o crmvec-avx2.o crmvec-port.o crmvec-port-e.o crtest libcrref.so bcheck hypot-midpoints hypotf-midpoints tan-poles bbench ebench mpfrcheck pownf-search libcrf16.a f16check cecheck lcheck roundeven-check
 	rm -rf $(A64) $(RV64) build-sleef build-f16
 
 # a few minutes of the checks, for users and packagers (the full list is the
@@ -406,6 +418,7 @@ check: all
 	else echo "mpfrcheck, crtest, hypot-midpoints, hypotf-midpoints: skipped, no AVX2 and FMA (they call the AVX2 entry points)"; fi; \
 	v "$$(./lcheck .)" "lcheck (every input of sinpif, cospif, tanpif, rsqrtf)"; \
 	v "$$(./f16check | tail -1)" "f16check"; \
+	v "$$(./roundeven-check)" "roundeven-check (the library's own roundeven, for glibc before 2.25)"; \
 	v "$$(./simdcheck.sh $(CC) ./libmvec.so.1 2>&1)" "simdcheck (crmvec-simd.h: gcc vectorizes all 52 functions without -ffast-math)"; \
 	v "$$($(MAKE) -s wrapcheck 2>&1)" "wrapcheck (every CORE-MATH function called with flush-to-zero off)"; \
 	v "$$(./importcheck.sh ./libmvec.so.1)" "importcheck (no result depends on the C library's libm)"; \

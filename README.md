@@ -3,11 +3,13 @@
 Correctly rounded vector math, as a drop-in replacement for:
 - glibc's `libmvec.so.1` on x86-64 and aarch64 (checked natively on both);
 - SLEEF's `libsleefgnuabi.so.3` on aarch64;
-- SLEEF's RVV `libsleef.so.3` on riscv64 (checked under emulation).
+- SLEEF's RVV `libsleef.so.3` on riscv64 (checked under emulation and
+  natively on a SpacemiT X60).
 
-The latest release is 0.6.0: fixes from a full review (among them a crash on
-CPUs with AVX but not AVX2), AVX-512 entry points from the portable core,
-and faster aarch64 floats.
+The latest release is 0.6.1: it links and runs with glibc before 2.25, as
+conda-forge needs. Its predecessor, 0.6.0, brought fixes from a full review
+(among them a crash on CPUs with AVX but not AVX2), AVX-512 entry points
+from the portable core, and faster aarch64 floats.
 
 Its results are the correctly rounded ones, bit for bit the same as
 [CORE-MATH](https://core-math.gitlabpages.inria.fr/)'s.
@@ -126,11 +128,19 @@ Packages, from this repository:
   and its library passes the checks.
 - **conda-forge** (`conda/recipe.yaml`): submitted as
   [staged-recipes#34976](https://github.com/conda-forge/staged-recipes/pull/34976)
-  (version 0.5.0), waiting for review. The recipe also builds this
-  repository's later tree (2026-09-29: rattler-build 0.76.1, conda-forge's
-  gcc 14 and sysroot 2.28, whose flags include `--gc-sections` and
-  `--as-needed`). The package's tests pass, and its library passes
-  `bcheck`, `cecheck c`, `d` and `e`, and `lcheck`.
+  (version 0.5.0), waiting for review. That test used sysroot 2.28, but
+  conda-forge's default on x86-64 and aarch64 is glibc 2.17. There, 0.6.0
+  fails to link: CORE-MATH's `__builtin_roundeven` becomes a call to glibc's
+  `roundeven`, which exists only from 2.25, and 0.6.0 links with `-z defs`.
+  0.5.0 linked, but its library could not load below 2.25. Since 0.6.1 the
+  library has its own exact `roundeven` and `roundevenf`
+  (`crmvec-roundeven.c`, checked against glibc's by `roundeven-check`).
+  - Built with rattler-build 0.76.1, conda-forge's gcc 15 and sysroot 2.17,
+    the package's tests pass.
+  - Its library needs nothing newer than glibc 2.4, and passes `bcheck`
+    and `cecheck c` and `d`.
+  - The earlier tree also passed `cecheck e` and `lcheck` (2026-09-29, gcc
+    14 and sysroot 2.28, with `--gc-sections` and `--as-needed`).
 
 All of them build without link-time optimization, and run `make clean`
 first, so a source tree holding an earlier build cannot ship it. The checks have run on
@@ -144,7 +154,7 @@ The Debian, Fedora and Nix recipes also run `make check` on the library
 they package, as part of the build (Debian's `nocheck` skips it). Checked
 2026-09-27 on Debian amd64 (Ubuntu 24.04), Fedora 44 (gcc 16) and Nix
 (nixpkgs 24.05): every verdict passes. That was version 0.1.0. The recipes
-now carry 0.6.0 and haven't been rebuilt since.
+now carry 0.6.1 and haven't been rebuilt since.
 
 Every push also runs `make check` on GitHub Actions
 (`.github/workflows/check.yml`), on an x86-64 runner and natively on an
@@ -841,12 +851,13 @@ all (`port/crmvec-port-rv64.c`):
 ```
 make riscv64
 qemu-riscv64 -cpu rv64,v=true,vlen=256 build-riscv64/rv64-check                # every entry point against CORE-MATH or libm
+build-riscv64/rv64-bench build-riscv64/libsleef.so.3 /usr/lib/riscv64-linux-gnu/libsleef.so.3   # speed, on riscv64 hardware only
 LD_LIBRARY_PATH=build-riscv64 qemu-riscv64 -L /usr/riscv64-linux-gnu \
     -cpu rv64,v=true,vlen=256 build-riscv64/rv64-dropin                     # loops clang 20 vectorized, end to end
 port/rv64-sleef.sh                                                          # the same, and rv64-lanedep, against SLEEF 3.9's library too
 ```
 
-Checked under qemu (no riscv64 hardware yet):
+Checked under qemu, then natively (below):
 - **`rv64-check`:** every entry point matches CORE-MATH at VLEN 128, 256,
   512 and 1024. At 128, 256 and 512 that is 163.6 million results in
   round-to-nearest (raw bits, log-uniform and moderate inputs) and 30.7
@@ -876,8 +887,9 @@ Checked under qemu (no riscv64 hardware yet):
     all 32,922 (the other 32,614 inputs give NaN, which stays NaN). 0
     differ through this library at VLEN 128, 256, 512 and 1024.
 - **Against SLEEF 3.9's own** (`port/rv64-sleef.sh`, Debian's riscv64
-  build, hash-pinned): 23,539 of the drop-in's 4,849,664 results differ
-  from CORE-MATH at VLEN 256, and 23,609 at VLEN 128.
+  build, hash-pinned): 57,553 of the drop-in's 4,849,664 results differ
+  from CORE-MATH at VLEN 256, and 57,639 at VLEN 128. Before the loops
+  stored f(x) itself, the counts were 23,539 and 23,609.
   - **Why the count moves with VLEN:** SLEEF's `sinf`, `cosf` and `tan`
     give a lane a different result when another lane in its vector holds a
     large value. `sinf(-0x1.4fca9ep+6)` is `-0x1.8906aap-1` (correctly
@@ -893,18 +905,38 @@ Checked under qemu (no riscv64 hardware yet):
     differences are the sign of zero at integers.
   - crmvec's library gives 0 differences.
   - With the two halves swapped, 655,358 differ.
-- **Not yet:** timing.
+
+On hardware (2026-09-30, the GCC Compile Farm's cfarm95: a SpacemiT X60,
+RVV 1.0 at VLEN 256, Debian 13; one core):
+- **The same results as under qemu.** `rv64-check`, `rv64-dropin`,
+  `rv64-lanedep` and `rv64-pairs` all give 0 through this library. SLEEF
+  3.9's counts match qemu's at VLEN 256 line for line.
+- **Slower than SLEEF.** `rv64-bench` ran twice, and every cell agrees to
+  1.4%.
+  - This library takes a median 3.3x SLEEF 3.9's time per element, from
+    1.7x (`erf`) to 7.6x (`log1pf`).
+  - In 31 of the 52 functions, a scalar loop over CORE-MATH is faster.
+  - `perf` shows about 4x SLEEF's instructions per element at similar
+    instructions per cycle. The portable core works in 128-bit blocks,
+    4 floats per vector instruction, where SLEEF uses the whole LMUL-2
+    group, 16 floats at VLEN 256.
+  - Built for exactly VLEN 256 (`-march=rv64gcv_zvl256b
+    -mrvv-vector-bits=zvl`, 64-byte blocks), the same core is 1.5-3.4x
+    faster on the functions measured, and still exact. It would run only
+    on that VLEN, so shipping it needs a choice at load time. Not done yet.
 
 ## Limits
 
 - Built and timed on x86-64. aarch64 is checked natively on one core type
   only (a Neoverse N2, 128-bit SVE, on GitHub's runners), and at other SVE
-  lengths under emulation. riscv64 is checked under emulation only, and not
-  timed. The x86 vector paths need AVX2 and FMA; without them,
+  lengths under emulation. riscv64 is checked natively on one core type
+  only (a SpacemiT X60, VLEN 256), and at other VLENs under emulation.
+  There it is correct but slower than SLEEF (Other CPUs: riscv64). The x86
+  vector paths need AVX2 and FMA; without them,
   the SSE2 entry points loop over scalar CORE-MATH.
 - Timed on one Zen 3 laptop CPU, a hired Zen 4 (below), a Cascade Lake
-  cloud VM (the AVX-512 entry points, below), and GitHub's shared Neoverse
-  N2 runners.
+  cloud VM (the AVX-512 entry points, below), GitHub's shared Neoverse N2
+  runners, and a SpacemiT X60 (riscv64).
 - **The x86 library needs gcc** (13.3 here; the packages build it with gcc
   13.2 and 16). clang passes the 256-bit arguments of a `target("avx2")`
   function in memory unless the whole file is built with `-mavx`, silently.

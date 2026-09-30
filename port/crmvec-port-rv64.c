@@ -20,7 +20,9 @@
    Rounding modes other than
    to-nearest (the frm CSR) go to CORE-MATH lane by lane, as on x86 and
    aarch64. */
+#ifndef VB
 #define VB 16
+#endif
 #include "portable.h"
 #include "port-log.h"
 #include "port-exp.h"
