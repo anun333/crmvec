@@ -11,7 +11,7 @@
 %global debug_package %{nil}
 
 Name:           crmvec
-Version:        0.5.0
+Version:        0.6.0
 Release:        1%{?dist}
 Summary:        Correctly rounded vector math (a drop-in libmvec)
 License:        MIT
@@ -61,6 +61,36 @@ make check
 %{_libdir}/pkgconfig/crmvec.pc
 
 %changelog
+* Wed Sep 30 2026 anun333 <anun333@posteo.net> - 0.6.0-1
+- x86: the AVX2 names (_ZGVd*) run on CPUs with AVX but not AVX2. clang calls
+  them for -mavx code, and they died of SIGILL on Sandy and Ivy Bridge,
+  Bulldozer and Jaguar.
+- The portable core (aarch64's default, riscv64, x86 PORT=1): pow and powf
+  gave the wrong sign for x < 0 with integer y near 2^52 (pow(-1, 2^52 + 2)
+  was -1). The integer test is now exact.
+- Programs built with -ffast-math (flush-to-zero on): CORE-MATH's atan2 gave
+  results far off or ended the program, and logf, log2f, log10f and cbrtf
+  misread subnormal inputs. Every CORE-MATH call now runs with the flush bits
+  off.
+- The libraries are linked with -Bsymbolic-functions: with glibc's libmvec
+  loaded first, crmvec's SVE sin could run glibc's.
+- riscv64: Sleef_fmin{d,f}x_rvvm2 carry the variant calling-convention flag,
+  so lazy binding can't clobber vector registers.
+- binary16 cbrt uses CORE-MATH's cbrtf, not the C library's; unused stand-ins
+  are dropped, and importcheck.sh fails the build if the library imports a
+  rounding libm function.
+- x86: the AVX-512 entry points run the portable core at 512 bits (0.70 times
+  the old entry points' time at the median on Cascade Lake).
+- aarch64: floats 1-26% faster on Neoverse N2.
+- Checks: flush-to-zero runs, verify64e and verify2e for the AVX-512 entry
+  points, an AdvSIMD-only aarch64 check; checks that tested nothing now say
+  VOID and fail.
+- Build: PORT must be 0 or 1; -z defs; the distribution's CPPFLAGS and
+  LDFLAGS; crmvec-run is the same on every Debian architecture.
+- CORE-MATH: cospi.c from master b1a4bad (an undefined shift fixed, the same
+  results). powf.c stays at a0fce68: master's returns some exact results 1 ulp
+  too high in round-upward.
+
 * Mon Sep 28 2026 anun333 <anun333@posteo.net> - 0.5.0-1
 - riscv64: make riscv64 cross-builds libsleef.so.3, a stand-in for SLEEF's
   RVV library: all 86 names in LLVM's riscv64 SLEEF table and 8 of SLEEF's
