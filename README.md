@@ -16,7 +16,13 @@ one right answer, so every correct implementation agrees on every input, on
 every machine. Through PoCL, for example, glibc's `libmvec` returns something
 other than the correctly rounded result for 42% of random double `exp` inputs
 and 63% of double `sin` inputs; that is within OpenCL's error bounds, and not
-reproducible across libraries.
+reproducible across libraries. Nor across machines: glibc 2.39's
+`libmvec.so.1` contains 79 reciprocal and square-root estimate instructions
+(`rcpps`, `vrcp14pd` and others), whose exact bits the instruction set
+leaves to each processor, and its scalar `libm` picks other code on a CPU
+without FMA (under qemu's Nehalem model, `exp` gives other bits than on
+this Zen 3 for 145 of 200,000 arguments, `pow` for 149; under its Haswell
+model, none).
 
 ## What it covers
 
@@ -72,7 +78,11 @@ void crmvec_f16_sincos(const uint16_t *x, uint16_t *s, uint16_t *c, size_t n);
 
 That covers `acos` … `tgamma`, including `exp2m1`, `log2p1`, `sinpi`,
 `rsqrt` and `sqrt` (the list is `crmvec-f16-list.h`). There is no vector
-code yet: each element runs CORE-MATH's function.
+code yet: each element runs CORE-MATH's function. One of them, binary16
+`cbrt`, rounds a binary32 cube root to half, and upstream that cube root is
+whatever `cbrtf` the C library has. crmvec builds it with CORE-MATH's
+`cbrtf` instead (`crmvec-cbrtf16.h`): with a `cbrtf` 1 ulp off, 10 of the
+65,536 results come out wrong (found 2026-09-30).
 
 ## Using it
 
@@ -311,6 +321,7 @@ CRTEST_SMOOTH=1 ./crtest time   # the same, on inputs that vary smoothly along t
 ./lcheck             # sinpif cospif tanpif rsqrtf: all 2^32 inputs, both entry points
 ./f16check           # half and bfloat16: every input of every one-argument function, four modes, against MPFR
 ./simdcheck.sh       # crmvec-simd.h: gcc vectorizes all 52 functions without -ffast-math, and this library exports every name it calls
+./importcheck.sh libmvec.so.1   # every libm function the library calls is exact (fma, sqrt, rounding), so no result depends on the C library
 ./cecheck c          # the AVX entry points; `./cecheck d` every AVX2 one; `./cecheck e` (or `sde64 -spr -- ./cecheck e`) for AVX-512
 ./cecheck e . floats # every input of the 23 one-argument floats through the AVX-512 entry points (also c, d)
 ./crtest verify64e   # verify64 through the AVX-512 entry points (and verify2e: verify2); AVX512F and AVX512DQ, or sde64 -skx --
@@ -346,6 +357,13 @@ fresh copy of this repository:
 - **`f16check`:** every input of every one-argument half and bfloat16
   function, and 2^20 pairs of each two-argument one, in all four modes: 0
   differences from MPFR. aarch64 gives the same output bits.
+- **`importcheck.sh`:** the libraries on x86-64 and aarch64 import 29 and
+  30 functions from `libm`, every one exact or a single IEEE operation
+  (`fma`, `sqrt`, `fdim`, rounding, the FP environment). Before 2026-09-30
+  they imported 29 that round (`cbrtf` above, and 28 through unused
+  stand-ins in CORE-MATH's half-precision files, now dropped by
+  `--gc-sections`), which the check reports. glibc's own `libmvec.so.1`
+  imports 54.
 - **`cecheck`:** the AVX entry points natively, and under Intel SDE on a CPU
   without AVX2. The AVX-512 entry points under SDE. 0 differences.
 - **`pownf-search`:** every one of its 19.5 billion (x, n) pairs is covered.

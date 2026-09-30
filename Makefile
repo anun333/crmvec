@@ -68,11 +68,16 @@ comma   := ,
 CRWRAP  := crmvec-fpenv.c $(foreach n,$(shell grep -o 'CRW_[A-Z0-9]*([a-z0-9]*)' crmvec-fpenv.c | grep -v '(n)' | sed 's/.*(//; s/)//'),-Wl$(comma)--wrap=cr_$(n))
 # CORE-MATH's half and bfloat16 functions (crmvec-f16.c), built with hidden
 # visibility into an archive: each file also defines a stand-in under the
-# bare name (sinf16) that is not correctly rounded and must not be exported
+# bare name (sinf16) that is not correctly rounded and must not be exported.
+# Each stand-in gets its own section, so --gc-sections drops them (they were
+# the source of the library's libm imports). cr_cbrtf16 itself returns
+# cbrtf((float)x), the C library's cbrtf, which need not be correctly rounded:
+# crmvec-cbrtf16.h points it at CORE-MATH's (found 2026-09-30 by repro-scan).
 F16SRC  := $(wildcard f16/*.c) $(wildcard bf16/*.c)
-libcrf16.a: $(F16SRC)
+F16FLAGS = -ffunction-sections $$([ $$f = f16/cbrtf16.c ] && echo -include crmvec-cbrtf16.h)
+libcrf16.a: $(F16SRC) crmvec-cbrtf16.h
 	rm -rf build-f16 && mkdir -p build-f16
-	for f in $(F16SRC); do $(CC) $(CFLAGS) $(CPPFLAGS) $(FP) -fPIC -fvisibility=hidden -c -o build-f16/$$(echo $$f | tr / -).o $$f || exit 1; done
+	for f in $(F16SRC); do $(CC) $(CFLAGS) $(CPPFLAGS) $(FP) $(F16FLAGS) -fPIC -fvisibility=hidden -c -o build-f16/$$(echo $$f | tr / -).o $$f || exit 1; done
 	rm -f $@ && ar rcs $@ build-f16/*.o
 
 ifeq ($(HOSTARCH),aarch64)
@@ -159,7 +164,7 @@ crmvec-avx2.o: crmvec.c $(HDR) $(PORTOBJ)
 	$(CC) $(CFLAGS) $(FPV) -DCRMVEC_PORT=$(X86PORT) -DCRMVEC_E512=$(E512) -mavx2 -mfma -c -o $@ crmvec.c
 
 libmvec.so.1: crmvec.o $(LIBC) crmvec-fpenv.c $(HDR) $(CR) libcrf16.a crmvec-exports.map
-	$(CC) $(CFLAGS) $(CPPFLAGS) $(FP) $(LDFLAGS) -fPIC -shared -Wl,-z,defs -Wl,-Bsymbolic-functions -Wl,-soname,libmvec.so.1 -Wl,--version-script=crmvec-exports.map -o $@ crmvec.o $(PORTOBJ) $(LIBC) $(CR) $(CRWRAP) libcrf16.a -lm
+	$(CC) $(CFLAGS) $(CPPFLAGS) $(FP) $(LDFLAGS) -fPIC -shared -Wl,-z,defs -Wl,-Bsymbolic-functions -Wl,--gc-sections -Wl,-soname,libmvec.so.1 -Wl,--version-script=crmvec-exports.map -o $@ crmvec.o $(PORTOBJ) $(LIBC) $(CR) $(CRWRAP) libcrf16.a -lm
 
 crtest: crtest.c crtest-hard.h port/pow-parity.h crmvec-avx2.o $(LIBC) crmvec-fpenv.c $(HDR) $(CR) libcrf16.a
 	$(CC) $(CFLAGS) $(FP) -mavx2 -mfma -fopenmp -o $@ crtest.c crmvec-avx2.o $(PORTOBJ) $(LIBC) $(CR) $(CRWRAP) libcrf16.a -lm -ldl
@@ -244,19 +249,19 @@ ifneq ($(filter aarch64,$(HOSTARCH))$(filter aarch64 sleef-exports $(A64)/%,$(MA
 $(error the aarch64 build needs GNU make 4.3 or later (grouped targets); this is $(MAKE_VERSION))
 endif
 endif
-$(A64OBJ) &: $(A64SRC) $(F16SRC)
+$(A64OBJ) &: $(A64SRC) $(F16SRC) crmvec-cbrtf16.h
 	mkdir -p $(A64)
 	$(A64CC) $(CFLAGS) $(CPPFLAGS) $(FP) -fPIC -fvisibility=hidden -c -o $(A64)/crmvec.o crmvec.c
 	$(A64CC) $(CFLAGS) $(CPPFLAGS) $(FP) -fPIC -fvisibility=hidden -c -o $(A64)/scalar.o crmvec-scalar.c
 	$(A64CC) $(CFLAGS) $(CPPFLAGS) $(FP) -fPIC -fvisibility=hidden -c -o $(A64)/f16.o crmvec-f16.c
-	rm -rf $(A64)/f16src && mkdir -p $(A64)/f16src && for f in $(F16SRC); do $(A64CC) $(CFLAGS) $(CPPFLAGS) $(FP) -fPIC -fvisibility=hidden -c -o $(A64)/f16src/$$(echo $$f | tr / -).o $$f || exit 1; done
+	rm -rf $(A64)/f16src && mkdir -p $(A64)/f16src && for f in $(F16SRC); do $(A64CC) $(CFLAGS) $(CPPFLAGS) $(FP) $(F16FLAGS) -fPIC -fvisibility=hidden -c -o $(A64)/f16src/$$(echo $$f | tr / -).o $$f || exit 1; done
 	rm -f $(A64)/libcrf16.a && ar rcs $(A64)/libcrf16.a $(A64)/f16src/*.o
 	$(A64CC) $(CFLAGS) $(CPPFLAGS) $(FP) -DCRMVEC_PORT=$(A64PORT) -fPIC -fvisibility=hidden -c -o $(A64)/advsimd.o crmvec-aarch64.c
 	$(if $(filter 1,$(A64PORT)),$(A64CC) $(CPPFLAGS) -O3 -ffp-contract=off -fno-math-errno -fPIC -fvisibility=hidden $(PORTDEFS) -c -o $(A64)/port.o port/crmvec-port-a64.c)
 	$(A64CC) $(CFLAGS) $(CPPFLAGS) $(FP) -fPIC -fvisibility=hidden -march=armv8-a+sve -c -o $(A64)/sve.o crmvec-sve.c
 
 $(A64)/libmvec.so.1 $(A64)/libsleefgnuabi.so.3: $(A64OBJ) $(CR) crmvec-fpenv.c
-	$(A64CC) $(CFLAGS) $(CPPFLAGS) $(FP) $(LDFLAGS) -fPIC -fvisibility=hidden -shared -Wl,-z,defs -Wl,-Bsymbolic-functions -Wl,-soname,$(notdir $@) -o $@ $(A64OBJ) $(CR) $(CRWRAP) $(A64)/libcrf16.a -lm
+	$(A64CC) $(CFLAGS) $(CPPFLAGS) $(FP) $(LDFLAGS) -fPIC -fvisibility=hidden -shared -Wl,-z,defs -Wl,-Bsymbolic-functions -Wl,--gc-sections -Wl,-soname,$(notdir $@) -o $@ $(A64OBJ) $(CR) $(CRWRAP) $(A64)/libcrf16.a -lm
 
 # static when cross-built, so qemu-aarch64 runs it without a sysroot (a
 # native build links dynamically: Fedora and Nix ship no static glibc by
@@ -342,7 +347,7 @@ clean:
 # controls must fail as they should. The AVX, AVX2 and AVX-512 entry points
 # are checked only on CPUs that have them (elsewhere the checker itself would
 # fault). Needs libmpfr-dev, as `make` does.
-VERDICTS := 'IDENTICAL|CORRECTLY ROUNDED|all four differ|ALL EXPORTED|, 0 differ from cr_hypot|^TOTAL 0 differ|EVERY CALL WRAPPED'
+VERDICTS := 'IDENTICAL|CORRECTLY ROUNDED|all four differ|ALL EXPORTED|, 0 differ from cr_hypot|^TOTAL 0 differ|EVERY CALL WRAPPED|ONLY EXACT LIBM'
 
 # every CORE-MATH function in the library is called through a crmvec-fpenv.c
 # wrapper, so runs with flush-to-zero off: a function CORE-MATH gains would
@@ -369,6 +374,7 @@ check: all $(A64)/dropin
 	v "$$(LD_LIBRARY_PATH=$(A64) $(A64)/dropin 2>&1 | grep -v 'no version information')" "drop-in loops (gcc, crmvec-simd.h)"; \
 	v "$$(./simdcheck.sh $(CC) $(A64)/libmvec.so.1 2>&1)" "simdcheck (crmvec-simd.h: gcc vectorizes all 52 functions without -ffast-math)"; \
 	v "$$($(MAKE) -s wrapcheck 2>&1)" "wrapcheck (every CORE-MATH function called with flush-to-zero off)"; \
+	v "$$(./importcheck.sh $(A64)/libmvec.so.1)" "importcheck (no result depends on the C library's libm)"; \
 	echo "make check: every verdict passed (details in check.log)"
 
 # the AdvSIMD entry points' speed, one column per library (bbench's twin):
@@ -402,6 +408,7 @@ check: all
 	v "$$(./f16check | tail -1)" "f16check"; \
 	v "$$(./simdcheck.sh $(CC) ./libmvec.so.1 2>&1)" "simdcheck (crmvec-simd.h: gcc vectorizes all 52 functions without -ffast-math)"; \
 	v "$$($(MAKE) -s wrapcheck 2>&1)" "wrapcheck (every CORE-MATH function called with flush-to-zero off)"; \
+	v "$$(./importcheck.sh ./libmvec.so.1)" "importcheck (no result depends on the C library's libm)"; \
 	echo "make check: every verdict passed (details in check.log)"
 endif
 
