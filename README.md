@@ -914,10 +914,10 @@ Checked under qemu (no riscv64 hardware yet):
     AVX2 checks of the same build still pass. Not yet timed on Zen 4, whose
     512-bit units are 256 bits wide.
   - **CI** runs `cecheck e` natively where GitHub's runner has AVX-512,
-    which is a minority of runs. A step that would run them under Intel
-    SDE (`-skx`) elsewhere can't: Intel's site refuses GitHub's runners
-    (HTTP 403, 2026-09-29). The step reports that and doesn't stop the
-    others.
+    which is a minority of runs. Intel SDE can't cover the rest there:
+    Intel's site refuses GitHub's runners (HTTP 403, 2026-09-29). So the
+    512-bit core is checked natively, on a Cascade Lake, before each
+    release that changes `port/`.
   - **Before**, on a hired AMD EPYC 4564P (Zen 4), where every check above
     passed, the halves were 8% slower per element than the AVX2 entry
     points, while glibc's 512-bit code is 23% faster than its AVX2 code: 4.5x
