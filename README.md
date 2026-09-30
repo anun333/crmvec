@@ -959,8 +959,11 @@ The scalar functions, their tables, and the error analyses the vector paths
 rely on are [CORE-MATH](https://core-math.gitlabpages.inria.fr/)'s, by Alexei
 Sibidanov, Paul Zimmermann, Tom Hubrecht and others. Their files are
 included unmodified under their own MIT license and copyright notices. All
-165 are byte-identical to CORE-MATH's master branch at `a0fce68`
-(2026-09-28). The
+165 are byte-identical to CORE-MATH's master branch: `cospi.c` at `b1a4bad`
+(2026-09-29, the fix for an undefined shift we reported), the rest at
+`a0fce68` (2026-09-28). `powf.c` stays at `a0fce68`: master's `8ea0949`
+returns some exact results 1 ulp too high in round-upward (`powf(10, 3)`
+gives 1000.00006). The
 `crmvec-*-tab.h` headers copy their tables. Everything else is under the
 MIT license in `LICENSE`.
 
