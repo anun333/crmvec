@@ -1,0 +1,152 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>crmvec</title>
+<meta name="description" content="Correctly rounded vector math: a drop-in libmvec.so.1 (and SLEEF's libraries on aarch64 and riscv64) whose results are CORE-MATH's, bit for bit, on every machine.">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=IBM+Plex+Sans:ital,wght@0,400;0,600;1,400&display=swap">
+<style>
+:root {
+  --bg: #f6f7f9; --panel: #ffffff; --ink: #151a21; --muted: #576170; --rule: #dde1e7;
+  --accent: #0d6585; --accent-soft: #e2f0f5; --hi: #b4004e; --hi-soft: #fbe3ec; --code: #eef1f4;
+  --sans: "IBM Plex Sans", system-ui, -apple-system, "Segoe UI", sans-serif;
+  --mono: "IBM Plex Mono", ui-monospace, "SFMono-Regular", Menlo, Consolas, monospace;
+}
+@media (prefers-color-scheme: dark) {
+  :root { --bg: #0f1318; --panel: #161b22; --ink: #e5e9ee; --muted: #9aa5b3; --rule: #2a313b;
+          --accent: #5cc0e2; --accent-soft: #12303b; --hi: #ff7aa8; --hi-soft: #3a1626; --code: #1c222b; }
+}
+* { box-sizing: border-box; }
+html { -webkit-text-size-adjust: 100%; }
+body { margin: 0; background: var(--bg); color: var(--ink); font: 17px/1.6 var(--sans); }
+.wrap { max-width: 46rem; margin: 0 auto; padding: 0 1.25rem; }
+header { padding-block: 3.5rem 2rem; }
+.name { font: 600 2.6rem/1.1 var(--mono); letter-spacing: -0.02em; margin: 0; }
+.tag { font-size: 1.3rem; line-height: 1.4; margin: 0.6rem 0 0; text-wrap: balance; }
+.meta { color: var(--muted); font-size: 0.92rem; margin: 0.9rem 0 0; }
+.links { display: flex; flex-wrap: wrap; gap: 0.6rem; margin-top: 1.4rem; }
+.links a { color: var(--accent); text-decoration: none; border: 1px solid var(--rule); background: var(--panel);
+           padding: 0.35rem 0.8rem; border-radius: 4px; font-size: 0.95rem; }
+.links a:hover, .links a:focus-visible { border-color: var(--accent); outline: none; }
+.bits { background: var(--panel); border: 1px solid var(--rule); border-radius: 6px; padding: 1.1rem 1.2rem; margin: 2rem 0 0; }
+.bits .q { font: 500 0.95rem var(--mono); margin: 0 0 0.8rem; overflow-wrap: anywhere; }
+.row { display: grid; grid-template-columns: 9.5rem 1fr; gap: 0.2rem 0.8rem; align-items: baseline; font-family: var(--mono); font-size: 0.95rem; }
+.row .who { color: var(--muted); font-family: var(--sans); font-size: 0.88rem; }
+.row .hex { overflow-wrap: anywhere; }
+.row .hex b { font-weight: 500; color: var(--hi); background: var(--hi-soft); padding: 0 0.12em; border-radius: 2px; }
+.bits .note { color: var(--muted); font-size: 0.9rem; margin: 0.8rem 0 0; }
+main section { padding-block: 1.6rem; border-top: 1px solid var(--rule); }
+h2 { font-size: 1.25rem; margin: 0 0 0.7rem; letter-spacing: 0.01em; }
+p { margin: 0 0 0.9rem; }
+a { color: var(--accent); }
+code { font: 0.9em var(--mono); background: var(--code); padding: 0.08em 0.3em; border-radius: 3px; }
+pre { font: 0.88rem/1.55 var(--mono); background: var(--code); padding: 0.9rem 1rem; border-radius: 6px; overflow-x: auto; margin: 0 0 1rem; }
+pre code { background: none; padding: 0; }
+ul { padding-left: 1.2rem; margin: 0 0 0.9rem; }
+li { margin: 0.25rem 0; }
+.fns { font: 0.9rem/1.9 var(--mono); color: var(--ink); }
+.scroll { overflow-x: auto; margin: 0 0 1rem; }
+table { border-collapse: collapse; font-size: 0.93rem; min-width: 30rem; width: 100%; }
+th, td { text-align: left; padding: 0.4rem 0.7rem 0.4rem 0; border-bottom: 1px solid var(--rule); vertical-align: top; }
+th { font-weight: 600; color: var(--muted); font-size: 0.85rem; letter-spacing: 0.02em; }
+td.n { font-variant-numeric: tabular-nums; font-family: var(--mono); font-size: 0.88rem; white-space: nowrap; }
+.small { color: var(--muted); font-size: 0.9rem; }
+footer { color: var(--muted); font-size: 0.88rem; padding-block: 1.6rem 3rem; border-top: 1px solid var(--rule); }
+@media (max-width: 520px) { .name { font-size: 2.1rem; } .row { grid-template-columns: 1fr; } .row .who { margin-top: 0.4rem; } }
+</style>
+</head>
+<body>
+<div class="wrap">
+<header>
+  <h1 class="name">crmvec</h1>
+  <p class="tag">Correctly rounded vector math, as a drop-in replacement for the libraries compilers call when they vectorize a loop over <code>sin</code>, <code>exp</code> or <code>pow</code>.</p>
+  <p class="meta">Version 0.7.2 · MIT licence · x86-64, aarch64, riscv64 · results are <a href="https://core-math.gitlabpages.inria.fr/">CORE-MATH</a>'s, bit for bit</p>
+  <nav class="links" aria-label="Project links">
+    <a href="https://github.com/anun333/crmvec">Source on GitHub</a>
+    <a href="https://github.com/anun333/crmvec/releases">Releases</a>
+    <a href="https://github.com/anun333/crmvec#readme">Full README</a>
+  </nav>
+  <div class="bits" role="figure" aria-label="An example of a last-bit difference">
+    <p class="q">exp(2.9671878792686113), as binary64 bits</p>
+    <div class="row"><span class="who">glibc's vector exp</span><span class="hex">0x40336feb390468c<b>7</b></span></div>
+    <div class="row"><span class="who">correctly rounded</span><span class="hex">0x40336feb390468c<b>8</b></span></div>
+    <p class="note">One bit apart. Both are within glibc's documented error, so neither is a bug, but only one is the exact result rounded once. glibc's answer depends on which library and which code path a machine has; the correctly rounded one is the same everywhere. (glibc 2.39 on a Zen 3, AVX2 entry point.)</p>
+  </div>
+</header>
+
+<main>
+<section>
+  <h2>Why</h2>
+  <p>A correctly rounded function has exactly one right answer for every input, so every correct implementation agrees, on every machine and every version. Vector math libraries aim for speed instead, within a few ulps, and their last bits move with the library, its version and the CPU's instruction set. Through PoCL, for example, glibc's <code>libmvec</code> returns something other than the correctly rounded result for 42% of random double <code>exp</code> inputs and 63% of double <code>sin</code> inputs: within OpenCL's bounds, and not reproducible across libraries.</p>
+  <p>crmvec gives those same entry points correctly rounded results, so a vectorized program computes the same bits on any machine, in any of the four rounding modes.</p>
+</section>
+
+<section>
+  <h2>What it replaces</h2>
+  <ul>
+    <li>glibc's <code>libmvec.so.1</code> on x86-64 and aarch64 (checked natively on both);</li>
+    <li>SLEEF's <code>libsleefgnuabi.so.3</code> on aarch64;</li>
+    <li>SLEEF's RVV <code>libsleef.so.3</code> on riscv64 (checked under emulation and natively on a SpacemiT X60).</li>
+  </ul>
+  <p>26 functions, each in float and double:</p>
+  <p class="fns">sin cos tan asin acos atan atan2 sinh cosh tanh asinh acosh atanh exp exp2 exp10 expm1 log log2 log10 log1p pow cbrt hypot erf erfc</p>
+  <p>On x86 that is every symbol LLVM's vectorizer can call through <code>libmvec</code>, in SSE2, AVX, AVX2 and AVX-512 forms; a program needing a symbol the library lacks fails to link rather than falling back silently. OpenCL's other correctly rounded functions are there too, under their C23 names: <code>sinpi</code>, <code>cospi</code>, <code>tanpi</code>, <code>asinpi</code>, <code>acospi</code>, <code>atanpi</code>, <code>atan2pi</code>, <code>lgamma</code>, <code>tgamma</code>, <code>rsqrt</code>, <code>powr</code>, <code>pown</code>, and half-precision and bfloat16 arrays.</p>
+</section>
+
+<section>
+  <h2>Using it</h2>
+<pre><code>make lib                   # the libraries (gcc on x86)
+make install PREFIX=/usr/local
+crmvec-run your-program    # its vector math from crmvec
+pkg-config --cflags --libs crmvec</code></pre>
+  <p>The libraries install to <code>lib/crmvec/</code>, a directory of their own, and replace the system's only for programs run with <code>crmvec-run</code> or linked with pkg-config's rpath, never system-wide. Recipes for Debian and Ubuntu, Fedora and Nix are in the repository; a conda-forge recipe is under review (<a href="https://github.com/conda-forge/staged-recipes/pull/34976">staged-recipes#34976</a>).</p>
+</section>
+
+<section>
+  <h2>How it is checked</h2>
+  <ul>
+    <li><strong>Every float input:</strong> all 2<sup>32</sup> inputs of each one-argument float function, through every entry point, against CORE-MATH.</li>
+    <li><strong>Doubles:</strong> 2<sup>31</sup> random inputs per function (2<sup>38</sup> in round-to-nearest on a large machine), CORE-MATH's hard-to-round cases and edge values, against CORE-MATH; and a separate check against MPFR in all four rounding modes, through both x86 entry points.</li>
+    <li><strong>Under flush-to-zero</strong>, as <code>-ffast-math</code> sets it, and on emulated older CPUs (no AVX, no AVX2).</li>
+    <li><strong>Controls:</strong> each check has one that must fail, such as a deliberately wrong function or a rounding test switched off, so a check that tests nothing says so.</li>
+    <li><code>make check</code> runs a few minutes of this on every push, on x86-64 and natively on arm64.</li>
+  </ul>
+</section>
+
+<section>
+  <h2>Speed</h2>
+  <p>Correct rounding costs speed. On one Zen 3 core (AVX2 entry points, nanoseconds per element), crmvec takes a median 3.3 times glibc's time, from 1.5 times (double <code>asinh</code>) to 9.9 times (double <code>erfc</code>). glibc computes floats in single precision on eight lanes; correct rounding needs double precision on four. Every function but one is faster than calling scalar CORE-MATH in a loop.</p>
+  <div class="scroll">
+  <table>
+    <thead><tr><th>function</th><th>crmvec</th><th>glibc libmvec</th><th>scalar CORE-MATH</th></tr></thead>
+    <tbody>
+      <tr><td><code>expf</code> / <code>logf</code></td><td class="n">1.5 / 2.1</td><td class="n">0.7 / 0.7</td><td class="n">2.7 / 2.8</td></tr>
+      <tr><td><code>sinf</code> / <code>cosf</code></td><td class="n">2.0 / 1.8</td><td class="n">0.5 / 0.7</td><td class="n">4.0 / 4.4</td></tr>
+      <tr><td><code>exp</code> / <code>log</code></td><td class="n">2.8 / 2.9</td><td class="n">1.2 / 1.4</td><td class="n">4.2 / 6.0</td></tr>
+      <tr><td><code>sin</code> / <code>cos</code></td><td class="n">4.4 / 4.3</td><td class="n">1.3 / 1.3</td><td class="n">7.7 / 25.7</td></tr>
+      <tr><td><code>pow</code></td><td class="n">8.6</td><td class="n">5.3</td><td class="n">19.6</td></tr>
+    </tbody>
+  </table>
+  </div>
+  <p class="small">The README has all 52 functions, the other CPUs (aarch64, riscv64, AVX-512) and how each was measured.</p>
+</section>
+
+<section>
+  <h2>Limits</h2>
+  <ul>
+    <li>The x86 library needs gcc; clang can build the checks but not the library.</li>
+    <li>On riscv64 it is correct but slower than SLEEF.</li>
+    <li>Natively checked on a few core types (Zen 3, Zen 4, Cascade Lake, Neoverse N1 and N2, SpacemiT X60), others under emulation.</li>
+  </ul>
+</section>
+</main>
+
+<footer>
+  <p>The scalar functions, their tables and the error analyses the vector paths rely on are <a href="https://core-math.gitlabpages.inria.fr/">CORE-MATH</a>'s, by Alexei Sibidanov, Paul Zimmermann, Tom Hubrecht and others, included unmodified under their MIT licence. Everything else is MIT-licensed. Written with the assistance of Claude Code (an AI tool); every result above comes from running the checks. Related: <a href="https://anun333.github.io/crnumerics/">crnumerics</a>, sums, matrix products and other operations with the same bits everywhere.</p>
+</footer>
+</div>
+</body>
+</html>
