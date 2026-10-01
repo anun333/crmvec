@@ -131,7 +131,8 @@ Packages, from this repository:
   and its library passes the checks.
 - **conda-forge** (`conda/recipe.yaml`): submitted as
   [staged-recipes#34976](https://github.com/conda-forge/staged-recipes/pull/34976)
-  (version 0.5.0), waiting for review. That test used sysroot 2.28, but
+  (on version 0.6.1 since 2026-09-30, whose linux-64 and aarch64 libraries
+  0.7.0 shares), waiting for review. An earlier test used sysroot 2.28, but
   conda-forge's default on x86-64 and aarch64 is glibc 2.17. There, 0.6.0
   fails to link: CORE-MATH's `__builtin_roundeven` becomes a call to glibc's
   `roundeven`, which exists only from 2.25, and 0.6.0 links with `-z defs`.
