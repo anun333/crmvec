@@ -6,11 +6,12 @@ Correctly rounded vector math, as a drop-in replacement for:
 - SLEEF's RVV `libsleef.so.3` on riscv64 (checked under emulation and
   natively on a SpacemiT X60).
 
-The latest release is 0.7.0: on riscv64, a build for VLEN 256, chosen at
-load, which is 2.3 times faster on a SpacemiT X60 (1.64 times SLEEF's
-time, with correctly rounded results). Its x86-64 and aarch64 libraries are
-0.6.1's, which links and runs with glibc before 2.25, as conda-forge needs.
-0.6.0 brought fixes from a full review (among them a crash on CPUs with AVX
+The latest release is 0.7.1, which takes CORE-MATH's current `powf.c`. It
+removes an undefined shift that 0.7.0's copy reaches; no changed result was
+found. 0.7.0 added, on riscv64, a build for VLEN 256, chosen at load, which
+is 2.3 times faster on a SpacemiT X60 (1.64 times SLEEF's time, with
+correctly rounded results). 0.6.1 made the library link and run with glibc
+before 2.25, as conda-forge needs. 0.6.0 brought fixes from a full review (among them a crash on CPUs with AVX
 but not AVX2), AVX-512 entry points from the portable core, and faster
 aarch64 floats.
 
@@ -131,8 +132,8 @@ Packages, from this repository:
   and its library passes the checks.
 - **conda-forge** (`conda/recipe.yaml`): submitted as
   [staged-recipes#34976](https://github.com/conda-forge/staged-recipes/pull/34976)
-  (on version 0.6.1 since 2026-09-30, whose linux-64 and aarch64 libraries
-  0.7.0 shares), waiting for review. An earlier test used sysroot 2.28, but
+  (on version 0.6.1 since 2026-09-30; 0.7.0 shares its linux-64 and aarch64
+  libraries, and 0.7.1 differs from them only in `powf`), waiting for review. An earlier test used sysroot 2.28, but
   conda-forge's default on x86-64 and aarch64 is glibc 2.17. There, 0.6.0
   fails to link: CORE-MATH's `__builtin_roundeven` becomes a call to glibc's
   `roundeven`, which exists only from 2.25, and 0.6.0 links with `-z defs`.
@@ -158,7 +159,7 @@ The Debian, Fedora and Nix recipes also run `make check` on the library
 they package, as part of the build (Debian's `nocheck` skips it). Checked
 2026-09-27 on Debian amd64 (Ubuntu 24.04), Fedora 44 (gcc 16) and Nix
 (nixpkgs 24.05): every verdict passes. That was version 0.1.0. The recipes
-now carry 0.7.0 and haven't been rebuilt since.
+now carry 0.7.1 and haven't been rebuilt since.
 
 Every push also runs `make check` on GitHub Actions
 (`.github/workflows/check.yml`), on an x86-64 runner and natively on an
@@ -1006,11 +1007,9 @@ The scalar functions, their tables, and the error analyses the vector paths
 rely on are [CORE-MATH](https://core-math.gitlabpages.inria.fr/)'s, by Alexei
 Sibidanov, Paul Zimmermann, Tom Hubrecht and others. Their files are
 included unmodified under their own MIT license and copyright notices. All
-165 are byte-identical to CORE-MATH's master branch: `cospi.c` at `b1a4bad`
-(2026-09-29, the fix for an undefined shift we reported), the rest at
-`a0fce68` (2026-09-28). `powf.c` stays at `a0fce68`: master's `8ea0949`
-returns some exact results 1 ulp too high in round-upward (`powf(10, 3)`
-gives 1000.00006). The
+165 are byte-identical to CORE-MATH's master branch at `e3f1fcc`
+(2026-09-30), which has the fixes for the undefined shifts we reported in
+`cospi.c` and `powf.c`. The
 `crmvec-*-tab.h` headers copy their tables. Everything else is under the
 MIT license in `LICENSE`.
 

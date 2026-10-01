@@ -360,6 +360,7 @@ float cr_powf(float x0, float y0){
   };
   double x = x0, y = y0;
   b64u64_u tx = {.f = x}, ty = {.f = y};
+  int xsgn = 0;
   if(__builtin_expect (tx.u<<1 == (uint64_t)0x3ff<<53, 0)){ // |x|=1
     if(tx.u>>63){ // x=-1
       if((ty.u<<1) > (uint64_t)0x7ff<<53) return y0 + y0; // y=nan
@@ -373,6 +374,8 @@ float cr_powf(float x0, float y0){
   }
   if(__builtin_expect (ty.u<<1 == 0, 0))
     return is_signalingf (x0) ? x0 + y0 : 1.0f; // x^0 = 1 except for x = sNaN
+  if(__builtin_expect (ty.u == (0x3fful<<52), 0))
+    return is_signalingf (x0) ? x0 + y0 : x0; // x^1 = x except for x = sNaN
   if(__builtin_expect ((ty.u<<1) >= (uint64_t)0x7ff<<53, 0)){ // y=Inf/NaN
     // the case |x|=1 was already checked above
     if((tx.u<<1) > (uint64_t)0x7ff<<53) return x0 + y0; // x=NaN
@@ -391,13 +394,15 @@ float cr_powf(float x0, float y0){
       if(ty.u>>63)return 1/x0; else return x0;
     }
     if((tx.u<<1) > (uint64_t)0x7ff<<53) return x0 + x0; // x is NaN
-    if(__builtin_expect(tx.u > (uint64_t)0x7ff<<52, 0)) // x <= 0
+    if(__builtin_expect(tx.u > (uint64_t)0x7ff<<52, 0)){ // x <= 0
+      xsgn = 1;
       if(!isint(y0) && x != 0) {
 #ifdef CORE_MATH_SUPPORT_ERRNO
         errno = EDOM;
 #endif
 	return (x - x) / (x - x);  // NaN, should raise 'Invalid operation' exception.
       }
+    }
   }
   if(__builtin_expect (!(tx.u<<1), 0)){ // x=+0 or -0
     if(ty.u>>63){ // y < 0
@@ -485,9 +490,7 @@ float cr_powf(float x0, float y0){
   uint64_t off = 468;
   if(((rr.u+off)&0xfffffff) <= 2*off)
     return as_powf_accurate2 (x0, y0, is_exact (x0, y0), flag);
-  int et = ((ty.u>>52)&0x7ff) - 0x3ff;
-  uint64_t kk = (et >= -11) ? ty.u<<(11+et) : ty.u>>(-11-et);
-  if(!(kk<<1)&&kk) rr.f = __builtin_copysign(rr.f,x);
+  if(__builtin_expect(xsgn && isodd(y0), 0)) rr.f = -rr.f;
   float res = rr.f;
 #ifdef CORE_MATH_SUPPORT_ERRNO
   /* It is not enough to check if res is infinite, since for rounding towards
@@ -532,7 +535,7 @@ static float as_powf_accurate2(float x0, float y0, int is_exact, FLAG_T flag){
      {0x1.397637b3876a4p-53, -0x1.5632c551ae458p-107}, {0x1.98fbfefdddb51p-58, -0x1.fd134923d52b4p-115}};
   double x = x0, y = y0;
   b64u64_u t = {.f = x};
-  int e = ((t.u>>52)&0x7ff) - 0x3ff;
+  int e = ((t.u>>52)&0x7ff) - 0x3ff, xsgn = t.u>>63;
   t.u &= ~(uint64_t)0>>12;
   int k = t.u > 0x6a09e667f3bcdull;
   e += k;
@@ -547,59 +550,8 @@ static float as_powf_accurate2(float x0, float y0, int is_exact, FLAG_T flag){
   eh -= ee;
   eh = polydd(eh, el, 18, ce, &el);
   b64u64_u r = {.u = ((uint64_t)0x3ff+(int64_t)ee)<<52};
-  b32u32_u ty = {.f = y0};
-  int et = ((ty.u>>23)&0xff) - 0x7f;
-  uint32_t kk = (8+et>=0) ? ty.u<<(8+et) : ty.u>>(-8-et);
-  uint32_t isint = !(kk<<1|et>>31) || et>=23;
   b64u64_u ll = {.f = el}, lh = {.f = eh};
-  if(((ll.u>>(6*4-1))&((1<<29)-1)) == ((1<<29)-1)){
-    if(eh<1){
-      if(el>=0x1p-54){
-	el -= 0x1p-53;
-	eh += 0x1p-53;
-      } else if(el<=-0x1p-54){
-	el += 0x1p-53;
-	eh -= 0x1p-53;
-      }
-    } else {
-      if(el>=0x1p-53){
-	el -= 0x1p-52;
-	eh += 0x1p-52;
-      }else if(el<=-0x1p-53){
-	el += 0x1p-52;
-	eh -= 0x1p-52;
-      }
-    }
-  } else if(((ll.u>>(6*4-1))&((1<<29)-1)) == 0 ){
-    if(el>0){
-      if(eh<1){
-	if(el>=0x1p-53){
-	  el -= 0x1p-53;
-	  eh += 0x1p-53;
-	}
-      } else {
-	if(el>=0x1p-52){
-	  el -= 0x1p-52;
-	  eh += 0x1p-52;
-	}
-      }
-    } else {
-      if(eh<1){
-	if(el<=-0x1p-53){
-	  el += 0x1p-53;
-	  eh -= 0x1p-53;
-	}
-      } else {
-	if(el<=-0x1p-52){
-	  el += 0x1p-52;
-	  eh -= 0x1p-52;
-	}
-      }
-    }
-  }
-  ll.f = el;
-  lh.f = eh;
-  if((lh.u&0xfffffff) == 0){
+  if((!is_exact && (lh.u&0xfffffff) == 0) || (is_exact && ((lh.u+1)&0xfffffff) <= 2)){
     if(__builtin_fabs(ll.f)>0x1p-91){
       if(el<0){
 	lh.u--;
@@ -610,12 +562,8 @@ static float as_powf_accurate2(float x0, float y0, int is_exact, FLAG_T flag){
       }
     }
   }
-  
   eh *= r.f;
-  el *= r.f;
-  if(isint && kk){
-    eh = __builtin_copysign(eh, x0);
-  }
+  if(xsgn && isodd(y0)) eh = -eh;
   float res = eh;
   if (is_exact)
     set_flag (flag);

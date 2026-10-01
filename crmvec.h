@@ -21,7 +21,7 @@
 #include <stddef.h>
 #include <stdint.h>
 
-#define CRMVEC_VERSION "0.7.0"
+#define CRMVEC_VERSION "0.7.1"
 
 #ifdef __cplusplus
 extern "C" {

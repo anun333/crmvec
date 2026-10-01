@@ -11,7 +11,7 @@
 %global debug_package %{nil}
 
 Name:           crmvec
-Version:        0.7.0
+Version:        0.7.1
 Release:        1%{?dist}
 Summary:        Correctly rounded vector math (a drop-in libmvec)
 License:        MIT
@@ -61,6 +61,14 @@ make check
 %{_libdir}/pkgconfig/crmvec.pc
 
 %changelog
+* Thu Oct 01 2026 anun333 <anun333@posteo.net> - 0.7.1-1
+- CORE-MATH: powf.c from master e3f1fcc, so all 165 of CORE-MATH's files are
+  byte-identical to its master again. It removes an undefined shift
+  (reported 2026-09-27) that cr_powf(0x1.ffff36p-1f, 0x1.03ac88p+24f)
+  reaches in 0.7.0. No changed result was found: 0 differences from 0.7.0's
+  powf on 2.7 billion pairs in the four rounding modes, and none among 40.7
+  million exact results in round-upward.
+
 * Wed Sep 30 2026 anun333 <anun333@posteo.net> - 0.7.0-1
 - riscv64: a second copy of the 52 functions, built for VLEN 256, which the
   library uses when the CPU's VLEN is 256 (read once at load;

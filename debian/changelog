@@ -1,3 +1,15 @@
+crmvec (0.7.1) unstable; urgency=medium
+
+  * CORE-MATH: powf.c from master e3f1fcc, so all 165 of CORE-MATH's files
+    are byte-identical to its master again. It removes an undefined shift
+    (reported 2026-09-27) that cr_powf(0x1.ffff36p-1f, 0x1.03ac88p+24f)
+    reaches in 0.7.0. No changed result was found: 0 differences from
+    0.7.0's powf on 2.7 billion pairs in the four rounding modes, and none
+    among 40.7 million exact results in round-upward.
+  * Nothing else changes.
+
+ -- anun333 <anun333@posteo.net>  Thu, 01 Oct 2026 00:19:06 -0500
+
 crmvec (0.7.0) unstable; urgency=medium
 
   * riscv64: a second copy of the 52 functions, built for VLEN 256, which the
