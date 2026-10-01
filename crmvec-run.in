@@ -3,4 +3,14 @@
 # libsleefgnuabi.so.3) found before the system's, so that the vector math it
 # was compiled to call is correctly rounded. Nothing else changes.
 #   crmvec-run ./program args...
+#   crmvec-run --help | --version
+case "${1-}" in
+--help | -h)
+  echo "usage: crmvec-run PROGRAM [ARGS...]"
+  echo "Runs PROGRAM with crmvec's correctly rounded libmvec.so.1 found first"
+  echo "(from @CRMDIR@); nothing else changes."
+  exit 0 ;;
+--version) echo "crmvec-run @VERSION@"; exit 0 ;;
+"") echo "usage: crmvec-run PROGRAM [ARGS...] (see crmvec-run --help)" >&2; exit 2 ;;
+esac
 LD_LIBRARY_PATH="@CRMDIR@${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}" exec "$@"

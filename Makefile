@@ -12,7 +12,7 @@ ifeq ($(origin CC),default)
 CC      := gcc
 endif
 .DEFAULT_GOAL := all
-VERSION := 0.7.1
+VERSION := 0.7.2
 # install locations (make install PREFIX=... DESTDIR=...): the libraries go
 # to a directory of their own, so that nothing replaces the system's
 # libmvec.so.1 until a program asks for it (crmvec-run, or the rpath that
@@ -87,7 +87,18 @@ all: lib $(A64)/aarch64-check $(A64)/aarch64-check-advsimd $(A64)/nbench
 lib: $(A64)/libmvec.so.1 $(A64)/libsleefgnuabi.so.3
 LIBS_BUILT = $(A64)/libmvec.so.1 $(A64)/libsleefgnuabi.so.3
 else
-all: libmvec.so.1 crtest libcrref.so bcheck cecheck lcheck hypot-midpoints hypotf-midpoints tan-poles bbench ebench mpfrcheck pownf-search f16check headercheck roundeven-check
+# mpfrcheck and pownf-search call MPFR 4.2's functions (mpfr_pown,
+# mpfr_powr, mpfr_sinpi, ...): with an older MPFR (openSUSE 15.6 has 4.1)
+# they are left out of all and check, with a message, instead of stopping
+# the build; an MPFR elsewhere goes in through CC or CFLAGS (-I, -L)
+# (the probe writes '#' as printf's \043: make 4.3 and later keep the
+# backslash of a \# inside $(shell), so the directives never reached the
+# compiler and every MPFR passed; a header saying 4.1 caught it, 2026-10-01)
+MPFR42  := $(shell printf '\043include <mpfr.h>\n\043if MPFR_VERSION < MPFR_VERSION_NUM(4,2,0)\n\043error\n\043endif\n' | $(CC) $(CFLAGS) -x c -E - > /dev/null 2>&1 && echo yes)
+ifeq ($(MPFR42),)
+$(info mpfrcheck, pownf-search: left out, no MPFR 4.2 or later found (they call mpfr_pown, mpfr_sinpi, ...))
+endif
+all: libmvec.so.1 crtest libcrref.so bcheck cecheck lcheck hypot-midpoints hypotf-midpoints tan-poles bbench ebench $(if $(MPFR42),mpfrcheck pownf-search) f16check headercheck roundeven-check
 lib: libmvec.so.1
 LIBS_BUILT = libmvec.so.1
 endif
@@ -100,7 +111,7 @@ install: lib crmvec.h crmvec-simd.h crmvec.pc.in crmvec-run.in
 	install -m 644 crmvec.h $(DESTDIR)$(INCDIR)/crmvec.h
 	install -m 644 crmvec-simd.h $(DESTDIR)$(INCDIR)/crmvec-simd.h
 	sed -e 's|@CRMDIR@|$(CRMDIR)|g' -e 's|@INCDIR@|$(INCDIR)|g' -e 's|@VERSION@|$(VERSION)|g' crmvec.pc.in > $(DESTDIR)$(PKGDIR)/crmvec.pc
-	sed -e 's|@CRMDIR@|$(CRMRUN)|g' crmvec-run.in > $(DESTDIR)$(BINDIR)/crmvec-run
+	sed -e 's|@CRMDIR@|$(CRMRUN)|g' -e 's|@VERSION@|$(VERSION)|g' crmvec-run.in > $(DESTDIR)$(BINDIR)/crmvec-run
 	chmod 755 $(DESTDIR)$(BINDIR)/crmvec-run
 
 # crmvec.h declares what the library defines: compile the definitions with it
@@ -159,6 +170,15 @@ PORTOBJ += $(EOBJ)
 crmvec.o: crmvec.c $(HDR) $(PORTOBJ)
 	$(CC) $(CFLAGS) $(CPPFLAGS) $(FPV) -DCRMVEC_PORT=$(X86PORT) -DCRMVEC_E512=$(E512) -fPIC -c -o $@ crmvec.c
 
+# rsqrt-vcheck (the vector double rsqrt against CORE-MATH) and its control:
+# the same library with the transcribed rounding test off, which must differ
+rsqrt-vcheck: rsqrt-vcheck.c
+	$(CC) $(CFLAGS) -fopenmp -o $@ rsqrt-vcheck.c -ldl -lm
+rsqrt-plant/libmvec.so.1: crmvec.c $(HDR) $(PORTOBJ) $(LIBC) crmvec-fpenv.c $(CR) libcrf16.a crmvec-exports.map
+	@mkdir -p rsqrt-plant
+	$(CC) $(CFLAGS) $(CPPFLAGS) $(FPV) -DCRMVEC_PORT=$(X86PORT) -DCRMVEC_E512=$(E512) -DCRMVEC_RSQRT_PLANT -fPIC -c -o rsqrt-plant/crmvec.o crmvec.c
+	$(CC) $(CFLAGS) $(CPPFLAGS) $(FP) $(LDFLAGS) -fPIC -shared -Wl,-z,defs -Wl,-Bsymbolic-functions -Wl,--gc-sections -Wl,-soname,libmvec.so.1 -Wl,--version-script=crmvec-exports.map -o $@ rsqrt-plant/crmvec.o $(PORTOBJ) $(LIBC) $(CR) $(CRWRAP) libcrf16.a -lm
+
 # for the checks built with -mavx2 (crtest, hypot-midpoints), as before
 crmvec-avx2.o: crmvec.c $(HDR) $(PORTOBJ)
 	$(CC) $(CFLAGS) $(FPV) -DCRMVEC_PORT=$(X86PORT) -DCRMVEC_E512=$(E512) -mavx2 -mfma -c -o $@ crmvec.c
@@ -215,6 +235,7 @@ ebench: ebench.c
 # they load libmvec.so.1 from their own directory through an RPATH (not a
 # RUNPATH, which LD_LIBRARY_PATH would override), and check that they did
 mpfrcheck: mpfrcheck.c crtest-own.h crmvec-pownf-tab.h libmvec.so.1 pow/pow.c powf.c
+	$(if $(MPFR42),,$(error mpfrcheck needs MPFR 4.2 or later))
 	$(CC) $(CFLAGS) $(FP) -mavx2 -mfma -fopenmp -o $@ mpfrcheck.c pow/pow.c powf.c libmvec.so.1 -Wl,--disable-new-dtags,-rpath,'$$ORIGIN' -lmpfr -lm
 
 # crmvec-f16.c's functions against MPFR on every input, all four modes
@@ -223,6 +244,7 @@ f16check: f16check.c crmvec-f16-list.h crtest-own.h libmvec.so.1
 
 PWS     := crmvec-scalar.c $(CR)
 pownf-search: pownf-search.c crmvec-pownf-tab.h $(PWS)
+	$(if $(MPFR42),,$(error pownf-search needs MPFR 4.2 or later))
 	$(CC) $(CFLAGS) $(FP) -fopenmp -o $@ pownf-search.c $(PWS) -lmpfr -lm
 
 # cr_tan renamed to a counter inside crmvec.c only, to see which lanes go to it
@@ -359,7 +381,8 @@ $(RV64)/rv64-bench: port/rv64-bench.c $(RV64)/libcr.a
 	$(RVCC) -o $@ $(RV64)/rv64-bench.o $(RV64)/libcr.a -ldl -lm
 
 clean:
-	rm -f check.log libmvec.so.1 crmvec.o crmvec-avx2.o crmvec-port.o crmvec-port-e.o crtest libcrref.so bcheck hypot-midpoints hypotf-midpoints tan-poles bbench ebench mpfrcheck pownf-search libcrf16.a f16check cecheck lcheck roundeven-check
+	rm -f check.log libmvec.so.1 crmvec.o crmvec-avx2.o crmvec-port.o crmvec-port-e.o crtest libcrref.so bcheck hypot-midpoints hypotf-midpoints tan-poles bbench ebench mpfrcheck pownf-search libcrf16.a f16check cecheck lcheck roundeven-check rsqrt-vcheck
+	rm -rf rsqrt-plant
 	rm -rf $(A64) $(RV64) build-sleef build-f16
 
 # a few minutes of the checks, for users and packagers (the full list is the
@@ -409,7 +432,7 @@ $(A64)/dropin: port/dropin-main.c port/dropin-loop.c crmvec-simd.h $(A64)/libmve
 	$(A64CC) $(CFLAGS) -O3 -ffp-contract=off -fno-math-errno -include crmvec-simd.h -c -o $(A64)/dropin-loop.o port/dropin-loop.c
 	$(A64CC) $(CFLAGS) $(FP) -I. -o $@ port/dropin-main.c $(A64)/dropin-loop.o sin.c log/log.c expf.c atan2f.c $(A64)/libmvec.so.1 -lm
 else
-check: all
+check: all rsqrt-vcheck rsqrt-plant/libmvec.so.1
 	@set -e; v() { echo "$$1" | tee -a check.log | tail -1; echo "$$1" | tail -1 | grep -qE $(VERDICTS) || { echo "FAILED: $$2"; exit 1; }; }; \
 	: > check.log; \
 	v "$$(./bcheck . 18)" bcheck; \
@@ -418,12 +441,16 @@ check: all
 	  v "$$(CRTEST_FTZ=1 ./cecheck d . 12)" "cecheck d under flush-to-zero"; else echo "cecheck c, cecheck d: skipped, no AVX"; fi; \
 	if grep -q avx512f /proc/cpuinfo; then v "$$(./cecheck e . 12)" "cecheck e"; else echo "cecheck e: skipped, no AVX-512F"; fi; \
 	if grep -qw avx2 /proc/cpuinfo && grep -qw fma /proc/cpuinfo; then \
-	v "$$(./mpfrcheck 16 all)" "mpfrcheck, four rounding modes"; \
-	v "$$(./mpfrcheck controls)" "mpfrcheck controls"; \
+	if [ -n "$(MPFR42)" ]; then v "$$(./mpfrcheck 16 all)" "mpfrcheck, four rounding modes"; \
+	v "$$(./mpfrcheck controls)" "mpfrcheck controls"; else echo "mpfrcheck: skipped, no MPFR 4.2 or later"; fi; \
 	v "$$(./crtest verify expf logf sinf)" "crtest verify (every input of expf, logf, sinf)"; \
 	v "$$(./hypot-midpoints)" "hypot-midpoints (double hypot on exact midpoints)"; \
 	v "$$(./hypotf-midpoints)" "hypotf-midpoints (float pairs near a midpoint, found by search)"; \
-	else echo "mpfrcheck, crtest, hypot-midpoints, hypotf-midpoints: skipped, no AVX2 and FMA (they call the AVX2 entry points)"; fi; \
+	v "$$(./rsqrt-vcheck ./libmvec.so.1 ./libcrref.so 24)" "rsqrt-vcheck (the vector double rsqrt, 2^24 inputs)"; \
+	v "$$(./rsqrt-vcheck ./libmvec.so.1 ./libcrref.so hard)" "rsqrt-vcheck hard (CORE-MATH's hard cases at every scale)"; \
+	if ./rsqrt-vcheck ./rsqrt-plant/libmvec.so.1 ./libcrref.so hard > /dev/null; then echo "FAILED: rsqrt-vcheck's control (the rounding test off) differs nowhere"; exit 1; \
+	else echo "rsqrt-vcheck control: with the rounding test off, the hard cases differ, as they must"; fi; \
+	else echo "mpfrcheck, crtest, hypot-midpoints, hypotf-midpoints, rsqrt-vcheck: skipped, no AVX2 and FMA (they call the AVX2 entry points)"; fi; \
 	v "$$(./lcheck .)" "lcheck (every input of sinpif, cospif, tanpif, rsqrtf)"; \
 	v "$$(./f16check | tail -1)" "f16check"; \
 	v "$$(./roundeven-check)" "roundeven-check (the library's own roundeven, for glibc before 2.25)"; \

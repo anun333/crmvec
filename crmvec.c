@@ -4130,7 +4130,8 @@ ALIAS(_ZGVbN2vv___pow_finite, _ZGVbN2vv_pow, __m128d, (__m128d, __m128d), NOATTR
 #define LF2(n, e) XL2(float, __m128, 4, _ZGVbN4vv_##n, e, NOATTR) XL2(float, __m256, 8, _ZGVdN8vv_##n, e, AVXC)
 #define LDN(n, e) XLN(double, __m128d, __m128i, 2, _ZGVbN2vv_##n, e, NOATTR) XLN(double, __m256d, __m128i, 4, _ZGVdN4vv_##n, e, AVXC)
 #define LFN(n, e) XLN(float, __m128, __m128i, 4, _ZGVbN4vv_##n, e, NOATTR) XLN(float, __m256, __m256i, 8, _ZGVdN8vv_##n, e, AVXC)
-/* sinpif, cospif, rsqrtf, powr and pown have vector paths (below) */
+/* sinpif, cospif, rsqrtf, rsqrt, powr and pown have vector paths (below) */
+#define VD1(n, e)
 #define VF1(n, e)
 #define VD2(n, e)
 #define VF2(n, e)
@@ -4290,6 +4291,74 @@ AVX2 __attribute__((noinline)) static __m256 crvl_rsqrtf(__m256 xf)
   __m256d y1 = rsqrt_half(_mm256_cvtps_pd(_mm256_extractf128_ps(xf, 1)), &r1);
   return finish8(xf, y0, y1, r0, r1, cr_rsqrtf);
 }
+/* double rsqrt (2026-10-01): CORE-MATH's fast path (rsqrt.c) transcribed
+   lane for lane: r from sqrt and a division (the scaled form above
+   rsqrt.c's threshold, kept as written: 0x7fd000000000000, 15 hex digits),
+   one Newton step with fma, rf = r - dr, and its test on dr's exponent
+   against rf's (aidr, mid; unsigned compares made signed by flipping the
+   top bit). Lanes it can't decide, and x outside [2^-1022, inf) (zeros,
+   subnormals, negatives, infinities, NaN), go to cr_rsqrt; so the
+   correctness argument is CORE-MATH's, and the transcription is what
+   crtest, bcheck and cecheck check. Every intermediate of an accepted lane
+   is a normal number, so FTZ and DAZ cannot reach it. */
+AVX2I static inline __m256d rsqrt_fast(__m256d x, __m256d *redo)
+{
+  __m256i u = _mm256_castpd_si256(x);
+  __m256i ok = _mm256_and_si256(_mm256_cmpgt_epi64(u, _mm256_set1_epi64x((1LL << 52) - 1)),
+                                _mm256_cmpgt_epi64(_mm256_set1_epi64x(0x7ffLL << 52), u));   /* sign set: negative as int64 */
+  x = _mm256_blendv_pd(_mm256_set1_pd(1.0), x, _mm256_castsi256_pd(ok));                    /* others: 1, recomputed */
+  u = _mm256_castpd_si256(x);
+  __m256d s = _mm256_sqrt_pd(x);
+  __m256i big = _mm256_cmpgt_epi64(u, _mm256_set1_epi64x(0x7fd000000000000LL));
+  /* (4/x)(0.25 s) above the threshold, (1/x) s below, as (c/x)(k s) with
+     c, k = 4, 0.25 or 1, 1: one division, and 1 s = s exactly */
+  __m256d c = _mm256_blendv_pd(_mm256_set1_pd(1.0), _mm256_set1_pd(4.0), _mm256_castsi256_pd(big));
+  __m256d kk = _mm256_blendv_pd(_mm256_set1_pd(1.0), _mm256_set1_pd(0.25), _mm256_castsi256_pd(big));
+  __m256d r = _mm256_mul_pd(_mm256_div_pd(c, x), _mm256_mul_pd(kk, s));
+  __m256d rx = _mm256_mul_pd(r, x), drx = _mm256_fmsub_pd(r, x, rx);
+  __m256d h = _mm256_add_pd(_mm256_fmsub_pd(r, rx, _mm256_set1_pd(1.0)), _mm256_mul_pd(r, drx));
+  __m256d dr = _mm256_mul_pd(_mm256_mul_pd(r, _mm256_set1_pd(0.5)), h);
+  __m256d rf = _mm256_sub_pd(r, dr);
+  dr = _mm256_sub_pd(dr, _mm256_sub_pd(r, rf));
+  __m256i aidr = _mm256_add_epi64(_mm256_sub_epi64(_mm256_and_si256(_mm256_castpd_si256(dr), _mm256_set1_epi64x(0x7fffffffffffffffLL)),
+                                                   _mm256_and_si256(_mm256_castpd_si256(rf), _mm256_set1_epi64x(0x7ffLL << 52))),
+                                  _mm256_set1_epi64x(0x3feLL << 52));
+  __m256i mid = _mm256_srli_epi64(_mm256_add_epi64(_mm256_sub_epi64(aidr, _mm256_set1_epi64x(0x3c90000000000000LL)), _mm256_set1_epi64x(16)), 5);
+  const __m256i S = _mm256_set1_epi64x((long long)0x8000000000000000ULL);
+  __m256i as = _mm256_xor_si256(aidr, S);
+  __m256i lo = _mm256_cmpgt_epi64(_mm256_xor_si256(_mm256_set1_epi64x(0x39b0000000000000LL), S), as);   /* aidr < 0x39b0... */
+  __m256i hi = _mm256_cmpgt_epi64(as, _mm256_xor_si256(_mm256_set1_epi64x(0x3c9fffffffffff80LL), S));  /* aidr > 0x3c9f...80 */
+  __m256i mz = _mm256_cmpeq_epi64(mid, _mm256_setzero_si256());
+  __m256i bad = _mm256_or_si256(_mm256_or_si256(lo, hi), _mm256_or_si256(mz, _mm256_xor_si256(ok, _mm256_set1_epi64x(-1))));
+#ifdef CRMVEC_RSQRT_PLANT   /* rsqrt-vcheck's control: the rounding test off, every in-range lane accepted */
+  bad = _mm256_xor_si256(ok, _mm256_set1_epi64x(-1));
+#endif
+  *redo = _mm256_castsi256_pd(bad);
+  return rf;
+}
+AVX2 __attribute__((noinline)) static __m256d crvl_rsqrt(__m256d x)
+{
+  double xs[4], ys[4];
+  if (!crm_rn()) { _mm256_storeu_pd(xs, x); for (int i = 0; i < 4; i++) xs[i] = cr_rsqrt(xs[i]); return _mm256_loadu_pd(xs); }
+  __m256d redo, y = rsqrt_fast(x, &redo);
+  int m = _mm256_movemask_pd(redo);
+  if (!m) return y;
+  _mm256_storeu_pd(xs, x); _mm256_storeu_pd(ys, y);
+  for (int i = 0; i < 4; i++) if (m >> i & 1) ys[i] = cr_rsqrt(xs[i]);
+  return _mm256_loadu_pd(ys);
+}
+AVX2 __attribute__((noinline)) static __m128d bvd_rsqrt(__m128d x) { return _mm256_castpd256_pd128(crvl_rsqrt(_mm256_set_m128d(x, x))); }
+__m128d _ZGVbN2v_rsqrt(__m128d x)
+{
+  if (crm_avx2 && crm_rn()) return bvd_rsqrt(x);
+  double a[2]; memcpy(a, &x, 16); for (int i = 0; i < 2; i++) a[i] = cr_rsqrt(a[i]); memcpy(&x, a, 16); return x;
+}
+AVXC __m256d _ZGVdN4v_rsqrt(__m256d x)
+{
+  if (crm_avx2) return crvl_rsqrt(x);
+  double a[4]; _mm256_storeu_pd(a, x); for (int i = 0; i < 4; i++) a[i] = cr_rsqrt(a[i]); return _mm256_loadu_pd(a);
+}
+
 #define BVF1(NAME)                                                                             \
   AVX2 __attribute__((noinline)) static __m128 bvf_##NAME(__m128 x)                             \
   { return _mm256_castps256_ps128(crvl_##NAME(_mm256_set_m128(x, x))); }                        \

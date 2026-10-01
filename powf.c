@@ -374,7 +374,7 @@ float cr_powf(float x0, float y0){
   }
   if(__builtin_expect (ty.u<<1 == 0, 0))
     return is_signalingf (x0) ? x0 + y0 : 1.0f; // x^0 = 1 except for x = sNaN
-  if(__builtin_expect (ty.u == (0x3fful<<52), 0))
+  if(__builtin_expect (ty.u == (0x3ffull<<52), 0))
     return is_signalingf (x0) ? x0 + y0 : x0; // x^1 = x except for x = sNaN
   if(__builtin_expect ((ty.u<<1) >= (uint64_t)0x7ff<<53, 0)){ // y=Inf/NaN
     // the case |x|=1 was already checked above

@@ -11,7 +11,7 @@
 %global debug_package %{nil}
 
 Name:           crmvec
-Version:        0.7.1
+Version:        0.7.2
 Release:        1%{?dist}
 Summary:        Correctly rounded vector math (a drop-in libmvec)
 License:        MIT
@@ -61,6 +61,23 @@ make check
 %{_libdir}/pkgconfig/crmvec.pc
 
 %changelog
+* Thu Oct 01 2026 anun333 <anun333@posteo.net> - 0.7.2-1
+- x86: a vector path for double rsqrt (AVX2 and FMA; the SSE2 entry point
+  goes through it), CORE-MATH's fast path transcribed; lanes it cannot
+  decide go to cr_rsqrt. 2.6 times faster than CORE-MATH's scalar rsqrt on
+  a Zen 3. Checked by rsqrt-vcheck, in make check, on CORE-MATH's hard
+  cases at every scale, with a control that must fail.
+- CORE-MATH: powf.c and sin.c from master fe94e92, so all 165 of
+  CORE-MATH's files are byte-identical to its master again. No changed
+  result was found (sin: 2^26 large arguments and 1,975,928 hard cases;
+  powf: 2.7 billion pairs; four rounding modes).
+- Build: mpfrcheck and pownf-search need MPFR 4.2; with an older MPFR they
+  are left out instead of stopping the build.
+- crtest: CRTEST_LOG2N sets the random sample size of verify64 (and verify64e).
+- crmvec-run: --help and --version (asked for by conda-forge's review, as a
+  test of the installed package); with no arguments it prints the usage and
+  exits 2.
+
 * Thu Oct 01 2026 anun333 <anun333@posteo.net> - 0.7.1-1
 - CORE-MATH: powf.c from master e3f1fcc, so all 165 of CORE-MATH's files are
   byte-identical to its master again. It removes an undefined shift

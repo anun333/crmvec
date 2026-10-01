@@ -23,3 +23,5 @@ build-dropin-x86/
 ebench
 check.log
 roundeven-check
+rsqrt-vcheck
+rsqrt-plant/

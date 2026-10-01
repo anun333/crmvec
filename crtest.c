@@ -5,6 +5,7 @@
      crtest verify [f...]    float, one argument: every one of the 2^32
                              inputs through _ZGVdN8v_<f>
      crtest verify64 [f...]  double, one argument (_ZGVdN4v_<f>): 2^31 random
+                            (CRTEST_LOG2N=n for 2^n)
                              inputs (half over the function's main range,
                              half with a random exponent over all doubles,
                              both signs), CORE-MATH's own hard cases +-1000
@@ -212,12 +213,17 @@ static int verify64(int argc, char **argv)
                                 -0x1.74910d52d3052p+9, -745.2, 709.5, -708.0};
   int bad_fns = 0;
   const int L = LANES();
+  /* CRTEST_LOG2N: the random sample per function (default 31; 38 on a
+     big machine is 128 times as many, 2026-10-01: every double is out of
+     reach, 2^64 at 4.7e8 a second being 1,200 years per function) */
+  int lg64 = getenv("CRTEST_LOG2N") ? atoi(getenv("CRTEST_LOG2N")) : 31;
+  if (lg64 < 10 || lg64 > 44) { printf("VOID: CRTEST_LOG2N must be 10 to 44\n"); return 2; }
   if (e512) printf("the AVX-512 entry points (_ZGVeN8v_)\n");
   for (unsigned f = 0; f < ND; f++) {
     if (!wanted(D[f].name, argc, argv)) continue;
     unsigned long long bad = 0, n = 0; uint64_t first = 0;
 #pragma omp parallel for reduction(+ : bad, n) schedule(static)
-    for (long long blk = 0; blk < (1LL << 31) / L; blk++) {        /* blocks of 4 (or 8): 2^31 inputs */
+    for (long long blk = 0; blk < (1LL << lg64) / L; blk++) {      /* blocks of 4 (or 8): 2^31 inputs, or 2^CRTEST_LOG2N */
       uint64_t s = (uint64_t)blk * 0x1000193ULL + 20260926 + f, fst = 0; double xs[8];
       for (int i = 0; i < L; i++) { uint64_t r = splitmix(&s); xs[i] = (blk & 1) ? main_input(f, r) : wide_input(r); }
       int b = checkn(f, xs, &fst); bad += b; n += L;

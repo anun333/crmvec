@@ -6,9 +6,10 @@ Correctly rounded vector math, as a drop-in replacement for:
 - SLEEF's RVV `libsleef.so.3` on riscv64 (checked under emulation and
   natively on a SpacemiT X60).
 
-The latest release is 0.7.1, which takes CORE-MATH's current `powf.c`. It
-removes an undefined shift that 0.7.0's copy reaches; no changed result was
-found. 0.7.0 added, on riscv64, a build for VLEN 256, chosen at load, which
+The latest release is 0.7.2: a vector path for double `rsqrt` on x86, 2.6
+times faster than CORE-MATH's scalar `rsqrt` on a Zen 3, and CORE-MATH's current
+`powf.c` and `sin.c`, with no changed result found. 0.7.1 took a `powf.c`
+without an undefined shift that 0.7.0's copy reaches. 0.7.0 added, on riscv64, a build for VLEN 256, chosen at load, which
 is 2.3 times faster on a SpacemiT X60 (1.64 times SLEEF's time, with
 correctly rounded results). 0.6.1 made the library link and run with glibc
 before 2.25, as conda-forge needs. 0.6.0 brought fixes from a full review (among them a crash on CPUs with AVX
@@ -64,8 +65,9 @@ float and double, with SSE2 and AVX2 entry points on x86 and on aarch64:
 `sinpi` `cospi` `tanpi` `asinpi` `acospi` `atanpi` `atan2pi` `lgamma`
 `tgamma` `rsqrt` `powr` `pown`
 
-- **Vector code on x86:** `sinpi`, `cospi`, `tanpi` and `rsqrt` in float,
-  and `powr` and `pown` in both precisions, built on the vector `pow`.
+- **Vector code on x86:** `sinpi`, `cospi`, `tanpi` and `rsqrt` in float;
+  `rsqrt` in double (AVX2 and FMA, since 0.7.2); and `powr` and `pown` in
+  both precisions, built on the vector `pow`.
 - **Scalar per lane:** the rest run CORE-MATH's scalar function on each lane,
   at its speed.
 - **Where they come from:** CORE-MATH has ten of the twelve; `powr` and
@@ -95,7 +97,7 @@ whatever `cbrtf` the C library has. crmvec builds it with CORE-MATH's
 ## Using it
 
 ```
-make                      # libmvec.so.1 and the checks (needs gcc and libmpfr-dev; clang can't build the x86 library, see Limits)
+make                      # libmvec.so.1 and the checks (needs gcc and libmpfr-dev; mpfrcheck and pownf-search need MPFR 4.2 and are left out with an older one; clang can't build the x86 library, see Limits)
 make check                # a few minutes of the checks below; every verdict must pass (x86-64 and aarch64)
 LD_LIBRARY_PATH=$PWD your-program
 ```
@@ -105,7 +107,7 @@ Or install it:
 ```
 make lib                  # the libraries only: a C compiler is enough (on aarch64 also libsimde-dev; builds libmvec.so.1 and libsleefgnuabi.so.3)
 make install PREFIX=/usr/local
-crmvec-run your-program   # the program's vector math from crmvec, nothing else changed
+crmvec-run your-program   # the program's vector math from crmvec, nothing else changed (crmvec-run --help, --version)
 pkg-config --cflags --libs crmvec   # to link crmvec.h's functions, with an rpath to crmvec
 ```
 
@@ -133,7 +135,8 @@ Packages, from this repository:
 - **conda-forge** (`conda/recipe.yaml`): submitted as
   [staged-recipes#34976](https://github.com/conda-forge/staged-recipes/pull/34976)
   (on version 0.6.1 since 2026-09-30; 0.7.0 shares its linux-64 and aarch64
-  libraries, and 0.7.1 differs from them only in `powf`), waiting for review. An earlier test used sysroot 2.28, but
+  libraries; 0.7.1 differs from them only in `powf`, and 0.7.2 also in `sin`
+  for large arguments and in double `rsqrt` on x86), waiting for review. An earlier test used sysroot 2.28, but
   conda-forge's default on x86-64 and aarch64 is glibc 2.17. There, 0.6.0
   fails to link: CORE-MATH's `__builtin_roundeven` becomes a call to glibc's
   `roundeven`, which exists only from 2.25, and 0.6.0 links with `-z defs`.
@@ -159,7 +162,7 @@ The Debian, Fedora and Nix recipes also run `make check` on the library
 they package, as part of the build (Debian's `nocheck` skips it). Checked
 2026-09-27 on Debian amd64 (Ubuntu 24.04), Fedora 44 (gcc 16) and Nix
 (nixpkgs 24.05): every verdict passes. That was version 0.1.0. The recipes
-now carry 0.7.1 and haven't been rebuilt since.
+now carry 0.7.2 and haven't been rebuilt since.
 
 Every push also runs `make check` on GitHub Actions
 (`.github/workflows/check.yml`), on an x86-64 runner and natively on an
@@ -320,7 +323,7 @@ read the control register once per call); the vector paths are unchanged.
 ```
 make check           # a few minutes of what follows, one verdict per line, some also under flush-to-zero (on aarch64: aarch64-check sample, or aarch64-check-advsimd without SVE, the drop-in loops, simdcheck)
 ./crtest verify      # one-argument floats: all 2^32 inputs each
-./crtest verify64    # doubles: 2^31 random inputs each, CORE-MATH's hard cases, edge values
+./crtest verify64    # doubles: 2^31 random inputs each (CRTEST_LOG2N=n for 2^n), CORE-MATH's hard cases, edge values
 ./crtest verify2     # the six two-argument functions: 2^30 random pairs each, 1,600 special pairs (pow and powf: 432 parity pairs too)
 ./bcheck             # every SSE2 entry point of libmvec.so.1 against CORE-MATH
 ./emu-check.sh       # the same on an emulated Core 2 (qemu-x86_64 -cpu Conroe: no AVX), then cecheck c and d on a Sandy Bridge (AVX, no AVX2)
@@ -336,6 +339,7 @@ CRTEST_SMOOTH=1 ./crtest time   # the same, on inputs that vary smoothly along t
 ./mpfrcheck 20 all   # all 38 functions, both x86 entry points, all four rounding modes, against MPFR (libmpfr-dev)
 ./mpfrcheck controls # four deliberately wrong versions, which it must catch
 ./lcheck             # sinpif cospif tanpif rsqrtf: all 2^32 inputs, both entry points
+./rsqrt-vcheck ./libmvec.so.1 ./libcrref.so hard   # double rsqrt's vector path: CORE-MATH's hard cases at every scale, all four lanes (24 instead of hard: 2^24 random inputs)
 ./f16check           # half and bfloat16: every input of every one-argument function, four modes, against MPFR
 ./simdcheck.sh       # crmvec-simd.h: gcc vectorizes all 52 functions without -ffast-math, and this library exports every name it calls
 ./importcheck.sh libmvec.so.1   # every libm function the library calls is exact (fma, sqrt, rounding), so no result depends on the C library
@@ -385,6 +389,14 @@ fresh copy of this repository:
   without AVX2. The AVX-512 entry points under SDE. 0 differences.
 - **`pownf-search`:** every one of its 19.5 billion (x, n) pairs is covered.
 - **The aarch64 checks below:** 0 differences, in round-upward too.
+
+What 0.7.2 added (2026-10-01) has its own check, `rsqrt-vcheck`, which
+`make check` runs: the vector double `rsqrt` against CORE-MATH on 2^28
+random inputs over every binade, and on CORE-MATH's 9,935 hard cases at
+every scale 4^j (10.1 million, each in all four lanes and through the SSE2
+entry point): identical. Its control turns the rounding test off; then
+39,690 of the hard cases come out wrong, and none of 2^32 random inputs do,
+so random inputs alone could not have shown that the test works.
 
 **Audited 2026-09-27**, from a fresh clone in clean containers:
 - **Sanitizers:** under AddressSanitizer and UBSan, `crtest verify` (every input
@@ -1007,8 +1019,8 @@ The scalar functions, their tables, and the error analyses the vector paths
 rely on are [CORE-MATH](https://core-math.gitlabpages.inria.fr/)'s, by Alexei
 Sibidanov, Paul Zimmermann, Tom Hubrecht and others. Their files are
 included unmodified under their own MIT license and copyright notices. All
-165 are byte-identical to CORE-MATH's master branch at `e3f1fcc`
-(2026-09-30), which has the fixes for the undefined shifts we reported in
+165 are byte-identical to CORE-MATH's master branch at `fe94e92`
+(2026-10-01), which has the fixes for the undefined shifts we reported in
 `cospi.c` and `powf.c`. The
 `crmvec-*-tab.h` headers copy their tables. Everything else is under the
 MIT license in `LICENSE`.

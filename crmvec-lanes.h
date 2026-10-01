@@ -21,9 +21,10 @@
      SDPP SFPP         void; results through p and q
    Any shape left undefined expands to nothing.
 
-   VF1 VD2 VF2 VDN VFN: as LF1 LD2 LF2 LDN LFN (and expanded through them
-   unless defined), for the functions x86 gives a vector path (sinpif,
-   cospif, tanpif, rsqrtf; powr, pown: built on crmvec's vector pow, crmvec.c);
+   VD1 VF1 VD2 VF2 VDN VFN: as LD1 LF1 LD2 LF2 LDN LFN (and expanded through
+   them unless defined), for the functions x86 gives a vector path (sinpif,
+   cospif, tanpif, rsqrtf; powr, pown: built on crmvec's vector pow,
+   crmvec.c; rsqrt, CORE-MATH's fast path transcribed, added 2026-10-01);
    every other includer treats them as L entries. Added 2026-09-27. */
 #ifndef CRMVEC_LANES_DECL
 #define CRMVEC_LANES_DECL
@@ -48,6 +49,9 @@ int ilogb(double), ilogbf(float);
 #endif
 
 #define CRL_NONE(n, e)
+#ifndef VD1
+#define VD1 LD1
+#endif
 #ifndef VF1
 #define VF1 LF1
 #endif
@@ -133,7 +137,7 @@ LD1(acospi, cr_acospi(x))   LF1(acospif, cr_acospif(x))
 LD1(atanpi, cr_atanpi(x))   LF1(atanpif, cr_atanpif(x))
 LD1(lgamma, cr_lgamma(x))   LF1(lgammaf, cr_lgammaf(x))
 LD1(tgamma, cr_tgamma(x))   LF1(tgammaf, cr_tgammaf(x))
-LD1(rsqrt, cr_rsqrt(x))     VF1(rsqrtf, cr_rsqrtf(x))
+VD1(rsqrt, cr_rsqrt(x))     VF1(rsqrtf, cr_rsqrtf(x))
 LD2(atan2pi, cr_atan2pi(x, y))  LF2(atan2pif, cr_atan2pif(x, y))
 VD2(powr, crm_powr(x, y))       VF2(powrf, crm_powrf(x, y))
 VDN(pown, crm_pown(x, n))       VFN(pownf, crm_pownf(x, n))
@@ -162,6 +166,7 @@ SD3(fma, __builtin_fma(x, y, z))  SF3(fmaf, __builtin_fmaf(x, y, z))
 SDN(ldexp, ldexp(x, n))         SFN(ldexpf, ldexpf(x, n))
 SDP(modf, modf(x, p))           SFP(modff, modff(x, p))
 
+#undef VD1
 #undef VF1
 #undef VD2
 #undef VF2
