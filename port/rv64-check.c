@@ -248,6 +248,8 @@ static long extras(long n, long *tot)
   return bad;
 }
 
+int crm_rv_variant(void);   /* crmvec-port-rv64.c: 256, or 0 */
+
 int main(int argc, char **argv)
 {
   long n = argc > 1 ? atol(argv[1]) : 1L << 20;
@@ -255,6 +257,12 @@ int main(int argc, char **argv)
   long total = 0, bad = 0;
   printf("VLEN %zu bits (VLMAX e64m2 %zu, e32m2 %zu); %zu functions\n",
          __riscv_vsetvlmax_e64m1() * 64, __riscv_vsetvlmax_e64m2(), __riscv_vsetvlmax_e32m2(), nf);
+  /* which build answers (added 2026-09-30): the VLEN-256 one exactly when
+     VLEN is 256 and CRMVEC_RV_GENERIC isn't 1, else the VLEN-agnostic one */
+  { const char *g = getenv("CRMVEC_RV_GENERIC");
+    int want = __riscv_vsetvlmax_e64m1() * 64 == 256 && !(g && *g == '1') ? 256 : 0, got = crm_rv_variant();
+    printf("build: %s\n", got == 256 ? "VLEN 256 (zvl256b, 64-byte blocks)" : "VLEN-agnostic (16-byte blocks)");
+    if (got != want) { printf("FAILED: the VLEN-%s build answers, not the %s one\n", got ? "256" : "agnostic", want ? "VLEN-256" : "VLEN-agnostic"); return 1; } }
   for (size_t k = 0; k < nf; k++) {
     long b = 0;
     for (int set = 0; set < 3; set++) b += run(&FN[k], set, n, 3);

@@ -6,10 +6,13 @@ Correctly rounded vector math, as a drop-in replacement for:
 - SLEEF's RVV `libsleef.so.3` on riscv64 (checked under emulation and
   natively on a SpacemiT X60).
 
-The latest release is 0.6.1: it links and runs with glibc before 2.25, as
-conda-forge needs. Its predecessor, 0.6.0, brought fixes from a full review
-(among them a crash on CPUs with AVX but not AVX2), AVX-512 entry points
-from the portable core, and faster aarch64 floats.
+The latest release is 0.7.0: on riscv64, a build for VLEN 256, chosen at
+load, which is 2.3 times faster on a SpacemiT X60 (1.64 times SLEEF's
+time, with correctly rounded results). Its x86-64 and aarch64 libraries are
+0.6.1's, which links and runs with glibc before 2.25, as conda-forge needs.
+0.6.0 brought fixes from a full review (among them a crash on CPUs with AVX
+but not AVX2), AVX-512 entry points from the portable core, and faster
+aarch64 floats.
 
 Its results are the correctly rounded ones, bit for bit the same as
 [CORE-MATH](https://core-math.gitlabpages.inria.fr/)'s.
@@ -154,7 +157,7 @@ The Debian, Fedora and Nix recipes also run `make check` on the library
 they package, as part of the build (Debian's `nocheck` skips it). Checked
 2026-09-27 on Debian amd64 (Ubuntu 24.04), Fedora 44 (gcc 16) and Nix
 (nixpkgs 24.05): every verdict passes. That was version 0.1.0. The recipes
-now carry 0.6.1 and haven't been rebuilt since.
+now carry 0.7.0 and haven't been rebuilt since.
 
 Every push also runs `make check` on GitHub Actions
 (`.github/workflows/check.yml`), on an x86-64 runner and natively on an
@@ -834,9 +837,16 @@ all (`port/crmvec-port-rv64.c`):
     compiler emits them on riscv64 yet.
   - `sincospi` at `u10` exists only in LLVM's table, so it keeps LLVM's
     pointer outputs.
-- **VLEN-agnostic:** each entry point runs the portable core over its
-  argument in fixed 128-bit blocks. RVV 1.0 guarantees VLEN >= 128, so one
-  build runs at any VLEN.
+- **Any VLEN, and faster at 256:** each entry point runs the portable core
+  over its argument in fixed 128-bit blocks. RVV 1.0 guarantees VLEN >=
+  128, so that code runs at any VLEN.
+  - From 0.7.0 the library also carries a copy of the 52 functions built
+    for VLEN 256 exactly (`-march=rv64gcv_zvl256b -mrvv-vector-bits=zvl`,
+    64-byte blocks).
+  - A constructor reads `vlenb` once, and each entry point uses that copy
+    only when VLEN is 256: code built for one VLEN crashes at any other.
+  - `CRMVEC_RV_GENERIC=1` in the environment keeps the VLEN-agnostic code,
+    and `rv64-check` says which build answered.
 - **Calling convention flag:** every export takes vectors, so each carries
   `STO_RISCV_VARIANT_CC`, which makes the dynamic linker bind it eagerly
   (a lazily bound call may clobber the vector registers its caller keeps
@@ -845,8 +855,10 @@ all (`port/crmvec-port-rv64.c`):
   every export for it.
 - **Build requirements:** `gcc-riscv64-linux-gnu`, and clang 20 for the
   port file (gcc 13 turns its generic vectors into scalar code on
-  riscv64). Don't add `-mrvv-vector-bits`: it fixes VLEN exactly, and code
-  built that way crashes at any other VLEN.
+  riscv64). Don't add `-mrvv-vector-bits` to the port file's ordinary
+  build: it fixes VLEN exactly, and code built that way crashes at any
+  other VLEN (the VLEN-256 copy is built with it, and is only called on a
+  VLEN-256 CPU).
 
 ```
 make riscv64
@@ -911,19 +923,19 @@ RVV 1.0 at VLEN 256, Debian 13; one core):
 - **The same results as under qemu.** `rv64-check`, `rv64-dropin`,
   `rv64-lanedep` and `rv64-pairs` all give 0 through this library. SLEEF
   3.9's counts match qemu's at VLEN 256 line for line.
-- **Slower than SLEEF.** `rv64-bench` ran twice, and every cell agrees to
-  1.4%.
-  - This library takes a median 3.3x SLEEF 3.9's time per element, from
-    1.7x (`erf`) to 7.6x (`log1pf`).
-  - In 31 of the 52 functions, a scalar loop over CORE-MATH is faster.
-  - `perf` shows about 4x SLEEF's instructions per element at similar
-    instructions per cycle. The portable core works in 128-bit blocks,
-    4 floats per vector instruction, where SLEEF uses the whole LMUL-2
-    group, 16 floats at VLEN 256.
-  - Built for exactly VLEN 256 (`-march=rv64gcv_zvl256b
-    -mrvv-vector-bits=zvl`, 64-byte blocks), the same core is 1.5-3.4x
-    faster on the functions measured, and still exact. It would run only
-    on that VLEN, so shipping it needs a choice at load time. Not done yet.
+- **Speed** (`rv64-bench`):
+  - **The VLEN-agnostic code (0.6.1)** takes a median 3.3x SLEEF 3.9's
+    time per element, from 1.7x (`erf`) to 7.6x (`log1pf`). In 31 of the
+    52 functions a scalar loop over CORE-MATH is faster. `perf` shows why:
+    about 4x SLEEF's instructions per element at similar instructions per
+    cycle. The 128-bit blocks do 4 floats per vector instruction, where
+    SLEEF uses the whole LMUL-2 group, 16 floats at VLEN 256.
+  - **The VLEN-256 copy (0.7.0)** takes a median 0.44 of that time, and is
+    faster on all 52. That is a median 1.64x SLEEF's time (0.83x for
+    `hypotf` to 3.42x for `expf`), and never slower than scalar CORE-MATH.
+  - Both builds give 0 differences natively: `rv64-check` (163.6 million
+    results to nearest, 30.7 million in the other modes), `rv64-dropin`
+    and `rv64-pairs`.
 
 ## Limits
 

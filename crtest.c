@@ -409,8 +409,15 @@ static int timing(int argc, char **argv)
      of them. Without this LLVM may assume no asm sees freshly allocated
      memory, and delete stores a later loop overwrites. */
   __asm__ volatile("" :: "r"(x), "r"(x2), "r"(y), "r"(xd), "r"(xd2), "r"(yd) : "memory");
+  /* Debian's path, else the SONAME through the loader's search (/lib64 on
+     openSUSE and Fedora, /usr/lib on Arch; added 2026-09-30). By SONAME,
+     LD_LIBRARY_PATH could hand back crmvec's own library, which exports
+     crmvec_* names glibc's doesn't: refuse that, and name the file used. */
   void *g = dlopen("/usr/lib/x86_64-linux-gnu/libmvec.so.1", RTLD_NOW | RTLD_LOCAL);
+  if (!g) g = dlopen("libmvec.so.1", RTLD_NOW | RTLD_LOCAL);
   if (!g) { printf("VOID: glibc libmvec not loadable\n"); return 1; }
+  if (dlsym(g, "crmvec_sinpif")) { printf("VOID: the libmvec.so.1 found is crmvec's, not glibc's (unset LD_LIBRARY_PATH)\n"); return 1; }
+  { Dl_info di; void *s = dlsym(g, "_ZGVdN8v_expf"); if (s && dladdr(s, &di)) printf("glibc libmvec: %s\n", di.dli_fname); }
   double la[3]; getloadavg(la, 3);
   srand(20260924);
   if (smooth_inputs) printf("inputs: smooth (CRTEST_SMOOTH): a cosine sweep over each range, period 65,536\n");

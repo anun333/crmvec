@@ -53,6 +53,38 @@
 
 #define EXPORT __attribute__((visibility("default")))
 
+/* A second build for VLEN 256 exactly (added 2026-09-30, measured on
+   cfarm95's X60: 1.5-3.4x faster). Built with CRMVEC_RV_Z256 (and
+   -march=rv64gcv_zvl256b -mrvv-vector-bits=zvl -DVB=64), this file gives
+   the 52 functions as hidden crz256_ copies and nothing else; code built
+   so crashes at any other VLEN. The ordinary build, with
+   CRMVEC_RV_DISPATCH, reads vlenb once at load and calls those copies only
+   when VLEN is 256. CRMVEC_RV_GENERIC=1 in the environment keeps the
+   VLEN-agnostic code everywhere (for checks and timing). */
+#if defined(CRMVEC_RV_Z256)
+#define RV_ENTRY(name) __attribute__((visibility("hidden"))) crz256_##name
+#define RV_TO_Z256(name, ...)
+#else
+#define RV_ENTRY(name) EXPORT name
+#if defined(CRMVEC_RV_DISPATCH)
+#include <stdlib.h>
+static int crm_rv_z256;
+__attribute__((constructor)) static void crm_rv_init(void)
+{
+  unsigned long vlenb;
+  __asm__ volatile("csrr %0, vlenb" : "=r"(vlenb));
+  const char *g = getenv("CRMVEC_RV_GENERIC");
+  crm_rv_z256 = vlenb == 32 && !(g && *g == '1');
+}
+/* which build answers: 256, or 0 for the VLEN-agnostic one (rv64-check) */
+__attribute__((visibility("hidden"))) int crm_rv_variant(void) { return crm_rv_z256 ? 256 : 0; }
+#define RV_TO_Z256(name, ...) if (crm_rv_z256) return crz256_##name(__VA_ARGS__);
+#else
+#define RV_TO_Z256(name, ...)
+__attribute__((visibility("hidden"))) int crm_rv_variant(void) { return 0; }
+#endif
+#endif
+
 /* round to nearest: the frm CSR is 0 */
 static inline __attribute__((always_inline)) int crm_rn_rv(void)
 {
@@ -61,9 +93,18 @@ static inline __attribute__((always_inline)) int crm_rn_rv(void)
   return frm == 0;
 }
 
+/* each entry point: in the ordinary build with dispatch, the VLEN-256
+   copy first when VLEN is 256; then the VLEN-agnostic code */
+#if defined(CRMVEC_RV_DISPATCH) && !defined(CRMVEC_RV_Z256)
+#define RV_DECL(T, name, ...) T crz256_##name(__VA_ARGS__);
+#else
+#define RV_DECL(T, name, ...)
+#endif
 #define RV_F1(n, U)                                                                              \
-  EXPORT vfloat32m2_t Sleef_##n##x_##U##rvvm2(vfloat32m2_t x)                                    \
+  RV_DECL(vfloat32m2_t, Sleef_##n##x_##U##rvvm2, vfloat32m2_t)                                   \
+  vfloat32m2_t RV_ENTRY(Sleef_##n##x_##U##rvvm2)(vfloat32m2_t x)                                 \
   {                                                                                              \
+    RV_TO_Z256(Sleef_##n##x_##U##rvvm2, x)                                                       \
     size_t vl = __riscv_vsetvlmax_e32m2();                                                       \
     float b[vl]; __riscv_vse32_v_f32m2(b, x, vl);                                                \
     if (__builtin_expect(crm_rn_rv(), 1))                                                        \
@@ -72,8 +113,10 @@ static inline __attribute__((always_inline)) int crm_rn_rv(void)
     return __riscv_vle32_v_f32m2(b, vl);                                                         \
   }
 #define RV_D1(n, U)                                                                              \
-  EXPORT vfloat64m2_t Sleef_##n##dx_##U##rvvm2(vfloat64m2_t x)                                   \
+  RV_DECL(vfloat64m2_t, Sleef_##n##dx_##U##rvvm2, vfloat64m2_t)                                  \
+  vfloat64m2_t RV_ENTRY(Sleef_##n##dx_##U##rvvm2)(vfloat64m2_t x)                                \
   {                                                                                              \
+    RV_TO_Z256(Sleef_##n##dx_##U##rvvm2, x)                                                      \
     size_t vl = __riscv_vsetvlmax_e64m2();                                                       \
     double b[vl]; __riscv_vse64_v_f64m2(b, x, vl);                                               \
     if (__builtin_expect(crm_rn_rv(), 1))                                                        \
@@ -82,8 +125,10 @@ static inline __attribute__((always_inline)) int crm_rn_rv(void)
     return __riscv_vle64_v_f64m2(b, vl);                                                         \
   }
 #define RV_F2(n, U)                                                                              \
-  EXPORT vfloat32m2_t Sleef_##n##x_##U##rvvm2(vfloat32m2_t x, vfloat32m2_t y)                    \
+  RV_DECL(vfloat32m2_t, Sleef_##n##x_##U##rvvm2, vfloat32m2_t, vfloat32m2_t)                     \
+  vfloat32m2_t RV_ENTRY(Sleef_##n##x_##U##rvvm2)(vfloat32m2_t x, vfloat32m2_t y)                 \
   {                                                                                              \
+    RV_TO_Z256(Sleef_##n##x_##U##rvvm2, x, y)                                                    \
     size_t vl = __riscv_vsetvlmax_e32m2();                                                       \
     float a[vl], b[vl]; __riscv_vse32_v_f32m2(a, x, vl); __riscv_vse32_v_f32m2(b, y, vl);        \
     if (__builtin_expect(crm_rn_rv(), 1))                                                        \
@@ -93,8 +138,10 @@ static inline __attribute__((always_inline)) int crm_rn_rv(void)
     return __riscv_vle32_v_f32m2(a, vl);                                                         \
   }
 #define RV_D2(n, U)                                                                              \
-  EXPORT vfloat64m2_t Sleef_##n##dx_##U##rvvm2(vfloat64m2_t x, vfloat64m2_t y)                   \
+  RV_DECL(vfloat64m2_t, Sleef_##n##dx_##U##rvvm2, vfloat64m2_t, vfloat64m2_t)                    \
+  vfloat64m2_t RV_ENTRY(Sleef_##n##dx_##U##rvvm2)(vfloat64m2_t x, vfloat64m2_t y)                \
   {                                                                                              \
+    RV_TO_Z256(Sleef_##n##dx_##U##rvvm2, x, y)                                                   \
     size_t vl = __riscv_vsetvlmax_e64m2();                                                       \
     double a[vl], b[vl]; __riscv_vse64_v_f64m2(a, x, vl); __riscv_vse64_v_f64m2(b, y, vl);       \
     if (__builtin_expect(crm_rn_rv(), 1))                                                        \
@@ -117,6 +164,7 @@ RV_D1(log10, u10) RV_D1(log1p, u10) RV_D1(log2, u10) RV_D1(sinh, u10) RV_D1(tanh
 RV_F2(powf, u10) RV_F2(atan2f, u10) RV_F2(hypotf, u05)
 RV_D2(pow, u10) RV_D2(atan2, u10) RV_D2(hypot, u05)
 
+#if !defined(CRMVEC_RV_Z256)   /* the lane-by-lane names: in the ordinary build only */
 /* SLEEF's other 34 RVV names in LLVM's riscv64 table (added 2026-09-28), so
    that this library stands in for SLEEF completely. clang 20 calls 22 of
    them from loops (sinpi, cospi, lgamma, tgamma, sqrt, fma, fmod, fdim,
@@ -265,3 +313,4 @@ EXPORT void Sleef_sincospifx_u10rvvm2(vfloat32m2_t x, float *s, float *c)
   __riscv_vse32_v_f32m2(b, x, vl);
   for (size_t i = 0; i < vl; i++) { s[i] = cr_sinpif(b[i]); c[i] = cr_cospif(b[i]); }
 }
+#endif

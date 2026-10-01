@@ -11,7 +11,7 @@
 %global debug_package %{nil}
 
 Name:           crmvec
-Version:        0.6.1
+Version:        0.7.0
 Release:        1%{?dist}
 Summary:        Correctly rounded vector math (a drop-in libmvec)
 License:        MIT
@@ -61,6 +61,20 @@ make check
 %{_libdir}/pkgconfig/crmvec.pc
 
 %changelog
+* Wed Sep 30 2026 anun333 <anun333@posteo.net> - 0.7.0-1
+- riscv64: a second copy of the 52 functions, built for VLEN 256, which the
+  library uses when the CPU's VLEN is 256 (read once at load;
+  CRMVEC_RV_GENERIC=1 turns it off). On a SpacemiT X60 it takes a median 0.44
+  of the time, faster on all 52: 1.64 times SLEEF 3.9's time where it was
+  3.27, never slower than scalar CORE-MATH, and the same results. rv64-check
+  says which build answered.
+- crtest finds glibc's libmvec where a distribution keeps it outside
+  /usr/lib/x86_64-linux-gnu (openSUSE and Arch, where it was found), and
+  refuses crmvec's own library if the loader path hands that back.
+- The portable core builds with clang 17 (clang 18 added
+  __builtin_elementwise_sqrt).
+- The x86-64 and aarch64 libraries are unchanged from 0.6.1.
+
 * Wed Sep 30 2026 anun333 <anun333@posteo.net> - 0.6.1-1
 - Builds and runs with glibc before 2.25 (conda-forge links against 2.17).
   CORE-MATH's code calls roundeven on x86-64 without SSE4.1, and glibc has

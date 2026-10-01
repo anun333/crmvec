@@ -353,13 +353,18 @@ PORT_INLINE void rowsNd(const double *T, int64_t S, vl idx, vd *cc, int K)
   PORT_UNROLL for (int k = K & ~3; k < K; k++) for (int i = 0; i < ND; i++) cc[k][i] = T[o[i] + k];
 }
 
-/* sqrt, correctly rounded (IEEE): clang's elementwise builtin, or a lane
-   loop over the scalar builtin that gcc turns into one vector sqrt when
-   built with -fno-math-errno (the port files are) */
+/* sqrt, correctly rounded (IEEE): clang's elementwise builtin (clang 18
+   and later; 17 has the fma one but not this, found on cfarm151
+   2026-09-30), or a lane loop over the scalar builtin that gcc turns into
+   one vector sqrt when built with -fno-math-errno (the port files are) */
 PORT_INLINE vd sqrtd_v(vd a)
 {
 #if defined(__clang__)
+#if __has_builtin(__builtin_elementwise_sqrt)
   return __builtin_elementwise_sqrt(a);
+#else
+  vd r; for (int i = 0; i < ND; i++) r[i] = __builtin_sqrt(a[i]); return r;
+#endif
 #else
   vd r; for (int i = 0; i < ND; i++) r[i] = __builtin_sqrt(a[i]); return r;
 #endif

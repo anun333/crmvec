@@ -12,7 +12,7 @@ ifeq ($(origin CC),default)
 CC      := gcc
 endif
 .DEFAULT_GOAL := all
-VERSION := 0.6.1
+VERSION := 0.7.0
 # install locations (make install PREFIX=... DESTDIR=...): the libraries go
 # to a directory of their own, so that nothing replaces the system's
 # libmvec.so.1 until a program asks for it (crmvec-run, or the rpath that
@@ -315,24 +315,32 @@ riscv64: $(RV64)/libsleef.so.3 $(RV64)/rv64-check $(RV64)/rv64-dropin $(RV64)/rv
 
 $(RV64)/port.o: port/crmvec-port-rv64.c $(PORTHDR) $(HDR)
 	mkdir -p $(RV64)
-	$(RVCLANG) $(RVFLAGS) -O3 -ffp-contract=off -fno-math-errno -fPIC -fvisibility=hidden -c -o $@ $<
+	$(RVCLANG) $(RVFLAGS) -O3 -ffp-contract=off -fno-math-errno -fPIC -fvisibility=hidden -DCRMVEC_RV_DISPATCH -c -o $@ $<
+
+# the same 52 functions for VLEN 256 exactly, in 64-byte blocks (1.5-3.4x
+# faster on a SpacemiT X60); port.o calls them only when vlenb is 32, since
+# code built with -mrvv-vector-bits crashes at any other VLEN
+RVFLAGS256 := --target=riscv64-linux-gnu -march=rv64gcv_zvl256b -mrvv-vector-bits=zvl -mabi=lp64d
+$(RV64)/port-z256.o: port/crmvec-port-rv64.c $(PORTHDR) $(HDR)
+	mkdir -p $(RV64)
+	$(RVCLANG) $(RVFLAGS256) -O3 -ffp-contract=off -fno-math-errno -fPIC -fvisibility=hidden -DVB=64 -DCRMVEC_RV_Z256 -c -o $@ $<
 
 $(RV64)/libcr.a: $(CR)
 	mkdir -p $(RV64)/cr
 	for f in $(CR); do $(RVCC) $(CFLAGS) $(FP) -fPIC -fvisibility=hidden -c -o $(RV64)/cr/$$(echo $$f | tr / -).o $$f || exit 1; done
 	rm -f $@ && ar rcs $@ $(RV64)/cr/*.o
 
-$(RV64)/libsleef.so.3: $(RV64)/port.o $(RV64)/libcr.a
-	$(RVCC) -shared -fPIC -Wl,-z,defs -Wl,-Bsymbolic-functions -Wl,-soname,libsleef.so.3 -o $@ $(RV64)/port.o $(RV64)/libcr.a -lm
+$(RV64)/libsleef.so.3: $(RV64)/port.o $(RV64)/port-z256.o $(RV64)/libcr.a
+	$(RVCC) -shared -fPIC -Wl,-z,defs -Wl,-Bsymbolic-functions -Wl,-soname,libsleef.so.3 -o $@ $(RV64)/port.o $(RV64)/port-z256.o $(RV64)/libcr.a -lm
 	@n=$$(riscv64-linux-gnu-readelf -W --dyn-syms $@ | awk '$$8 ~ /^Sleef_/ && $$7 != "UND" && !/VARIANT_CC/' | tee /dev/stderr | wc -l); \
 	 [ "$$n" = 0 ] || { echo "$@: $$n Sleef_ exports without VARIANT_CC (above)"; rm -f $@; exit 1; }
 
 # every Sleef_*rvvm2 entry point (the 52, then the other 42 names)
 # against scalar CORE-MATH or libm (static, so qemu-riscv64 runs it without
 # a sysroot)
-$(RV64)/rv64-check: port/rv64-check.c port/pow-parity.h $(RV64)/port.o $(RV64)/libcr.a
+$(RV64)/rv64-check: port/rv64-check.c port/pow-parity.h $(RV64)/port.o $(RV64)/port-z256.o $(RV64)/libcr.a
 	$(RVCLANG) $(RVFLAGS) -O2 -ffp-contract=off -c -o $(RV64)/rv64-check.o port/rv64-check.c
-	$(RVCC) -static -o $@ $(RV64)/rv64-check.o $(RV64)/port.o $(RV64)/libcr.a -lm
+	$(RVCC) -static -o $@ $(RV64)/rv64-check.o $(RV64)/port.o $(RV64)/port-z256.o $(RV64)/libcr.a -lm
 
 # loops clang 20 vectorizes with -fveclib=SLEEF (the 52, then the 16 other
 # names it calls), against whichever libsleef.so.3 the dynamic linker
