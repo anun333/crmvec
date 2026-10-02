@@ -510,7 +510,8 @@ index is uniformly tiny for all 16,384 indices, so `sin`'s bound covers it.
 Correct rounding costs speed. On one AMD Ryzen 5 PRO 5650U (Zen 3), one
 core, memory-bound, built with gcc 13.3, in ns per element, AVX2 entry
 points (each figure the fastest of two runs, 2026-09-27, with the
-rounding-mode check):
+rounding-mode check). These are 0.7's figures; what 0.8.0 changed for the
+float functions follows the table:
 
 | | crmvec | glibc `libmvec` | scalar CORE-MATH |
 |---|---|---|---|
@@ -534,9 +535,17 @@ rounding-mode check):
 `./crtest time` prints all 52. Every function is slower than glibc, from
 1.5x (double `asinh`) to 9.9x (double `erfc`); the median is 3.3x, of
 which the rounding-mode check is 5%. glibc
-computes in single precision on 8 lanes and makes no correct-rounding
-promise; correct rounding needs double precision, on 4 lanes. Every function
-but `expm1f` (3.0 ns against 2.8) is faster than scalar CORE-MATH. The tables are read a row per lane with
+computes floats in single precision on 8 lanes and makes no correct-rounding
+promise; correct rounding needs about nine bits more. Since 0.8.0, 18 float
+functions (the log, inverse trigonometric and hyperbolic families, `expm1f`,
+`tanhf`, `cbrtf`, `erff`, `erfcf`) get them from float pairs on 8 lanes, with
+a rounding test and CORE-MATH for the rare inputs it cannot decide. On an AMD
+EPYC 7773X they take 22% to 90% of 0.7's time (the 0.8.0 release notes
+list them), and the one-argument floats' median against glibc fell from
+5.0x to 4.1x. The other functions compute in double precision on 4 lanes.
+On that machine, with 0.8.0, every function is faster than scalar
+CORE-MATH; on the table's machine 0.7's `expm1f` was not (3.0 ns against
+2.8). The tables are read a row per lane with
 ordinary loads rather than a column at a time with gathers, which on this
 CPU made the table-heavy functions up to twice as fast; functions made of
 several regimes compute a regime only when some lane of the vector is in
