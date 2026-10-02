@@ -63,7 +63,7 @@ footer { color: var(--muted); font-size: 0.88rem; padding-block: 1.6rem 3rem; bo
 <header>
   <h1 class="name">crmvec</h1>
   <p class="tag">Correctly rounded vector math, as a drop-in replacement for the libraries compilers call when they vectorize a loop over <code>sin</code>, <code>exp</code> or <code>pow</code>.</p>
-  <p class="meta">Version 0.7.2 · MIT licence · x86-64, aarch64, riscv64 · results are <a href="https://core-math.gitlabpages.inria.fr/">CORE-MATH</a>'s, bit for bit</p>
+  <p class="meta">Version 0.8.0 · MIT licence · x86-64, aarch64, riscv64 · results are <a href="https://core-math.gitlabpages.inria.fr/">CORE-MATH</a>'s, bit for bit</p>
   <nav class="links" aria-label="Project links">
     <a href="https://github.com/anun333/crmvec">Source on GitHub</a>
     <a href="https://github.com/anun333/crmvec/releases">Releases</a>
@@ -118,7 +118,7 @@ pkg-config --cflags --libs crmvec</code></pre>
 
 <section>
   <h2>Speed</h2>
-  <p>Correct rounding costs speed. On one Zen 3 core (AVX2 entry points, nanoseconds per element), crmvec takes a median 3.3 times glibc's time, from 1.5 times (double <code>asinh</code>) to 9.9 times (double <code>erfc</code>). glibc computes floats in single precision on eight lanes; correct rounding needs double precision on four. Every function but one is faster than calling scalar CORE-MATH in a loop.</p>
+  <p>Correct rounding costs speed. On one Zen 3 core (AVX2 entry points, nanoseconds per element), crmvec 0.7 took a median 3.3 times glibc's time, from 1.5 times (double <code>asinh</code>) to 9.9 times (double <code>erfc</code>); the table is that version's. glibc computes floats with single precision; correct rounding needs about nine bits more. Since 0.8.0, 18 float functions get them from float pairs on eight lanes, with a rounding test and CORE-MATH for the rare inputs it cannot decide, instead of double precision on four lanes; they take 22% to 90% of 0.7's time, with the same results (<a href="https://github.com/anun333/crmvec/releases/tag/v0.8.0">release notes</a>). Every function but one is faster than calling scalar CORE-MATH in a loop.</p>
   <div class="scroll">
   <table>
     <thead><tr><th>function</th><th>crmvec</th><th>glibc libmvec</th><th>scalar CORE-MATH</th></tr></thead>
