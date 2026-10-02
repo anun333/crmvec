@@ -2,15 +2,31 @@
 # crmvec-run: run a program with crmvec's libmvec.so.1 (and, on aarch64,
 # libsleefgnuabi.so.3) found before the system's, so that the vector math it
 # was compiled to call is correctly rounded. Nothing else changes.
+# With --libm (x86-64), libcrpreload.so is preloaded too, so the program's
+# scalar libm calls (exp, sin, pow, ...) are correctly rounded as well.
 #   crmvec-run ./program args...
+#   crmvec-run --libm ./program args...
 #   crmvec-run --help | --version
+libm=
 case "${1-}" in
 --help | -h)
-  echo "usage: crmvec-run PROGRAM [ARGS...]"
+  echo "usage: crmvec-run [--libm] PROGRAM [ARGS...]"
   echo "Runs PROGRAM with crmvec's correctly rounded libmvec.so.1 found first"
-  echo "(from @CRMDIR@); nothing else changes."
+  echo "(from @CRMDIR@); nothing else changes. With --libm, also preloads"
+  echo "libcrpreload.so: CORE-MATH's correctly rounded functions under the C"
+  echo "library's names, for the program's scalar math calls (x86-64)."
   exit 0 ;;
 --version) echo "crmvec-run @VERSION@"; exit 0 ;;
-"") echo "usage: crmvec-run PROGRAM [ARGS...] (see crmvec-run --help)" >&2; exit 2 ;;
+--libm) libm=1; shift ;;
 esac
+[ $# -gt 0 ] || { echo "usage: crmvec-run [--libm] PROGRAM [ARGS...] (see crmvec-run --help)" >&2; exit 2; }
+if [ -n "$libm" ]; then
+  # @CRMDIR@ may list several directories (Debian's has both architectures'): the first holding the library
+  # (split from a variable: IFS splits expansions, not a literal word)
+  pre=; dirs="@CRMDIR@"; old_ifs=$IFS; IFS=:
+  for d in $dirs; do [ -z "$pre" ] && [ -f "$d/libcrpreload.so" ] && pre="$d/libcrpreload.so"; done
+  IFS=$old_ifs
+  [ -n "$pre" ] || { echo "crmvec-run: --libm: no libcrpreload.so in @CRMDIR@ (it is built on x86-64 only)" >&2; exit 2; }
+  LD_PRELOAD="$pre${LD_PRELOAD:+ $LD_PRELOAD}"; export LD_PRELOAD
+fi
 LD_LIBRARY_PATH="@CRMDIR@${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}" exec "$@"

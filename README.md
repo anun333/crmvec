@@ -6,7 +6,10 @@ Correctly rounded vector math, as a drop-in replacement for:
 - SLEEF's RVV `libsleef.so.3` on riscv64 (checked under emulation and
   natively on a SpacemiT X60).
 
-The latest release is 0.8.0: 18 float functions on new AVX2 vector paths that
+The latest release is 0.9.0: on x86-64, a second library, `libcrpreload.so`,
+puts CORE-MATH's correctly rounded functions behind a program's ordinary
+scalar libm calls (`crmvec-run --libm`; see "Scalar math too" below). 0.8.0
+put 18 float functions on new AVX2 vector paths that
 compute just enough precision to decide the rounding, with the same results
 as before on every input and 0.22 to 0.90 of 0.7.2's time. 0.7.2 added a
 vector path for double `rsqrt` on x86, 2.6
@@ -109,9 +112,10 @@ LD_LIBRARY_PATH=$PWD your-program
 Or install it:
 
 ```
-make lib                  # the libraries only: a C compiler is enough (on aarch64 also libsimde-dev; builds libmvec.so.1 and libsleefgnuabi.so.3)
+make lib                  # the libraries only: a C compiler is enough (on aarch64 also libsimde-dev; builds libmvec.so.1 and libsleefgnuabi.so.3; on x86-64 also crpreload/libcrpreload.so)
 make install PREFIX=/usr/local
 crmvec-run your-program   # the program's vector math from crmvec, nothing else changed (crmvec-run --help, --version)
+crmvec-run --libm your-program   # and its scalar libm calls too (x86-64; the preload below)
 pkg-config --cflags --libs crmvec   # to link crmvec.h's functions, with an rpath to crmvec
 ```
 
@@ -121,6 +125,20 @@ with pkg-config's rpath, never system-wide. They export only their API: the
 vector entry points (`_ZGV*`) and `crmvec.h`'s functions (`crmvec_*`), not
 CORE-MATH's `cr_*` functions or the library's internals
 (`crmvec-exports.map`).
+
+**Scalar math too, on x86-64: `libcrpreload.so`** (since 0.9.0). A program's
+ordinary `libm` calls, the ones vectorization doesn't reach, still go to the
+C library, whose last bit depends on the CPU and the glibc version.
+`libcrpreload.so`, installed beside `libmvec.so.1`, has CORE-MATH's 76
+elementary functions under the C library's names (`exp`, `log`, `sin`, `pow`,
+`atan2`, `erfc`, `tgamma`, the float forms, C23's `sinpi` family).
+`crmvec-run --libm` preloads it, or `LD_PRELOAD` does. It holds two builds,
+with FMA and plain x86-64, and picks one per CPU at load; the results are the
+same. It sets `errno` and the exception flags as glibc does, and runs
+CORE-MATH with flush-to-zero off for `-ffast-math` callers. Where it was
+tried, it made FSL FLIRT, MCFLIRT and ANTs registrations that depended on the
+CPU (AVX2) and on the glibc version byte-identical across both. Its
+checks and costs: [`crpreload/README.md`](crpreload/README.md).
 
 Packages, from this repository:
 - **Debian and Ubuntu** (`debian/`, `dpkg-buildpackage -b`): built on Ubuntu
@@ -136,11 +154,12 @@ Packages, from this repository:
   provide `libmvec.so.1` to other packages.
 - **Nix** (`package.nix`, `nix-build`): built with nixpkgs 24.05 (gcc 13.2),
   and its library passes the checks.
-- **conda-forge** (`conda/recipe.yaml`): submitted as
-  [staged-recipes#34976](https://github.com/conda-forge/staged-recipes/pull/34976)
-  (on version 0.6.1 since 2026-09-30; 0.7.0 shares its linux-64 and aarch64
-  libraries; 0.7.1 differs from them only in `powf`, and 0.7.2 also in `sin`
-  for large arguments and in double `rsqrt` on x86), waiting for review. An earlier test used sysroot 2.28, but
+- **conda-forge** (`conda/recipe.yaml`): accepted on 2026-10-02
+  ([staged-recipes#34976](https://github.com/conda-forge/staged-recipes/pull/34976)),
+  built from [crmvec-feedstock](https://github.com/conda-forge/crmvec-feedstock):
+  `conda install -c conda-forge crmvec` (0.7.2 is the first version there,
+  for linux-64; its library passes `bcheck` and `cecheck c` as installed,
+  checked 2026-10-02). An earlier test used sysroot 2.28, but
   conda-forge's default on x86-64 and aarch64 is glibc 2.17. There, 0.6.0
   fails to link: CORE-MATH's `__builtin_roundeven` becomes a call to glibc's
   `roundeven`, which exists only from 2.25, and 0.6.0 links with `-z defs`.

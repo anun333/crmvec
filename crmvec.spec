@@ -11,7 +11,7 @@
 %global debug_package %{nil}
 
 Name:           crmvec
-Version:        0.8.0
+Version:        0.9.0
 Release:        1%{?dist}
 Summary:        Correctly rounded vector math (a drop-in libmvec)
 License:        MIT
@@ -61,6 +61,15 @@ make check
 %{_libdir}/pkgconfig/crmvec.pc
 
 %changelog
+* Fri Oct 02 2026 anun333 <anun333@posteo.net> - 0.9.0-1
+- x86-64: libcrpreload.so, installed beside libmvec.so.1 in lib/crmvec/:
+  CORE-MATH's 76 correctly rounded elementary functions under the C
+  library's names, for a program's scalar libm calls (LD_PRELOAD, or
+  crmvec-run --libm). An FMA build and a plain x86-64 build, picked per CPU
+  at load, with the same results; errno and exception flags as glibc's.
+- make check runs crpreload-check on it: 2^16 inputs a function, four
+  rounding modes by four flush settings, results and flags.
+
 * Fri Oct 02 2026 anun333 <anun333@posteo.net> - 0.8.0-1
 - x86: 18 float functions (logf, log2f, log10f, log1pf, expm1f, tanhf, atanf,
   asinf, acosf, atanhf, asinhf, acoshf, cbrtf, erff, erfcf, asinpif, acospif,

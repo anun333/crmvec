@@ -25,3 +25,11 @@ check.log
 roundeven-check
 rsqrt-vcheck
 rsqrt-plant/
+
+# crpreload build outputs
+crpreload/obj/
+crpreload/objv3/
+crpreload/objd/
+crpreload/*.so
+crpreload/crpreload-check
+crpreload/crpreload-bench

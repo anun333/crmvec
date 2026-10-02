@@ -1,3 +1,18 @@
+crmvec (0.9.0) unstable; urgency=medium
+
+  * x86-64: libcrpreload.so, installed beside libmvec.so.1 in lib/crmvec/:
+    CORE-MATH's 76 correctly rounded elementary functions under the C
+    library's names, for a program's scalar libm calls (LD_PRELOAD, or
+    crmvec-run --libm). An FMA build and a plain x86-64 build, picked per CPU
+    at load, with the same results; errno and exception flags as glibc's.
+  * make check runs crpreload-check on it: 2^16 inputs a function, four
+    rounding modes by four flush settings, results and flags.
+  * Debian: make check passes under dpkg-buildpackage again. Since 0.6.0 its
+    wrapcheck verdict read the nested make's "Leaving directory" line and
+    failed the build.
+
+ -- anun333 <anun333@posteo.net>  Fri, 02 Oct 2026 12:21:22 -0500
+
 crmvec (0.8.0) unstable; urgency=medium
 
   * x86: 18 float functions (logf, log2f, log10f, log1pf, expm1f, tanhf, atanf,

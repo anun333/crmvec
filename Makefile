@@ -12,7 +12,7 @@ ifeq ($(origin CC),default)
 CC      := gcc
 endif
 .DEFAULT_GOAL := all
-VERSION := 0.8.0
+VERSION := 0.9.0
 # install locations (make install PREFIX=... DESTDIR=...): the libraries go
 # to a directory of their own, so that nothing replaces the system's
 # libmvec.so.1 until a program asks for it (crmvec-run, or the rpath that
@@ -103,9 +103,19 @@ ifeq ($(MPFR42),)
 $(info mpfrcheck, pownf-search: left out, no MPFR 4.2 or later found (they call mpfr_pown, mpfr_sinpi, ...))
 endif
 all: libmvec.so.1 crtest libcrref.so bcheck cecheck lcheck hypot-midpoints hypotf-midpoints tan-poles bbench ebench $(if $(MPFR42),mpfrcheck pownf-search) f16check headercheck roundeven-check
-lib: libmvec.so.1
-LIBS_BUILT = libmvec.so.1
+lib: libmvec.so.1 crpreload/libcrpreload.so
+LIBS_BUILT = libmvec.so.1 crpreload/libcrpreload.so
 endif
+
+# crpreload (x86-64, since 0.9.0): CORE-MATH's 76 elementary functions under their C library names, as a second
+# library beside libmvec.so.1, for programs whose scalar libm calls should be correctly rounded too (LD_PRELOAD, or
+# crmvec-run --libm). Built in crpreload/ from this directory's CORE-MATH copies (its Makefile reads print-sources).
+# aarch64 builds and runs its code but is not checked there yet, so it is left out of lib on aarch64.
+CRP_DEPS := $(wildcard crpreload/*.c crpreload/*.h) crpreload/mkdispatch.sh crpreload/Makefile crmvec-fpenv.h
+crpreload/libcrpreload.so: $(CRP_DEPS) $(CR)
+	+$(MAKE) -C crpreload libcrpreload.so CC="$(CC)" CFLAGS="$(CFLAGS)"
+crpreload/crpreload-check: crpreload/crpreload-check.c crpreload/crpreload-list.h
+	+$(MAKE) -C crpreload crpreload-check CC="$(CC)"
 
 install: lib crmvec.h crmvec-simd.h crmvec.pc.in crmvec-run.in
 	install -d $(DESTDIR)$(CRMDIR) $(DESTDIR)$(INCDIR) $(DESTDIR)$(PKGDIR) $(DESTDIR)$(BINDIR)
@@ -388,6 +398,7 @@ clean:
 	rm -f check.log libmvec.so.1 crmvec.o crmvec-avx2.o crmvec-port.o crmvec-port-e.o crtest libcrref.so bcheck hypot-midpoints hypotf-midpoints tan-poles bbench ebench mpfrcheck pownf-search libcrf16.a f16check cecheck lcheck roundeven-check rsqrt-vcheck
 	rm -rf rsqrt-plant
 	rm -rf $(A64) $(RV64) build-sleef build-f16
+	-$(MAKE) -C crpreload clean
 
 # a few minutes of the checks, for users and packagers (the full list is the
 # README's "Checking it"); each line must print a passing verdict, and the
@@ -420,7 +431,7 @@ check: all $(A64)/dropin
 	v "$$(CRTEST_FTZ=1 $$ck sample 4096)" "$$ck sample under flush-to-zero (FPCR.FZ, as -ffast-math programs run)"; \
 	v "$$(LD_LIBRARY_PATH=$(A64) $(A64)/dropin 2>&1 | grep -v 'no version information')" "drop-in loops (gcc, crmvec-simd.h)"; \
 	v "$$(./simdcheck.sh $(CC) $(A64)/libmvec.so.1 2>&1)" "simdcheck (crmvec-simd.h: gcc vectorizes all 52 functions without -ffast-math)"; \
-	v "$$($(MAKE) -s wrapcheck 2>&1)" "wrapcheck (every CORE-MATH function called with flush-to-zero off)"; \
+	v "$$($(MAKE) -s --no-print-directory wrapcheck 2>&1 | grep -vE '^make(\[[0-9]+\])?: (Entering|Leaving) directory')" "wrapcheck (every CORE-MATH function called with flush-to-zero off)"; \
 	v "$$(./importcheck.sh $(A64)/libmvec.so.1)" "importcheck (no result depends on the C library's libm)"; \
 	echo "make check: every verdict passed (details in check.log)"
 
@@ -436,7 +447,7 @@ $(A64)/dropin: port/dropin-main.c port/dropin-loop.c crmvec-simd.h $(A64)/libmve
 	$(A64CC) $(CFLAGS) -O3 -ffp-contract=off -fno-math-errno -include crmvec-simd.h -c -o $(A64)/dropin-loop.o port/dropin-loop.c
 	$(A64CC) $(CFLAGS) $(FP) -I. -o $@ port/dropin-main.c $(A64)/dropin-loop.o sin.c log/log.c expf.c atan2f.c $(A64)/libmvec.so.1 -lm
 else
-check: all rsqrt-vcheck rsqrt-plant/libmvec.so.1
+check: all rsqrt-vcheck rsqrt-plant/libmvec.so.1 crpreload/libcrpreload.so crpreload/crpreload-check
 	@set -e; v() { echo "$$1" | tee -a check.log | tail -1; echo "$$1" | tail -1 | grep -qE $(VERDICTS) || { echo "FAILED: $$2"; exit 1; }; }; \
 	: > check.log; \
 	v "$$(./bcheck . 18)" bcheck; \
@@ -459,8 +470,9 @@ check: all rsqrt-vcheck rsqrt-plant/libmvec.so.1
 	v "$$(./f16check | tail -1)" "f16check"; \
 	v "$$(./roundeven-check)" "roundeven-check (the library's own roundeven, for glibc before 2.25)"; \
 	v "$$(./simdcheck.sh $(CC) ./libmvec.so.1 2>&1)" "simdcheck (crmvec-simd.h: gcc vectorizes all 52 functions without -ffast-math)"; \
-	v "$$($(MAKE) -s wrapcheck 2>&1)" "wrapcheck (every CORE-MATH function called with flush-to-zero off)"; \
+	v "$$($(MAKE) -s --no-print-directory wrapcheck 2>&1 | grep -vE '^make(\[[0-9]+\])?: (Entering|Leaving) directory')" "wrapcheck (every CORE-MATH function called with flush-to-zero off)"; \
 	v "$$(./importcheck.sh ./libmvec.so.1)" "importcheck (no result depends on the C library's libm)"; \
+	v "$$(cd crpreload && ./crpreload-check ./libcrpreload.so ../libcrref.so 16 2>&1)" "crpreload-check (the libm preload against CORE-MATH: 2^16 inputs a function, every mode and flush setting)"; \
 	echo "make check: every verdict passed (details in check.log)"
 endif
 
