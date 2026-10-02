@@ -1,3 +1,22 @@
+crmvec (0.8.0) unstable; urgency=medium
+
+  * x86: 18 float functions (logf, log2f, log10f, log1pf, expm1f, tanhf, atanf,
+    asinf, acosf, atanhf, asinhf, acoshf, cbrtf, erff, erfcf, asinpif, acospif,
+    atanpif) get AVX2 vector paths in float lanes with float-pair arithmetic
+    and a rounding test, CORE-MATH for the lanes it cannot decide: the same
+    results on all 2^32 inputs of each, in 0.22 to 0.90 of 0.7.2's time on an
+    AMD EPYC 7773X.
+  * Checks: crtest verify under flush-to-zero (CRTEST_FTZ=1) and for the six pi
+    functions; crmvec.c built with -Werror=undef; check-pocl.py exits 2 when
+    it cannot give a verdict.
+  * CORE-MATH: sinpi.c from 284b3b0 (no spurious underflow for tiny x;
+    results unchanged).
+  * Nix: package.nix names its check target. From 0.6.0 to 0.7.2 nix-build
+    skipped make check without saying so (nixpkgs probes the target with
+    make -n check, which ran the check recipe and failed before a build).
+
+ -- anun333 <anun333@posteo.net>  Fri, 02 Oct 2026 08:19:47 -0500
+
 crmvec (0.7.2) unstable; urgency=medium
 
   * x86: a vector path for double rsqrt (AVX2 and FMA; the SSE2 entry point

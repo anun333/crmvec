@@ -6,7 +6,7 @@
 
 stdenv.mkDerivation {
   pname = "crmvec";
-  version = "0.7.2";
+  version = "0.8.0";
   src = lib.cleanSource ./.;
 
   # SIMDe supplies the x86 intrinsics on aarch64
@@ -17,6 +17,10 @@ stdenv.mkDerivation {
   preBuild = "make clean";
   buildFlags = [ "lib" ];
   doCheck = true;
+  # named, not probed: nixpkgs' checkPhase looks for the target with `make -n check`, and make runs a recipe line
+  # holding $(MAKE) even under -n; check's does (wrapcheck), so before anything was built the probe failed and the
+  # phase said "no check/test target in Makefile, doing nothing" (every Nix build from 2026-09-29 to 10-02)
+  checkTarget = "check";
   checkInputs = lib.optional stdenv.hostPlatform.isx86_64 mpfr;
   makeFlags = [ "PREFIX=${placeholder "out"}" ];
 

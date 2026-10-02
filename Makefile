@@ -12,7 +12,7 @@ ifeq ($(origin CC),default)
 CC      := gcc
 endif
 .DEFAULT_GOAL := all
-VERSION := 0.7.2
+VERSION := 0.8.0
 # install locations (make install PREFIX=... DESTDIR=...): the libraries go
 # to a directory of their own, so that nothing replaces the system's
 # libmvec.so.1 until a program asks for it (crmvec-run, or the rpath that
@@ -41,6 +41,10 @@ FP      := -ffp-contract=off -frounding-math
 # cost the float exp and log family 3-15% (2026-09-27); CORE-MATH and
 # everything else that runs in every mode keep it
 FPV     := -ffp-contract=off
+# crmvec.c's #if tests read option macros (LOGF_FL, CBRTF_FL, ...) whose defaults it defines itself: an undefined one
+# evaluates to 0 without a word, and the code it guards silently falls back (2026-10-02: an edit deleted CBRTF_FL's
+# default, and cbrtf went back to its old path with every check still passing). -Werror=undef refuses that.
+UNDEF   := -Werror=undef
 CR      := expf.c exp2f.c exp10f.c logf.c log2f.c log10f.c sinf.c cosf.c tanf.c powf.c \
            exp.c sin.c cos.c tan.c log/log.c pow/pow.c \
            acosf.c acoshf.c asinf.c asinhf.c atanf.c atan2f.c atanhf.c cbrtf.c coshf.c \
@@ -168,7 +172,7 @@ crmvec-port-e.o: port/crmvec-port-e.c port/portable.h $(wildcard port/port-*.h) 
 PORTOBJ += $(EOBJ)
 
 crmvec.o: crmvec.c $(HDR) $(PORTOBJ)
-	$(CC) $(CFLAGS) $(CPPFLAGS) $(FPV) -DCRMVEC_PORT=$(X86PORT) -DCRMVEC_E512=$(E512) -fPIC -c -o $@ crmvec.c
+	$(CC) $(CFLAGS) $(CPPFLAGS) $(FPV) $(UNDEF) -DCRMVEC_PORT=$(X86PORT) -DCRMVEC_E512=$(E512) -fPIC -c -o $@ crmvec.c
 
 # rsqrt-vcheck (the vector double rsqrt against CORE-MATH) and its control:
 # the same library with the transcribed rounding test off, which must differ
@@ -176,12 +180,12 @@ rsqrt-vcheck: rsqrt-vcheck.c
 	$(CC) $(CFLAGS) -fopenmp -o $@ rsqrt-vcheck.c -ldl -lm
 rsqrt-plant/libmvec.so.1: crmvec.c $(HDR) $(PORTOBJ) $(LIBC) crmvec-fpenv.c $(CR) libcrf16.a crmvec-exports.map
 	@mkdir -p rsqrt-plant
-	$(CC) $(CFLAGS) $(CPPFLAGS) $(FPV) -DCRMVEC_PORT=$(X86PORT) -DCRMVEC_E512=$(E512) -DCRMVEC_RSQRT_PLANT -fPIC -c -o rsqrt-plant/crmvec.o crmvec.c
+	$(CC) $(CFLAGS) $(CPPFLAGS) $(FPV) $(UNDEF) -DCRMVEC_PORT=$(X86PORT) -DCRMVEC_E512=$(E512) -DCRMVEC_RSQRT_PLANT -fPIC -c -o rsqrt-plant/crmvec.o crmvec.c
 	$(CC) $(CFLAGS) $(CPPFLAGS) $(FP) $(LDFLAGS) -fPIC -shared -Wl,-z,defs -Wl,-Bsymbolic-functions -Wl,--gc-sections -Wl,-soname,libmvec.so.1 -Wl,--version-script=crmvec-exports.map -o $@ rsqrt-plant/crmvec.o $(PORTOBJ) $(LIBC) $(CR) $(CRWRAP) libcrf16.a -lm
 
 # for the checks built with -mavx2 (crtest, hypot-midpoints), as before
 crmvec-avx2.o: crmvec.c $(HDR) $(PORTOBJ)
-	$(CC) $(CFLAGS) $(FPV) -DCRMVEC_PORT=$(X86PORT) -DCRMVEC_E512=$(E512) -mavx2 -mfma -c -o $@ crmvec.c
+	$(CC) $(CFLAGS) $(FPV) $(UNDEF) -DCRMVEC_PORT=$(X86PORT) -DCRMVEC_E512=$(E512) -mavx2 -mfma -c -o $@ crmvec.c
 
 libmvec.so.1: crmvec.o $(LIBC) crmvec-fpenv.c $(HDR) $(CR) libcrf16.a crmvec-exports.map
 	$(CC) $(CFLAGS) $(CPPFLAGS) $(FP) $(LDFLAGS) -fPIC -shared -Wl,-z,defs -Wl,-Bsymbolic-functions -Wl,--gc-sections -Wl,-soname,libmvec.so.1 -Wl,--version-script=crmvec-exports.map -o $@ crmvec.o $(PORTOBJ) $(LIBC) $(CR) $(CRWRAP) libcrf16.a -lm
@@ -249,7 +253,7 @@ pownf-search: pownf-search.c crmvec-pownf-tab.h $(PWS)
 
 # cr_tan renamed to a counter inside crmvec.c only, to see which lanes go to it
 tan-poles: tan-poles.c tan-poles.h $(LIB) crmvec-fpenv.c $(HDR) $(CR) libcrf16.a $(PORTOBJ)
-	$(CC) $(CFLAGS) $(FPV) -DCRMVEC_PORT=$(X86PORT) -DCRMVEC_E512=$(E512) -mavx2 -mfma -Dcr_tan=cnt_tan -c -o tan-poles-crmvec.o crmvec.c
+	$(CC) $(CFLAGS) $(FPV) $(UNDEF) -DCRMVEC_PORT=$(X86PORT) -DCRMVEC_E512=$(E512) -mavx2 -mfma -Dcr_tan=cnt_tan -c -o tan-poles-crmvec.o crmvec.c
 	$(if $(filter crmvec-port.o,$(PORTOBJ)),$(PORTCC) -O3 -ffp-contract=off -fno-math-errno -mavx2 -mfma -Dcr_tan=cnt_tan -c -o tan-poles-port.o port/crmvec-port.c)
 	$(CC) $(CFLAGS) $(FP) -mavx2 -mfma -o $@ tan-poles.c tan-poles-crmvec.o $(if $(filter crmvec-port.o,$(PORTOBJ)),tan-poles-port.o) $(EOBJ) crmvec-scalar.c crmvec-f16.c $(CR) $(CRWRAP) libcrf16.a -lm
 	rm -f tan-poles-crmvec.o tan-poles-port.o

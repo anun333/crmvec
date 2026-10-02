@@ -23,7 +23,8 @@
 
    VD1 VF1 VD2 VF2 VDN VFN: as LD1 LF1 LD2 LF2 LDN LFN (and expanded through
    them unless defined), for the functions x86 gives a vector path (sinpif,
-   cospif, tanpif, rsqrtf; powr, pown: built on crmvec's vector pow,
+   cospif, tanpif, rsqrtf; asinpif, acospif, atanpif since 2026-10-02;
+   powr, pown: built on crmvec's vector pow,
    crmvec.c; rsqrt, CORE-MATH's fast path transcribed, added 2026-10-01);
    every other includer treats them as L entries. Added 2026-09-27. */
 #ifndef CRMVEC_LANES_DECL
@@ -132,9 +133,9 @@ int ilogb(double), ilogbf(float);
 LD1(sinpi, cr_sinpi(x))     VF1(sinpif, cr_sinpif(x))
 LD1(cospi, cr_cospi(x))     VF1(cospif, cr_cospif(x))
 LD1(tanpi, cr_tanpi(x))     VF1(tanpif, cr_tanpif(x))
-LD1(asinpi, cr_asinpi(x))   LF1(asinpif, cr_asinpif(x))
-LD1(acospi, cr_acospi(x))   LF1(acospif, cr_acospif(x))
-LD1(atanpi, cr_atanpi(x))   LF1(atanpif, cr_atanpif(x))
+LD1(asinpi, cr_asinpi(x))   VF1(asinpif, cr_asinpif(x))
+LD1(acospi, cr_acospi(x))   VF1(acospif, cr_acospif(x))
+LD1(atanpi, cr_atanpi(x))   VF1(atanpif, cr_atanpif(x))
 LD1(lgamma, cr_lgamma(x))   LF1(lgammaf, cr_lgammaf(x))
 LD1(tgamma, cr_tgamma(x))   LF1(tgammaf, cr_tgammaf(x))
 VD1(rsqrt, cr_rsqrt(x))     VF1(rsqrtf, cr_rsqrtf(x))

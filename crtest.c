@@ -57,6 +57,7 @@ typedef __m256d (*v4v)(__m256d, __m256d);
 F1(expf) F1(exp2f) F1(exp10f) F1(logf) F1(log2f) F1(log10f) F1(sinf) F1(cosf) F1(tanf)
 F1(acosf) F1(acoshf) F1(asinf) F1(asinhf) F1(atanf) F1(atanhf) F1(cbrtf) F1(coshf) F1(erff) F1(erfcf)
 F1(expm1f) F1(log1pf) F1(sinhf) F1(tanhf)
+F1(sinpif) F1(cospif) F1(tanpif) F1(asinpif) F1(acospif) F1(atanpif)
 D1(exp) D1(log) D1(sin) D1(cos) D1(tan)
 D1(acos) D1(acosh) D1(asin) D1(asinh) D1(atan) D1(atanh) D1(cbrt) D1(cosh) D1(erf) D1(erfc)
 D1(exp10) D1(exp2) D1(expm1) D1(log10) D1(log1p) D1(log2) D1(sinh) D1(tanh)
@@ -93,6 +94,9 @@ static const struct { const char *name; v8 vec; float (*cr)(float); float lo, hi
   FE(atanf, -1000.f, 1000.f), FE(atanhf, -1.f, 1.f), FE(cbrtf, -1000.f, 1000.f), FE(coshf, -80.f, 80.f),
   FE(erff, -5.f, 5.f), FE(erfcf, -5.f, 9.f), FE(expm1f, -80.f, 80.f), FE(log1pf, -0.9f, 1000.f),
   FE(sinhf, -80.f, 80.f), FE(tanhf, -10.f, 10.f),
+  /* the pi functions (2026-10-02): until then their vector paths had only cecheck's sampled calls */
+  FE(sinpif, -100.f, 100.f), FE(cospif, -100.f, 100.f), FE(tanpif, -100.f, 100.f),
+  FE(asinpif, -1.f, 1.f), FE(acospif, -1.f, 1.f), FE(atanpif, -1000.f, 1000.f),
 };
 #define NF (sizeof F / sizeof F[0])
 
@@ -138,6 +142,12 @@ static double unit(uint64_t r) { return (r >> 11) * 0x1p-53; }
 static int verify(int argc, char **argv)
 {
   int bad_total = 0;
+  /* CRTEST_FTZ=1: the entry points called with FTZ and DAZ on, the references with them off, under crtest-ftz.h's
+     contract (subnormal inputs not tested; a result in the subnormal range, or rounding to the smallest normal, may
+     come back as a zero of its sign). Added 2026-10-02: bcheck's sampled FTZ run had caught asinpif and atanpif */
+  const char *fe = getenv("CRTEST_FTZ");
+  const int vftz = fe && *fe && strcmp(fe, "0");
+  if (vftz) printf("flush-to-zero: the entry points called with FTZ and DAZ on\n");
   for (unsigned f = 0; f < NF; f++) {
     if (!wanted(F[f].name, argc, argv)) continue;
     unsigned long long bad = 0, first = 0; int have = 0;
@@ -145,9 +155,14 @@ static int verify(int argc, char **argv)
     for (long long blk = 0; blk < (1LL << 29); blk++) {           /* 2^29 blocks of 8 = 2^32 */
       float xs[8], ys[8];
       for (int i = 0; i < 8; i++) xs[i] = f_of((uint32_t)(blk * 8 + i));
+      unsigned csr = 0;
+      if (vftz) { csr = _mm_getcsr(); _mm_setcsr(csr | 0x8040); }
       _mm256_storeu_ps(ys, F[f].vec(_mm256_loadu_ps(xs)));
+      if (vftz) _mm_setcsr(csr);
       for (int i = 0; i < 8; i++) {
+        if (vftz && xs[i] != 0 && fabsf(xs[i]) < 0x1p-126f) continue;
         float r = F[f].cr(xs[i]);
+        if (vftz && ys[i] == 0 && signbit(ys[i]) == signbit(r) && fabsf(r) <= 0x1p-126f) continue;
         if (!same_f(r, ys[i])) {
           bad++;
           if (getenv("CRTEST_LIST")) {

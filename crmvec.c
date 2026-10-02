@@ -450,7 +450,8 @@ AVX2I static inline __m256d exp2_core(__m256d t)
 #endif
 
 /* s (1 + s^2/3 + ... + s^10/11) = atanh s for |s| <= 0.172, relative error
-   < 2^-36: log_core's series, shared */
+   < 2^-34.1 (the series' tail at |s| = 0.1716, about s^12/13; said 2^-36 until
+   2026-10-02): log_core's series, shared */
 AVX2I static inline __m256d atanh_series(__m256d s)
 {
   __m256d s2 = _mm256_mul_pd(s, s);
@@ -541,7 +542,8 @@ AVX2I static inline __m256d log_core_d(__m256d x)
   return _mm256_fmadd_pd(r, q[0], w);
 }
 #else
-/* ln x for a positive normal double x; relative error < 2^-36 */
+/* ln x for a positive normal double x; relative error < 2^-34.1 (atanh_series'
+   tail; said 2^-36 until 2026-10-02) */
 AVX2I static inline __m256d log_core_d(__m256d x)
 {
   const __m256d ONE = _mm256_set1_pd(1.0);
@@ -569,7 +571,8 @@ AVX2I static inline __m256d log_core_d(__m256d x)
 #endif
 
 /* ln x for x > 0 finite (lanes with x <= 0 / inf / nan give ln 1 = 0 and
-   are flagged in *special); relative error < 2^-36. Subnormal x is flagged
+   are flagged in *special); relative error < 2^-34.1 (said 2^-36 until
+   2026-10-02). Subnormal x is flagged
    too (2026-09-29): under DAZ, which -ffast-math programs run with, the
    conversion to double reads it as 0, and log_core_d(0) is -1023 ln 2 */
 AVX2I static inline __m256d log_core(__m128 xf, __m128i *special)
@@ -780,7 +783,156 @@ AVX2I static inline __m256d log_family(__m128 xf, double scale, __m128i *redo)
     return finish8(xf, y0, y1, r0, r1, CR);                                           \
   }
 
-#if !CRMVEC_PORT
+/* tier 2's float-lane paths (2026-10-02, from openpocl's harness/tiers): each on by default, 0 restores the double
+   halves it replaced. Defined here, unconditionally, so every #if that reads them sees a value in every build
+   (PORT=1 skips the blocks that hold the code; -Werror=undef, Makefile) */
+#ifndef LOGF_FL
+#define LOGF_FL 1
+#endif
+#ifndef EXPM1F_FL
+#define EXPM1F_FL 1
+#endif
+#ifndef LOG1PF_FL
+#define LOG1PF_FL 1
+#endif
+#ifndef ATANHF_FL
+#define ATANHF_FL 1
+#endif
+#ifndef TANHF_FL
+#define TANHF_FL 1
+#endif
+#ifndef ATANF_FL
+#define ATANF_FL 1
+#endif
+#ifndef ASINF_FL
+#define ASINF_FL 1
+#endif
+#ifndef CBRTF_FL
+#define CBRTF_FL 1
+#endif
+#ifndef ERFCF_FL
+#define ERFCF_FL 1
+#endif
+#ifndef ERFF_FL
+#define ERFF_FL 1
+#endif
+#ifndef ASINHF_FL
+#define ASINHF_FL 1
+#endif
+#if LOGF_FL && !EXPF_FL
+#error "LOGF_FL uses EXPF_FL's finish8f"
+#endif
+#if !CRMVEC_PORT && LOGF_FL
+/* logf, log2f, log10f in float lanes (2026-10-02; openpocl's harness/tiers/tier-logfam.c, tier 2): 8 lanes of float
+   and float-float arithmetic, not two halves of 4 doubles with a division; 36-40% faster through a call on cfarm421.
+     x = 2^e z, z in [0.70, 1.40), j = bits 22-19 of x - 0x3f330000 picks one of 16 subintervals,
+     z IC[j] = ph + pl exactly (FMA), r = ph - 1 exact,
+     log1p(r + pl) = r - r^2/2 + r^3 q(r) + pl (1 - r + r^2), r^2 = r2h + r2l exactly, q of degree 4,
+     ln z = LC[j] + that, LC[j] = log(1/IC[j]) in one float to about 2^-40 (IC chosen for it),
+   then e ln2 added (logf), or the pair ln z times 1/ln2 or 1/ln10 as a pair and e or e log10(2) added (log2f, log10f),
+   by Fast2Sum throughout. Its largest error over every positive normal input, measured against CORE-MATH's double
+   functions: 2^-32.3 (logf), 2^-32.8 (log2f), 2^-32.2 (log10f) relative to the binade; the rounding test below uses
+   twice that. The result is z = RN(hi + lo) with its remainder d; a lane is in doubt when |d| is within TOL of half
+   an ulp of z (the ulp below z when d points down a binade). In-doubt lanes and x not a positive normal go to
+   CORE-MATH; every input is checked against it (make check). Round-to-nearest only, as all the vector code. */
+static const float LOGF_IC[16] __attribute__((aligned(32))) = {
+  0x1.662f3ap+0f, 0x1.56e68p+0f, 0x1.48cbb6p+0f, 0x1.3d2f8ap+0f, 0x1.3051fap+0f, 0x1.2639a6p+0f, 0x1.1b96a2p+0f, 0x1.11c146p+0f,
+  0x1.08f9b6p+0f, 0x1p+0f, 0x1.e4cdcp-1f, 0x1.ca63d2p-1f, 0x1.b18f16p-1f, 0x1.9c0678p-1f, 0x1.88350ep-1f, 0x1.7677fep-1f};
+static const float LOGF_LC[16] __attribute__((aligned(32))) = {
+  -0x1.57ee7ep-2f, -0x1.2b46ep-2f, -0x1.0043f8p-2f, -0x1.b6e824p-3f, -0x1.621bp-3f, -0x1.1d041ap-3f, -0x1.a3361p-4f, -0x1.12a952p-4f,
+  -0x1.1a4b2cp-5f, 0x0p+0f, 0x1.bf1faep-5f, 0x1.c5092ap-4f, 0x1.549378p-3f, 0x1.bce84cp-3f, 0x1.10ee5ap-2f, 0x1.4052eep-2f};
+#define LOGF_LK16(t, j, sel) _mm256_blendv_ps(_mm256_permutevar8x32_ps(_mm256_load_ps(t), j),                  \
+                                              _mm256_permutevar8x32_ps(_mm256_load_ps((t) + 8), j), sel)
+#define F2S(a, b, s, e) do { s = _mm256_add_ps(a, b); e = _mm256_sub_ps(b, _mm256_sub_ps(s, a)); } while (0)
+/* The float-lane rounding test (from openpocl's tiers, tier_decide): f = RN(hi + lo) with its remainder d; in doubt
+   if |d| + tol >= half an ulp of f, as |d| 2^24 >= bin (1 - tol 2^24), bin the binade of f, or of f (1 - 2^-24)
+   when d points toward zero (below a power of two the half ulp is the smaller one). f = 0 or NaN: in doubt. */
+AVX2I static inline __m256 fl_round(__m256 hi, __m256 lo, const float tol, __m256 *doubt)
+{
+  __m256 f = _mm256_add_ps(hi, lo), d = _mm256_sub_ps(lo, _mm256_sub_ps(f, hi));        /* Fast2Sum, |hi| >= |lo| */
+  __m256 g = _mm256_blendv_ps(f, _mm256_mul_ps(f, _mm256_set1_ps(0x1.fffffep-1f)), _mm256_xor_ps(d, f));
+  __m256 bin = _mm256_and_ps(g, _mm256_castsi256_ps(_mm256_set1_epi32(0x7f800000)));
+  __m256 ad = _mm256_andnot_ps(_mm256_set1_ps(-0.0f), d);
+  *doubt = _mm256_cmp_ps(_mm256_mul_ps(ad, _mm256_set1_ps(0x1p24f)), _mm256_mul_ps(bin, _mm256_set1_ps(1.0f - tol * 0x1p24f)), _CMP_NLT_UQ);
+  return f;
+}
+/* the shared tail: ln of IC[j] z (= r + pl exactly, r = ph - 1) plus the table's log c and e times ln2, ln z times
+   1/ln2 or 1/ln10 for log2f and log10f; hi + lo to about 2^-32.5 */
+AVX2I static inline void logf_fl_tail(__m256 r, __m256 pl, __m256 ch, __m256i e, const int fam, __m256 *hi, __m256 *lo)
+{
+#define F(c) _mm256_set1_ps(c)
+  __m256 r2h = _mm256_mul_ps(r, r), r2l = _mm256_fmsub_ps(r, r, r2h);
+  /* q(r) = 1/3 - r/4 + r^2/5 - r^3/6 + r^4/7 */
+  __m256 q = _mm256_fmadd_ps(F(0x1.24924ap-3f), r, F(-0x1.555556p-3f));
+  q = _mm256_fmadd_ps(q, r, F(0x1.99999ap-3f));
+  q = _mm256_fmadd_ps(q, r, F(-0x1p-2f));
+  q = _mm256_fmadd_ps(q, r, F(0x1.555556p-2f));
+  __m256 cub = _mm256_mul_ps(r2h, _mm256_mul_ps(r, q));
+  __m256 corr = _mm256_fmadd_ps(pl, _mm256_fmsub_ps(r, r, r), pl);
+  __m256 hr = _mm256_mul_ps(r2h, F(-0.5f));
+  __m256 small = _mm256_add_ps(_mm256_fmadd_ps(r2l, F(-0.5f), cub), corr);
+  __m256 ef = _mm256_cvtepi32_ps(e);
+  if (fam == 0) {
+    __m256 a = _mm256_mul_ps(ef, F(0x1.62e4p-1f));                         /* ln2 = L1 + L2, e L1 exact */
+    __m256 s1, t1; F2S(a, ch, s1, t1);
+    __m256 s2, t2; F2S(s1, r, s2, t2);
+    __m256 s3, t3; F2S(s2, hr, s3, t3);
+    *hi = s3;
+    *lo = _mm256_add_ps(_mm256_add_ps(_mm256_add_ps(t1, t2), t3), _mm256_add_ps(_mm256_mul_ps(ef, F(0x1.7f7d1cp-20f)), small));
+  } else {
+    __m256 s2, t2; F2S(ch, r, s2, t2);                                      /* |ch| > |r| unless c = 1, ch = 0 */
+    __m256 u, t3; F2S(s2, hr, u, t3);
+    __m256 ul = _mm256_add_ps(_mm256_add_ps(t2, t3), small);
+    const __m256 kh = fam == 1 ? F(0x1.715476p+0f) : F(0x1.bcb7b2p-2f), kl = fam == 1 ? F(0x1.4ae0cp-26f) : F(-0x1.5b235ep-27f);
+    __m256 a = fam == 1 ? ef : _mm256_mul_ps(ef, F(0x1.344p-2f));           /* log10(2) = G1 + G2, e G1 exact */
+    __m256 al = fam == 1 ? _mm256_setzero_ps() : _mm256_mul_ps(ef, F(0x1.3509f8p-18f));
+    __m256 h = _mm256_mul_ps(u, kh);
+    __m256 l = _mm256_fmadd_ps(u, kl, _mm256_fmadd_ps(ul, kh, _mm256_fmsub_ps(u, kh, h)));
+    __m256 s, t; F2S(a, h, s, t);                                           /* |a| >= 0.3 > |h| unless e = 0 */
+    *hi = s;
+    *lo = _mm256_add_ps(_mm256_add_ps(t, l), al);
+  }
+#undef F
+}
+/* x = 2^e z, z in [0.70, 1.40) (glibc's offset 0x3f330000), j = bits 22-19 of x - offset: the table rows */
+#define LOGF_REDUCE(xbits)                                                                                     \
+  __m256i tmp = _mm256_sub_epi32(xbits, _mm256_set1_epi32(0x3f330000));                                        \
+  __m256i j = _mm256_srli_epi32(tmp, 19);                                                                      \
+  __m256i e = _mm256_srai_epi32(tmp, 23);                                                                      \
+  __m256 z = _mm256_castsi256_ps(_mm256_sub_epi32(xbits, _mm256_and_si256(tmp, _mm256_set1_epi32((int)0xff800000u)))); \
+  __m256 sel = _mm256_castsi256_ps(_mm256_slli_epi32(tmp, 9));                                                 \
+  __m256 ic = LOGF_LK16(LOGF_IC, j, sel), ch = LOGF_LK16(LOGF_LC, j, sel);
+AVX2I static inline __m256 logf_fl_core(__m256 x, const int fam, const float tol, __m256 *doubt)
+{
+  LOGF_REDUCE(_mm256_castps_si256(x))
+  __m256 ph = _mm256_mul_ps(z, ic), pl = _mm256_fmsub_ps(z, ic, ph);
+  __m256 hi, lo; logf_fl_tail(_mm256_sub_ps(ph, _mm256_set1_ps(1.0f)), pl, ch, e, fam, &hi, &lo);
+  return fl_round(hi, lo, tol, doubt);
+}
+#define LOGF_FL_ENTRY(NAME, FAM, TOL, CR)                                                                     \
+  AVX2 __m256 _ZGVdN8v_##NAME(__m256 x)                                                                       \
+  {                                                                                                           \
+    __m256i xi = _mm256_castps_si256(x);    /* positive normal: bits in (0x007fffff, 0x7f800000) as signed */ \
+    __m256 ok = _mm256_castsi256_ps(_mm256_and_si256(_mm256_cmpgt_epi32(xi, _mm256_set1_epi32(0x007fffff)),   \
+                                                     _mm256_cmpgt_epi32(_mm256_set1_epi32(0x7f800000), xi))); \
+    __m256 doubt, y = logf_fl_core(x, FAM, TOL, &doubt);                                                      \
+    int flag = _mm256_movemask_ps(_mm256_or_ps(doubt, _mm256_xor_ps(ok, _mm256_castsi256_ps(_mm256_set1_epi32(-1))))); \
+    if (__builtin_expect(flag == 0, 1)) return y;                                                             \
+    return finish8f(x, y, flag, CR);                                                                          \
+  }
+/* TOL: twice the measured largest error, in units of 2^-48 of the binade (53471, 36984, 58712). CRM_LOGF_TOL0 is the
+   check's control: the test with no tolerance, which must leave some lanes misrounded */
+#ifdef CRM_LOGF_TOL0
+#define LOGF_TOL(t) 0.0f
+#else
+#define LOGF_TOL(t) ((t) * 0x1p-48f)
+#endif
+LOGF_FL_ENTRY(logf,   0, LOGF_TOL(106942), cr_logf)
+LOGF_FL_ENTRY(log2f,  1, LOGF_TOL(73968), cr_log2f)
+LOGF_FL_ENTRY(log10f, 2, LOGF_TOL(117424), cr_log10f)
+#undef LOGF_TOL
+#undef F2S
+#elif !CRMVEC_PORT
 LOG_FAMILY(logf,   1.0,                  cr_logf)
 LOG_FAMILY(log2f,  0x1.71547652b82fep+0, cr_log2f)   /* log2(e)  */
 LOG_FAMILY(log10f, 0x1.bcb7b1526e50ep-2, cr_log10f)  /* log10(e) */
@@ -1311,11 +1463,119 @@ AVX2I static inline __m256d tanhf_half(__m128 xf, __m128i *redo)
 }
 
 float cr_expm1f(float), cr_coshf(float), cr_sinhf(float), cr_tanhf(float), cr_hypotf(float, float);
-#if !CRMVEC_PORT
+#if EXPM1F_FL && !LOGF_FL
+#error "EXPM1F_FL uses LOGF_FL's fl_round and EXPF_FL's finish8f"
+#endif
+#if !CRMVEC_PORT && EXPM1F_FL
+/* expm1f in float lanes (2026-10-02; openpocl's harness/tiers tier-kern.h expm1_pair, tier 2), replacing the double
+   halves (a degree-13 series below |x| = 1/2, exp2_core above): about half the time through a call on cfarm421.
+     x = n ln2/16 + r, r = rh + rl exactly (ln2/16 in three parts), e^r - 1 = rh + rh^2/2 + rest, rh^2/2 exact by
+     FMA and joined to rh by Fast2Sum, rest = rh^3 (1/6 + rh/24 + rh^2/120) + rh^2's error/2 + rl (1 + rh);
+     then 2^m T (1 + that) - 1 by TwoSum, T = 2^(j/16) as a float pair read by vpermps; where n = 0 the pair
+     e^r - 1 itself (through 1 + p it would keep only 2^-49 absolute).
+   Largest error over every input in [-87, 88.7]: 2^-35.1 of the binade (measured against CORE-MATH's double
+   expm1); the test uses twice that. Outside that range, and lanes in doubt, CORE-MATH. */
+static const float EXPM1F_THI[16] __attribute__((aligned(32))) = {
+  0x1p+0f, 0x1.0b5586p+0f, 0x1.172b84p+0f, 0x1.2387a6p+0f, 0x1.306fep+0f, 0x1.3dea64p+0f, 0x1.4bfdaep+0f, 0x1.5ab07ep+0f,
+  0x1.6a09e6p+0f, 0x1.7a1148p+0f, 0x1.8ace54p+0f, 0x1.9c4918p+0f, 0x1.ae89fap+0f, 0x1.c199bep+0f, 0x1.d5818ep+0f, 0x1.ea4afap+0f};
+static const float EXPM1F_TLO[16] __attribute__((aligned(32))) = {
+  0x0p+0f, 0x1.9f3122p-25f, -0x1.c15742p-27f, 0x1.ceac48p-25f, 0x1.4636e2p-25f, 0x1.824684p-25f, -0x1.593abcp-25f, -0x1.5bd5ecp-27f,
+  0x1.9fcef4p-26f, -0x1.829fdp-25f, 0x1.15506ep-27f, 0x1.51f848p-27f, -0x1.a94b14p-26f, -0x1.3d56b2p-27f, -0x1.822dbcp-27f, 0x1.52486cp-27f};
+#ifdef CRM_EXPM1F_TOL0
+#define EXPM1F_TOL 0.0f
+#else
+#define EXPM1F_TOL (15694 * 0x1p-48f)                       /* twice the measured 7847 units of 2^-48 */
+#endif
+#define F(c) _mm256_set1_ps(c)
+#define TS(x, y, s, e) do { s = _mm256_add_ps(x, y); __m256 bb_ = _mm256_sub_ps(s, x); \
+    e = _mm256_add_ps(_mm256_sub_ps(x, _mm256_sub_ps(s, bb_)), _mm256_sub_ps(y, bb_)); } while (0)     /* TwoSum */
+#define F2S(x, y, s, e) do { s = _mm256_add_ps(x, y); e = _mm256_sub_ps(y, _mm256_sub_ps(s, x)); } while (0)
+/* e^x - 1 as a normalized pair, x in [-87, 88.7] (expm1f, and tanhf on 2|x|) */
+AVX2I static inline void expm1f_fl_pair(__m256 x, __m256 *hi, __m256 *lo)
+{
+  __m256 n = _mm256_round_ps(_mm256_mul_ps(x, F(0x1.715476p+4f)), _MM_FROUND_TO_NEAREST_INT | _MM_FROUND_NO_EXC);
+  __m256 rh0 = _mm256_fnmadd_ps(n, F(0x1.62ep-5f), x);                /* ln2/16 = C1 + C2 + C3, n C1 exact */
+  __m256 p1 = _mm256_mul_ps(n, F(0x1.0bfbe8p-19f)), pe = _mm256_fmsub_ps(n, F(0x1.0bfbe8p-19f), p1);
+  __m256 rh, rt; TS(rh0, _mm256_sub_ps(_mm256_setzero_ps(), p1), rh, rt);
+  __m256 rl = _mm256_sub_ps(rt, _mm256_fmadd_ps(n, F(0x1.cf79acp-44f), pe));
+  __m256 u = _mm256_mul_ps(rh, rh), ue = _mm256_fmsub_ps(rh, rh, u);
+  __m256 q3 = _mm256_fmadd_ps(_mm256_fmadd_ps(rh, F(0x1.111112p-7f), F(0x1.555556p-5f)), rh, F(0x1.555556p-3f));
+  __m256 rest = _mm256_fmadd_ps(_mm256_mul_ps(u, rh), q3, _mm256_fmadd_ps(F(0.5f), ue, _mm256_fmadd_ps(rl, rh, rl)));
+  __m256 ph, pt; F2S(rh, _mm256_mul_ps(u, F(0.5f)), ph, pt);          /* |rh| >= rh^2/2 */
+  __m256 pl = _mm256_add_ps(pt, rest);                                 /* e^r - 1 = ph + pl */
+  __m256 yh, e1; F2S(F(1.0f), ph, yh, e1);
+  __m256 yl = _mm256_add_ps(e1, pl);
+  __m256i ni = _mm256_cvtps_epi32(n);
+  __m256 sel = _mm256_castsi256_ps(_mm256_slli_epi32(ni, 28));
+  __m256 th = LOGF_LK16(EXPM1F_THI, ni, sel), tl = LOGF_LK16(EXPM1F_TLO, ni, sel);
+  __m256 h = _mm256_mul_ps(th, yh);
+  __m256 zl = _mm256_fmadd_ps(th, yl, _mm256_fmadd_ps(tl, yh, _mm256_fmsub_ps(th, yh, h)));
+  __m256 sc = _mm256_castsi256_ps(_mm256_slli_epi32(_mm256_add_epi32(_mm256_srai_epi32(ni, 4), _mm256_set1_epi32(127)), 23));
+  __m256 zh = _mm256_mul_ps(h, sc);
+  zl = _mm256_mul_ps(zl, sc);
+  __m256 ah, at; TS(zh, F(-1.0f), ah, at);
+  __m256 al = _mm256_add_ps(at, zl);
+  __m256 n0 = _mm256_cmp_ps(n, _mm256_setzero_ps(), _CMP_EQ_OQ);
+  F2S(_mm256_blendv_ps(ah, ph, n0), _mm256_blendv_ps(al, pl, n0), *hi, *lo);
+}
+AVX2 __m256 _ZGVdN8v_expm1f(__m256 a)
+{
+  __m256 ok = _mm256_and_ps(_mm256_cmp_ps(a, F(-87.0f), _CMP_GE_OQ), _mm256_cmp_ps(a, F(88.7f), _CMP_LE_OQ));
+  /* below -87 (and at -inf) the result is -1: from -0x1.154246p+4 down cr_expm1f is exactly -1 (bisection), and the
+     fast path covers [-87, 88.7]; returned here, so very negative inputs stay on the vector path, as in 0.7.2 */
+  __m256 sat = _mm256_cmp_ps(a, F(-87.0f), _CMP_LT_OQ);
+  __m256 hi, lo; expm1f_fl_pair(_mm256_and_ps(a, ok), &hi, &lo);       /* nan and out of range -> 0 */
+  __m256 doubt, y = fl_round(hi, lo, EXPM1F_TOL, &doubt);
+  y = _mm256_blendv_ps(y, F(-1.0f), sat);
+  int flag = _mm256_movemask_ps(_mm256_andnot_ps(sat, _mm256_or_ps(doubt, _mm256_xor_ps(ok, _mm256_castsi256_ps(_mm256_set1_epi32(-1))))));
+  if (__builtin_expect(flag == 0, 1)) return y;
+  return finish8f(a, y, flag, cr_expm1f);
+}
+/* tanhf in float lanes (2026-10-02; openpocl's tier-tanhf.c, tier 2): e = expm1(2|x|) as a pair, tanh = e/(e + 2)
+   as a pair (e + 2 by TwoSum, the quotient's remainder times rcp: at most 2^-34.4 on either vendor), x's sign.
+   Largest error over every |x| <= 9: 2^-33.7 of the binade; the test at twice that. From |x| = 0x1.205968p+3 up
+   (and at inf) the correctly rounded result is +-1, returned as such (CORE-MATH's cr_tanhf: the smallest such float,
+   by bisection); 9 < |x| < that, x = 0, nan and lanes in doubt go to CORE-MATH. Replaces the double halves. */
+#if TANHF_FL
+#ifdef CRM_TANHF_TOL0
+#define TANHF_TOL 0.0f
+#else
+#define TANHF_TOL (39940 * 0x1p-48f)                        /* twice the measured 19970 units of 2^-48 */
+#endif
+AVX2 __m256 _ZGVdN8v_tanhf(__m256 x)
+{
+  const __m256 sgn = F(-0.0f);
+  __m256i axi = _mm256_and_si256(_mm256_castps_si256(x), _mm256_set1_epi32(0x7fffffff));
+  __m256 ok = _mm256_castsi256_ps(_mm256_cmpgt_epi32(_mm256_set1_epi32(0x41100000 + 1), axi));               /* |x| <= 9 */
+  __m256 sat = _mm256_castsi256_ps(_mm256_andnot_si256(_mm256_cmpgt_epi32(_mm256_set1_epi32(0x41102cb4), axi),
+                                                       _mm256_cmpgt_epi32(_mm256_set1_epi32(0x7f800001), axi)));  /* +-1 */
+  __m256 ax = _mm256_min_ps(_mm256_castsi256_ps(axi), F(9.0f));
+  __m256 eh, el; expm1f_fl_pair(_mm256_add_ps(ax, ax), &eh, &el);
+  __m256 dh, dt; TS(eh, F(2.0f), dh, dt);                              /* eh in [0, 6.6e7]: either may be larger */
+  __m256 dl = _mm256_add_ps(dt, el);
+  __m256 qh = _mm256_div_ps(eh, dh), rm = _mm256_fnmadd_ps(qh, dh, eh);
+  rm = _mm256_fnmadd_ps(qh, dl, _mm256_add_ps(rm, el));
+  __m256 ql = _mm256_mul_ps(rm, _mm256_rcp_ps(dh));
+  __m256 xs = _mm256_and_ps(x, sgn);
+  __m256 doubt, y = fl_round(_mm256_or_ps(qh, xs), _mm256_xor_ps(ql, xs), TANHF_TOL, &doubt);
+  y = _mm256_blendv_ps(y, _mm256_or_ps(F(1.0f), xs), sat);
+  int flag = _mm256_movemask_ps(_mm256_andnot_ps(sat, _mm256_or_ps(doubt, _mm256_xor_ps(ok, _mm256_castsi256_ps(_mm256_set1_epi32(-1))))));
+  if (__builtin_expect(flag == 0, 1)) return y;
+  return finish8f(x, y, flag, cr_tanhf);
+}
+#endif
+#undef F
+#undef TS
+#undef F2S
+#elif !CRMVEC_PORT
 FLOAT_FROM_HALF(expm1f, expm1f_half, cr_expm1f)
+#endif
+#if !CRMVEC_PORT
 FLOAT_FROM_HALF(coshf, coshf_half, cr_coshf)
 FLOAT_FROM_HALF(sinhf, sinhf_half, cr_sinhf)
+#if !(EXPM1F_FL && TANHF_FL)
 FLOAT_FROM_HALF(tanhf, tanhf_half, cr_tanhf)
+#endif
 #else   /* PORT=1: port/crmvec-port.c supplies them (port-hypf.h) */
 AVX2 __m256 _ZGVdN8v_expm1f(__m256); AVX2 __m256 _ZGVdN8v_coshf(__m256);
 AVX2 __m256 _ZGVdN8v_sinhf(__m256); AVX2 __m256 _ZGVdN8v_tanhf(__m256);
@@ -1382,11 +1642,168 @@ AVX2I static inline __m256d atanhf_half(__m128 xf, __m128i *redo)
 }
 
 float cr_log1pf(float), cr_asinhf(float), cr_acoshf(float), cr_atanhf(float);
-#if !CRMVEC_PORT
+#if LOG1PF_FL && !LOGF_FL
+#error "LOG1PF_FL uses LOGF_FL's tables and tail"
+#endif
+#if !CRMVEC_PORT && LOG1PF_FL
+/* log1pf in float lanes (2026-10-02; openpocl's harness/tiers tier-kern.h log1p_pair, tier 2): the float log
+   family's kernel on u = 1 + x carried exactly as uh + ul (TwoSum). The reduction is on uh, and ul joins the exact
+   product z IC[j] = ph + pl as ul 2^-e IC[j]; for |x| < 0.0195 (the subinterval holding 1, e = 0, IC = 1) r = x and
+   pl = 0 instead, where 1 + x would lose x's low bits. Largest error over every x > -1: 2^-31.7 of the binade; the
+   test at twice that. x <= -1, inf, nan and lanes in doubt go to CORE-MATH. Replaces the double halves
+   (2 atanh(x/(2 + x)) with a division): 55% less time through a call on cfarm421. */
+#ifdef CRM_LOG1PF_TOL0
+#define LOG1PF_TOL 0.0f
+#else
+#define LOG1PF_TOL (165140 * 0x1p-48f)                      /* twice the measured 82570 units of 2^-48 */
+#endif
+/* log1p of a pair v = vh + vl > -1 as hi + lo (log1pf with vl = 0, and atanhf) */
+AVX2I static inline void log1pf_fl_pair(__m256 vh, __m256 vl, __m256 *hi, __m256 *lo)
+{
+  __m256 uh = _mm256_add_ps(_mm256_set1_ps(1.0f), vh), bb = _mm256_sub_ps(uh, _mm256_set1_ps(1.0f));   /* TwoSum(1, vh) */
+  __m256 ul = _mm256_add_ps(_mm256_sub_ps(_mm256_set1_ps(1.0f), _mm256_sub_ps(uh, bb)), _mm256_sub_ps(vh, bb));
+  ul = _mm256_add_ps(ul, vl);
+  LOGF_REDUCE(_mm256_castps_si256(uh))
+  /* ul 2^-e; for e >= 127 (u near FLT_MAX) 2^-126: ul is negligible there and 2^-e would wrap */
+  __m256 uls = _mm256_mul_ps(ul, _mm256_castsi256_ps(_mm256_slli_epi32(_mm256_max_epi32(_mm256_sub_epi32(_mm256_set1_epi32(127), e), _mm256_set1_epi32(1)), 23)));
+  __m256 near = _mm256_cmp_ps(_mm256_andnot_ps(_mm256_set1_ps(-0.0f), vh), _mm256_set1_ps(0.0195f), _CMP_LT_OQ);
+  __m256 ph = _mm256_mul_ps(z, ic), pl = _mm256_fmadd_ps(uls, ic, _mm256_fmsub_ps(z, ic, ph));
+  __m256 r = _mm256_blendv_ps(_mm256_sub_ps(ph, _mm256_set1_ps(1.0f)), vh, near);   /* near 0: r + pl = v itself */
+  pl = _mm256_blendv_ps(pl, vl, near);
+  logf_fl_tail(r, pl, ch, e, 0, hi, lo);
+}
+AVX2 __m256 _ZGVdN8v_log1pf(__m256 x)
+{
+  __m256 ok = _mm256_and_ps(_mm256_cmp_ps(x, _mm256_set1_ps(-1.0f), _CMP_GT_OQ), _mm256_cmp_ps(x, _mm256_set1_ps(__builtin_inff()), _CMP_LT_OQ));
+  __m256 hi, lo; log1pf_fl_pair(x, _mm256_setzero_ps(), &hi, &lo);
+  __m256 doubt, y = fl_round(hi, lo, LOG1PF_TOL, &doubt);
+  int flag = _mm256_movemask_ps(_mm256_or_ps(doubt, _mm256_xor_ps(ok, _mm256_castsi256_ps(_mm256_set1_epi32(-1)))));
+  if (__builtin_expect(flag == 0, 1)) return y;
+  return finish8f(x, y, flag, cr_log1pf);
+}
+/* atanhf in float lanes (2026-10-02; openpocl's harness/tiers tier-ahypf.c, tier 2): atanh x = log1p(2a/(1 - a))/2,
+   a = |x|, with 1 - a by TwoSum and the quotient as a pair (remainder times rcp: at most 2^-34.4 of v, either vendor),
+   then the log1p kernel on that pair. Largest error over every 0 < |x| < 1: 2^-31.6 of the binade; the test at twice
+   that. 0, |x| >= 1, nan and lanes in doubt (subnormal results) go to CORE-MATH. Replaces the double halves:
+   about half the time through a call on cfarm421. */
+#if ATANHF_FL
+#ifdef CRM_ATANHF_TOL0
+#define ATANHF_TOL 0.0f
+#else
+#define ATANHF_TOL (173336 * 0x1p-48f)                      /* twice the measured 86668 units of 2^-48 */
+#endif
+AVX2 __m256 _ZGVdN8v_atanhf(__m256 x)
+{
+  const __m256 sgn = _mm256_set1_ps(-0.0f), one = _mm256_set1_ps(1.0f);
+  __m256 a = _mm256_andnot_ps(sgn, x), xs = _mm256_and_ps(x, sgn);
+  __m256 ok = _mm256_and_ps(_mm256_cmp_ps(a, _mm256_setzero_ps(), _CMP_GT_OQ), _mm256_cmp_ps(a, one, _CMP_LT_OQ));
+  __m256 na = _mm256_xor_ps(a, sgn);
+  __m256 dh = _mm256_add_ps(one, na), bb = _mm256_sub_ps(dh, one);                  /* TwoSum(1, -a) */
+  __m256 dl = _mm256_add_ps(_mm256_sub_ps(one, _mm256_sub_ps(dh, bb)), _mm256_sub_ps(na, bb));
+  __m256 nh = _mm256_add_ps(a, a);                                                    /* 2a / (1 - a) as a pair */
+  __m256 vh = _mm256_div_ps(nh, dh), rm = _mm256_fnmadd_ps(vh, dh, nh);
+  rm = _mm256_fnmadd_ps(vh, dl, rm);
+  __m256 vl = _mm256_mul_ps(rm, _mm256_rcp_ps(dh));
+  __m256 lh, ll; log1pf_fl_pair(vh, vl, &lh, &ll);
+  __m256 hi = _mm256_xor_ps(_mm256_mul_ps(lh, _mm256_set1_ps(0.5f)), xs), lo = _mm256_xor_ps(_mm256_mul_ps(ll, _mm256_set1_ps(0.5f)), xs);
+  __m256 doubt, y = fl_round(hi, lo, ATANHF_TOL, &doubt);
+  int flag = _mm256_movemask_ps(_mm256_or_ps(doubt, _mm256_xor_ps(ok, _mm256_castsi256_ps(_mm256_set1_epi32(-1)))));
+  if (__builtin_expect(flag == 0, 1)) return y;
+  return finish8f(x, y, flag, cr_atanhf);
+}
+#endif
+/* asinhf and acoshf in float lanes (2026-10-02; openpocl's harness/tiers tier-ahypf.c, tier 2), replacing the double
+   halves: asinh a = log1p(a + a^2/(1 + sqrt(1 + a^2))), the square root and the quotient as pairs (remainders times
+   rcp: at most about 2^-35 of the argument on either vendor); acosh x = log1p(t + sqrt(t^2 + 2t)), t = x - 1 exact
+   below 2^24, t(t + 2) as an exact pair; from 2^16 both log1p(a - 1) + ln2 (the 1/(4a^2) left out is under 2^-37 of
+   the result). The log1p kernel on the pair, x's sign for asinh. Largest error over every 0 < |x| <= 2^60 (asinhf),
+   1 < x <= 2^60 (acoshf): 2^-31.6, 2^-32.0 of the binade; the tests at twice that. The rest, nan and lanes in doubt
+   go to CORE-MATH. */
+#if ASINHF_FL
+#ifdef CRM_ASINHF_TOL0
+#define ASINHF_TOL 0.0f
+#define ACOSHF_TOL 0.0f
+#else
+#define ASINHF_TOL (169422 * 0x1p-48f)                      /* twice the measured 84711, 66362 units of 2^-48 */
+#define ACOSHF_TOL (132724 * 0x1p-48f)
+#endif
+#define AH_F(c) _mm256_set1_ps(c)
+#define AH_F2S(x, y, s, e) do { s = _mm256_add_ps(x, y); e = _mm256_sub_ps(y, _mm256_sub_ps(s, x)); } while (0)
+#define AH_TS(x, y, s, e) do { s = _mm256_add_ps(x, y); __m256 bb_ = _mm256_sub_ps(s, x); \
+    e = _mm256_add_ps(_mm256_sub_ps(x, _mm256_sub_ps(s, bb_)), _mm256_sub_ps(y, bb_)); } while (0)
+/* sqrt(dh + dl) as a pair: the IEEE root and its remainder times rcp/2 */
+AVX2I static inline void ahf_sqrt_pair(__m256 dh, __m256 dl, __m256 *sh, __m256 *sl)
+{
+  *sh = _mm256_sqrt_ps(dh);
+  __m256 rem = _mm256_add_ps(_mm256_fnmadd_ps(*sh, *sh, dh), dl);
+  *sl = _mm256_mul_ps(rem, _mm256_mul_ps(AH_F(0.5f), _mm256_rcp_ps(*sh)));
+}
+/* log1p(vh + vl), plus ln2 where big */
+AVX2I static inline __m256 ahf_finish(__m256 vh, __m256 vl, __m256 big, __m256 *lo)
+{
+  __m256 lh, ll; log1pf_fl_pair(vh, vl, &lh, &ll);
+  __m256 rh, rt; AH_F2S(lh, _mm256_and_ps(big, AH_F(0x1.62e43p-1f)), rh, rt);       /* log a >= 11 > ln 2 where added */
+  *lo = _mm256_add_ps(_mm256_add_ps(rt, ll), _mm256_and_ps(big, AH_F(-0x1.05c61p-29f)));
+  return rh;
+}
+AVX2 __m256 _ZGVdN8v_asinhf(__m256 x)
+{
+  const __m256 sgn = AH_F(-0.0f), one = AH_F(1.0f);
+  __m256 a = _mm256_andnot_ps(sgn, x), xs = _mm256_and_ps(x, sgn);
+  __m256 ok = _mm256_and_ps(_mm256_cmp_ps(a, _mm256_setzero_ps(), _CMP_GT_OQ), _mm256_cmp_ps(a, AH_F(0x1p60f), _CMP_LE_OQ));
+  __m256 big = _mm256_cmp_ps(a, AH_F(0x1p16f), _CMP_GE_OQ);
+  __m256 p = _mm256_mul_ps(a, a), pe = _mm256_fmsub_ps(a, a, p);
+  __m256 s0, st; AH_F2S(_mm256_max_ps(one, p), _mm256_min_ps(one, p), s0, st);        /* 1 + a^2 */
+  __m256 s0h, s0l; AH_F2S(s0, _mm256_add_ps(st, pe), s0h, s0l);
+  __m256 sh, sl; ahf_sqrt_pair(s0h, s0l, &sh, &sl);
+  __m256 dh, dt; AH_F2S(sh, one, dh, dt);                                              /* 1 + sqrt(1 + a^2), sqrt >= 1 */
+  __m256 dl = _mm256_add_ps(dt, sl);
+  __m256 qh = _mm256_div_ps(p, dh), rm = _mm256_fnmadd_ps(qh, dh, p);                 /* a^2 / that as a pair */
+  rm = _mm256_fnmadd_ps(qh, dl, _mm256_add_ps(rm, pe));
+  __m256 ql = _mm256_mul_ps(rm, _mm256_rcp_ps(dh));
+  __m256 v0, vt; AH_F2S(a, qh, v0, vt);                                                /* a >= the quotient */
+  __m256 bh, bl; AH_TS(a, AH_F(-1.0f), bh, bl);                                        /* a - 1 for large a */
+  __m256 vh, vl; AH_F2S(_mm256_blendv_ps(v0, bh, big), _mm256_blendv_ps(_mm256_add_ps(vt, ql), bl, big), vh, vl);
+  __m256 lo, hi = ahf_finish(vh, vl, big, &lo);
+  __m256 doubt, y = fl_round(_mm256_xor_ps(hi, xs), _mm256_xor_ps(lo, xs), ASINHF_TOL, &doubt);
+  int flag = _mm256_movemask_ps(_mm256_or_ps(doubt, _mm256_xor_ps(ok, _mm256_castsi256_ps(_mm256_set1_epi32(-1)))));
+  if (__builtin_expect(flag == 0, 1)) return y;
+  return finish8f(x, y, flag, cr_asinhf);
+}
+AVX2 __m256 _ZGVdN8v_acoshf(__m256 x)
+{
+  const __m256 one = AH_F(1.0f);
+  __m256 ok = _mm256_and_ps(_mm256_cmp_ps(x, one, _CMP_GT_OQ), _mm256_cmp_ps(x, AH_F(0x1p60f), _CMP_LE_OQ));
+  __m256 big = _mm256_cmp_ps(x, AH_F(0x1p16f), _CMP_GE_OQ);
+  __m256 t = _mm256_sub_ps(x, one);                                                    /* exact below 2^24 */
+  __m256 ah, al; AH_TS(t, AH_F(2.0f), ah, al);
+  __m256 wh = _mm256_mul_ps(t, ah), wl = _mm256_fmadd_ps(t, al, _mm256_fmsub_ps(t, ah, wh));   /* t (t + 2) */
+  __m256 wn, wnl; AH_F2S(wh, wl, wn, wnl);
+  __m256 sh, sl; ahf_sqrt_pair(wn, wnl, &sh, &sl);
+  __m256 v0, vt; AH_F2S(sh, t, v0, vt);                                                /* sqrt(t^2 + 2t) > t */
+  __m256 bh, bl; AH_TS(x, AH_F(-1.0f), bh, bl);
+  __m256 vh, vl; AH_F2S(_mm256_blendv_ps(v0, bh, big), _mm256_blendv_ps(_mm256_add_ps(vt, sl), bl, big), vh, vl);
+  __m256 lo, hi = ahf_finish(vh, vl, big, &lo);
+  __m256 doubt, y = fl_round(hi, lo, ACOSHF_TOL, &doubt);
+  int flag = _mm256_movemask_ps(_mm256_or_ps(doubt, _mm256_xor_ps(ok, _mm256_castsi256_ps(_mm256_set1_epi32(-1)))));
+  if (__builtin_expect(flag == 0, 1)) return y;
+  return finish8f(x, y, flag, cr_acoshf);
+}
+#undef AH_F
+#undef AH_F2S
+#undef AH_TS
+#endif
+#elif !CRMVEC_PORT
 FLOAT_FROM_HALF(log1pf, log1pf_half, cr_log1pf)
+#endif
+#if !CRMVEC_PORT
+#if !(LOG1PF_FL && ASINHF_FL)
 FLOAT_FROM_HALF(asinhf, asinhf_half, cr_asinhf)
 FLOAT_FROM_HALF(acoshf, acoshf_half, cr_acoshf)
+#endif
+#if !(LOG1PF_FL && ATANHF_FL)
 FLOAT_FROM_HALF(atanhf, atanhf_half, cr_atanhf)
+#endif
 #else   /* PORT=1: port/crmvec-port.c supplies them (port-log1pf.h) */
 AVX2 __m256 _ZGVdN8v_log1pf(__m256); AVX2 __m256 _ZGVdN8v_asinhf(__m256);
 AVX2 __m256 _ZGVdN8v_acoshf(__m256); AVX2 __m256 _ZGVdN8v_atanhf(__m256);
@@ -1526,11 +1943,241 @@ AVX2I static inline __m256d atan2f_half(__m128 yf, __m128 xf, __m128i *redo)
 }
 
 float cr_cbrtf(float), cr_atanf(float), cr_asinf(float), cr_acosf(float), cr_atan2f(float, float);
+#if ATANF_FL && !LOGF_FL
+#error "ATANF_FL uses LOGF_FL's fl_round and lookup, and EXPF_FL's finish8f"
+#endif
+#if !CRMVEC_PORT && ATANF_FL
+/* atanf in float lanes (2026-10-02; openpocl's harness/tiers tier-atanf.c, tier 2), replacing the double halves:
+   about half the time through a call on cfarm421. z = |x|, or 1/|x| as a pair above 1; k = round(16 z) at most 15,
+   c = k/16, atan z = atan c + atan t, t = (z - c)/(1 + z c) as a pair (z - c exact by Sterbenz, the products by FMA),
+   atan t = t + t^3 (-1/3 + t^2/5 - t^4/7), |t| <= 0.033, atan c from a 16-entry pair table; pi/2 - that above 1.
+   The pairs' quotients take the remainder times rcp for the low part: rcp's error (at most 1.5 2^-12 on either
+   vendor) reaches about 2^-34.4 of the result. Largest error over every finite input, measured on AMD: 2^-32.4 of
+   the binade; the test at twice that, which covers another vendor's rcp. Inf, nan and lanes in doubt (x = 0,
+   subnormal results) go to CORE-MATH. */
+static const float ATANF_AHI[16] __attribute__((aligned(32))) = {
+  0x0p+0f, 0x1.ff55bcp-5f, 0x1.fd5baap-4f, 0x1.7b97b4p-3f, 0x1.f5b76p-3f, 0x1.362774p-2f, 0x1.6f6194p-2f, 0x1.a64eecp-2f,
+  0x1.dac67p-2f, 0x1.0657eap-1f, 0x1.1e00bap-1f, 0x1.345f02p-1f, 0x1.4978fap-1f, 0x1.5d5898p-1f, 0x1.700a7cp-1f, 0x1.819d0cp-1f};
+static const float ATANF_ALO[16] __attribute__((aligned(32))) = {
+  0x0p+0f, -0x1.1a6042p-30f, -0x1.54f424p-30f, 0x1.79cb6p-28f, -0x1.b4dfc8p-29f, -0x1.1f0286p-27f, 0x1.e4defp-30f, 0x1.e611fep-29f,
+  0x1.586ed4p-28f, -0x1.6499e6p-26f, 0x1.7bdfd6p-26f, -0x1.98e422p-28f, 0x1.934f7p-28f, 0x1.c5a6c6p-27f, 0x1.5e118cp-27f, -0x1.1d4eb6p-26f};
+#ifdef CRM_ATANF_TOL0
+#define ATANF_TOL 0.0f
+#else
+#define ATANF_TOL (99578 * 0x1p-48f)                        /* twice the measured 49789 units of 2^-48 */
+#endif
+#define F2S_(x, y, s, e) do { s = _mm256_add_ps(x, y); e = _mm256_sub_ps(y, _mm256_sub_ps(s, x)); } while (0)
+/* (nh + nl) / (dh + dl) as a pair: the IEEE quotient and its remainder times rcp */
+#define DIVP_(nh, nl, dh, dl, qh, ql) do { qh = _mm256_div_ps(nh, dh); __m256 rm_ = _mm256_fnmadd_ps(qh, dh, nh); \
+    rm_ = _mm256_fnmadd_ps(qh, dl, _mm256_add_ps(rm_, nl)); ql = _mm256_mul_ps(rm_, _mm256_rcp_ps(dh)); } while (0)
+/* atan of a pair z in [0, 1] (zh may exceed 1 by an ulp) as s + l, not normalized (l up to 2^-18 of s) */
+AVX2I static inline void atanf_fl01(__m256 zh, __m256 zl, __m256 *s, __m256 *l)
+{
+  const __m256 one = _mm256_set1_ps(1.0f);
+  __m256 kf = _mm256_min_ps(_mm256_round_ps(_mm256_mul_ps(zh, _mm256_set1_ps(16.0f)), _MM_FROUND_TO_NEAREST_INT | _MM_FROUND_NO_EXC), _mm256_set1_ps(15.0f));
+  __m256 c = _mm256_mul_ps(kf, _mm256_set1_ps(0.0625f));
+  __m256i k = _mm256_cvtps_epi32(kf);
+  __m256 sel = _mm256_castsi256_ps(_mm256_slli_epi32(k, 28));
+  __m256 ah = LOGF_LK16(ATANF_AHI, k, sel), al = LOGF_LK16(ATANF_ALO, k, sel);
+  __m256 nh = _mm256_sub_ps(zh, c);                                                    /* exact */
+  __m256 pz = _mm256_mul_ps(zh, c), pze = _mm256_fmsub_ps(zh, c, pz);
+  __m256 dh, dt; F2S_(one, pz, dh, dt);                                                /* z c <= 1 */
+  __m256 dl = _mm256_fmadd_ps(zl, c, _mm256_add_ps(dt, pze));
+  __m256 th, tl; DIVP_(nh, zl, dh, dl, th, tl);                                        /* t = (z - c)/(1 + z c) */
+  __m256 u = _mm256_mul_ps(th, th);
+  __m256 pp = _mm256_fmadd_ps(_mm256_fmadd_ps(u, _mm256_set1_ps(-0x1.24924ap-3f), _mm256_set1_ps(0x1.99999ap-3f)), u, _mm256_set1_ps(-0x1.555556p-2f));
+  __m256 cub = _mm256_mul_ps(_mm256_mul_ps(th, u), pp);                                /* atan t - t */
+  __m256 st; F2S_(ah, th, *s, st);                                                     /* |atan c| > |t| unless c = 0 */
+  *l = _mm256_add_ps(_mm256_add_ps(st, al), _mm256_add_ps(tl, cub));
+}
+/* atan2(y, x) for pairs, y >= 0, in [0, pi]: z = min/max of y and |x| as a pair quotient, then pi/2 - atan z where
+   y > |x| and pi - that where x < 0 (pi/2 and pi in two parts) */
+AVX2I static inline void atanf_fl2(__m256 yh, __m256 yl, __m256 xh, __m256 xl, __m256 *hi, __m256 *lo)
+{
+  const __m256 sgn = _mm256_set1_ps(-0.0f);
+  __m256 xs = _mm256_and_ps(xh, sgn);
+  __m256 axh = _mm256_xor_ps(xh, xs), axl = _mm256_xor_ps(xl, xs);
+  __m256 big = _mm256_cmp_ps(yh, axh, _CMP_GT_OQ);
+  __m256 nh = _mm256_blendv_ps(yh, axh, big), nl = _mm256_blendv_ps(yl, axl, big);
+  __m256 dh = _mm256_blendv_ps(axh, yh, big), dl = _mm256_blendv_ps(axl, yl, big);
+  __m256 zh, zl; DIVP_(nh, nl, dh, dl, zh, zl);
+  __m256 s, l; atanf_fl01(zh, zl, &s, &l);
+  __m256 bh, bt; F2S_(_mm256_set1_ps(0x1.921fb6p+0f), _mm256_xor_ps(s, sgn), bh, bt);
+  __m256 bl = _mm256_sub_ps(_mm256_add_ps(bt, _mm256_set1_ps(-0x1.777a5cp-25f)), l);
+  s = _mm256_blendv_ps(s, bh, big); l = _mm256_blendv_ps(l, bl, big);
+  __m256 ch, ct; F2S_(_mm256_set1_ps(0x1.921fb6p+1f), _mm256_xor_ps(s, sgn), ch, ct);
+  __m256 cl = _mm256_sub_ps(_mm256_add_ps(ct, _mm256_set1_ps(-0x1.777a5cp-24f)), l);
+  *hi = _mm256_blendv_ps(s, ch, xs); *lo = _mm256_blendv_ps(l, cl, xs);
+}
+AVX2 __m256 _ZGVdN8v_atanf(__m256 x)
+{
+  const __m256 sgn = _mm256_set1_ps(-0.0f), one = _mm256_set1_ps(1.0f), zero = _mm256_setzero_ps();
+  __m256 ok = _mm256_castsi256_ps(_mm256_cmpgt_epi32(_mm256_set1_epi32(0x7f800000),
+                                                     _mm256_and_si256(_mm256_castps_si256(x), _mm256_set1_epi32(0x7fffffff))));
+  __m256 a = _mm256_andnot_ps(sgn, x);
+  __m256 big = _mm256_cmp_ps(a, one, _CMP_GT_OQ);
+  __m256 ih, il; DIVP_(one, zero, a, zero, ih, il);                                    /* 1/a */
+  __m256 s, l; atanf_fl01(_mm256_blendv_ps(a, ih, big), _mm256_and_ps(big, il), &s, &l);
+  __m256 bh, bt; F2S_(_mm256_set1_ps(0x1.921fb6p+0f), _mm256_xor_ps(s, sgn), bh, bt);  /* above 1: pi/2 - (s + l) */
+  __m256 bl = _mm256_sub_ps(_mm256_add_ps(bt, _mm256_set1_ps(-0x1.777a5cp-25f)), l);
+  __m256 xs = _mm256_and_ps(x, sgn);
+  __m256 hi = _mm256_xor_ps(_mm256_blendv_ps(s, bh, big), xs), lo = _mm256_xor_ps(_mm256_blendv_ps(l, bl, big), xs);
+  __m256 doubt, y = fl_round(hi, lo, ATANF_TOL, &doubt);
+  int flag = _mm256_movemask_ps(_mm256_or_ps(doubt, _mm256_xor_ps(ok, _mm256_castsi256_ps(_mm256_set1_epi32(-1)))));
+  if (__builtin_expect(flag == 0, 1)) return y;
+  return finish8f(x, y, flag, cr_atanf);
+}
+/* asinf and acosf (2026-10-02; openpocl's tier-asinacosf.c, tier 2) on asacosf_g. Largest error over every |x| < 1:
+   2^-31.1 (asinf), 2^-31.4 (acosf) of the binade; the tests at twice that. Replaces the double halves: about 40% and
+   35% of their time through a call on cfarm421. */
+#if ASINF_FL
+#ifdef CRM_ASINF_TOL0
+#define ASINF_TOL 0.0f
+#define ACOSF_TOL 0.0f
+#else
+#define ASINF_TOL (247950 * 0x1p-48f)                       /* twice the measured 123975 units of 2^-48 (asacosf_g) */
+#define ACOSF_TOL (203568 * 0x1p-48f)                       /* twice the measured 101784 */
+#endif
+/* asin x (acos = 0) or acos x (acos = 1) as a pair, |x| < 1, in glibc's form without a division (2026-10-02;
+   openpocl's tier-kern.h asacos_g, tier 2): a <= 1/2: z = a, w = z^2 as a pair; a > 1/2: w = (1 - a)/2 exactly,
+   z = sqrt(w) as a pair (remainder by FMA, times rcp/2: at most 2^-36 of z on either vendor). as = asin z =
+   z + z w P(w), P = c0 + c1 w + w^2 R(w), c0 = 1/6 and c1 = 3/40 as pairs and c0 + c1 w by Fast2Sum, R near-minimax of
+   degree 5 on [0, 1/4] (2^-35.2); asin = sign (a <= 1/2 ? as : pi/2 - 2 as), acos = a <= 1/2 ? pi/2 - asin :
+   (x > 0 ? 2 as : pi - 2 as), pi/2 and pi in two parts. Replaces atan2 of (|x|, sqrt(1 - x^2)) as pairs, which took
+   two pair quotients: about half the time. */
+AVX2I static inline void asacosf_g(__m256 x, const int acos, __m256 *hi, __m256 *lo)
+{
+#define F(c) _mm256_set1_ps(c)
+  const __m256 sgn = F(-0.0f), half = F(0.5f);
+  __m256 a = _mm256_andnot_ps(sgn, x), xs = _mm256_and_ps(x, sgn);
+  __m256 big = _mm256_cmp_ps(a, half, _CMP_GT_OQ);
+  __m256 wb = _mm256_mul_ps(_mm256_sub_ps(F(1.0f), a), half);                       /* exact for a in [1/2, 1] */
+  __m256 zb = _mm256_sqrt_ps(wb);
+  __m256 zbl = _mm256_mul_ps(_mm256_fnmadd_ps(zb, zb, wb), _mm256_mul_ps(half, _mm256_rcp_ps(zb)));
+  __m256 a2 = _mm256_mul_ps(a, a), a2l = _mm256_fmsub_ps(a, a, a2);
+  __m256 zh = _mm256_blendv_ps(a, zb, big), zl = _mm256_and_ps(big, zbl);
+  __m256 wh = _mm256_blendv_ps(a2, wb, big), wl = _mm256_andnot_ps(big, a2l);
+  __m256 p1 = _mm256_mul_ps(F(0x1.333334p-4f), wh), e1 = _mm256_fmsub_ps(F(0x1.333334p-4f), wh, p1);
+  __m256 sh, st; F2S_(F(0x1.555556p-3f), p1, sh, st);                                /* c0 > c1 w */
+  __m256 R = _mm256_fmadd_ps(F(0x1.e9d0fap-6f), wh, F(0x1.47ff0ep-8f));
+  R = _mm256_fmadd_ps(R, wh, F(0x1.3e1fa8p-6f));
+  R = _mm256_fmadd_ps(R, wh, F(0x1.6a7c52p-6f));
+  R = _mm256_fmadd_ps(R, wh, F(0x1.f20546p-6f));
+  R = _mm256_fmadd_ps(R, wh, F(0x1.6db624p-5f));
+  __m256 sl = _mm256_add_ps(_mm256_add_ps(st, e1), _mm256_fmadd_ps(_mm256_mul_ps(wh, wh), R,
+               _mm256_fmadd_ps(F(0x1.333334p-4f), wl, _mm256_fmadd_ps(F(-0x1.99999ap-29f), wh, F(-0x1.555556p-28f)))));
+  __m256 uh = _mm256_mul_ps(wh, sh), ul = _mm256_fmadd_ps(wh, sl, _mm256_fmadd_ps(wl, sh, _mm256_fmsub_ps(wh, sh, uh)));
+  __m256 vh = _mm256_mul_ps(zh, uh), vl = _mm256_fmadd_ps(zh, ul, _mm256_fmadd_ps(zl, uh, _mm256_fmsub_ps(zh, uh, vh)));
+  __m256 ah, at; F2S_(zh, vh, ah, at);                                                /* z > v */
+  __m256 al = _mm256_add_ps(at, _mm256_add_ps(zl, vl));
+  __m256 a2h = _mm256_add_ps(ah, ah), a2lo = _mm256_add_ps(al, al);                   /* 2 as, exact */
+  if (!acos) {
+    __m256 bh, bt; F2S_(F(0x1.921fb6p+0f), _mm256_xor_ps(a2h, sgn), bh, bt);          /* pi/2 - 2 as, 2 as <= pi/3 */
+    __m256 bl = _mm256_sub_ps(_mm256_add_ps(bt, F(-0x1.777a5cp-25f)), a2lo);
+    *hi = _mm256_xor_ps(_mm256_blendv_ps(ah, bh, big), xs);
+    *lo = _mm256_xor_ps(_mm256_blendv_ps(al, bl, big), xs);
+    return;
+  }
+  __m256 sah = _mm256_xor_ps(ah, xs), sal = _mm256_xor_ps(al, xs);
+  __m256 ch, ct; F2S_(F(0x1.921fb6p+0f), _mm256_xor_ps(sah, sgn), ch, ct);
+  __m256 cl = _mm256_sub_ps(_mm256_add_ps(ct, F(-0x1.777a5cp-25f)), sal);
+  __m256 dh, dt; F2S_(F(0x1.921fb6p+1f), _mm256_xor_ps(a2h, sgn), dh, dt);
+  __m256 dl = _mm256_sub_ps(_mm256_add_ps(dt, F(-0x1.777a5cp-24f)), a2lo);
+  __m256 bh = _mm256_blendv_ps(a2h, dh, x), bl = _mm256_blendv_ps(a2lo, dl, x);     /* x < 0 by its sign bit */
+  *hi = _mm256_blendv_ps(ch, bh, big);
+  *lo = _mm256_blendv_ps(cl, bl, big);
+#undef F
+}
+AVX2 __m256 _ZGVdN8v_asinf(__m256 x)
+{
+  const __m256 sgn = _mm256_set1_ps(-0.0f), z = _mm256_setzero_ps();
+  __m256 a = _mm256_andnot_ps(sgn, x), xs = _mm256_and_ps(x, sgn);
+  __m256 ok = _mm256_and_ps(_mm256_cmp_ps(a, z, _CMP_GT_OQ), _mm256_cmp_ps(a, _mm256_set1_ps(1.0f), _CMP_LT_OQ));
+  __m256 rh, rl; asacosf_g(x, 0, &rh, &rl); (void)xs;
+  __m256 doubt, y = fl_round(rh, rl, ASINF_TOL, &doubt);
+  int flag = _mm256_movemask_ps(_mm256_or_ps(doubt, _mm256_xor_ps(ok, _mm256_castsi256_ps(_mm256_set1_epi32(-1)))));
+  if (__builtin_expect(flag == 0, 1)) return y;
+  return finish8f(x, y, flag, cr_asinf);
+}
+AVX2 __m256 _ZGVdN8v_acosf(__m256 x)
+{
+  __m256 ok = _mm256_cmp_ps(_mm256_andnot_ps(_mm256_set1_ps(-0.0f), x), _mm256_set1_ps(1.0f), _CMP_LT_OQ);
+  __m256 rh, rl; asacosf_g(x, 1, &rh, &rl);
+  __m256 doubt, y = fl_round(rh, rl, ACOSF_TOL, &doubt);
+  int flag = _mm256_movemask_ps(_mm256_or_ps(doubt, _mm256_xor_ps(ok, _mm256_castsi256_ps(_mm256_set1_epi32(-1)))));
+  if (__builtin_expect(flag == 0, 1)) return y;
+  return finish8f(x, y, flag, cr_acosf);
+}
+#endif
+#endif
+#if CBRTF_FL && !LOGF_FL
+#error "CBRTF_FL uses LOGF_FL's fl_round and EXPF_FL's finish8f"
+#endif
+#if !CRMVEC_PORT && CBRTF_FL
+/* cbrtf in float lanes (2026-10-02; openpocl's harness/tiers tier-cbrtf.c, tier 2), replacing the double halves
+   (a degree-3 start and four Newton steps): 57% less time through a call on cfarm421, 1.4x glibc's.
+   |x| = 2^e m, m in [1, 2), e = 3q + r (r in 0..2), M = 2^r m exactly; y0 = P(m) cbrt(2^r) (P near-minimax of
+   degree 4) then one Newton step with the residual y0^3 - M by exact FMA products and an IEEE division; then the
+   residual again, R = M - y0^3 to about 2^-48 (y0^2 and y0 times it as exact pairs, M minus the high part exact by
+   Sterbenz), and y0 + R/(3 y0^2) as a pair, by a division (not rcp, whose error differs between vendors). No cube
+   root of a float is a midpoint (it would need 75 bits) and exact cubes give R = 0. Largest error over every normal
+   input: 2^-45.9 of the binade; the test at twice that. 0, subnormals, inf, nan and lanes in doubt: CORE-MATH. */
+static const float CBRTF_CR3[8] __attribute__((aligned(32))) = {0x1p+0f, 0x1.428a3p+0f, 0x1.965feap+0f, 0, 0, 0, 0, 0};
+/* the check's control is a planted error, not a zero tolerance: at 2^-45.9 no input misrounds even without the
+   tolerance. CRM_CBRTF_PLANT adds 2^-30 of the result to the low part, beyond what the test allows for */
+#define CBRTF_TOL (12 * 0x1p-48f)                           /* twice the measured 6 units of 2^-48 */
+AVX2 __m256 _ZGVdN8v_cbrtf(__m256 x)
+{
+#define F(c) _mm256_set1_ps(c)
+#define P2I(n) _mm256_castsi256_ps(_mm256_slli_epi32(_mm256_add_epi32(n, _mm256_set1_epi32(127)), 23))
+  const __m256 sgn = F(-0.0f);
+  __m256i ai = _mm256_and_si256(_mm256_castps_si256(x), _mm256_set1_epi32(0x7fffffff));
+  /* |x| normal: |x| - 2^-126 as bits below 0x7f000000 unsigned, compared signed after flipping the top bit */
+  __m256 ok = _mm256_castsi256_ps(_mm256_cmpgt_epi32(_mm256_set1_epi32((int)0xff000000u),
+                _mm256_xor_si256(_mm256_sub_epi32(ai, _mm256_set1_epi32(0x00800000)), _mm256_set1_epi32((int)0x80000000u))));
+  __m256i e = _mm256_sub_epi32(_mm256_srli_epi32(ai, 23), _mm256_set1_epi32(127));
+  __m256 m = _mm256_castsi256_ps(_mm256_or_si256(_mm256_and_si256(ai, _mm256_set1_epi32(0x007fffff)), _mm256_set1_epi32(0x3f800000)));
+  __m256 qf = _mm256_floor_ps(_mm256_mul_ps(_mm256_add_ps(_mm256_cvtepi32_ps(e), F(0.5f)), F(0x1.555556p-2f)));
+  __m256i q = _mm256_cvtps_epi32(qf);
+  __m256i r = _mm256_sub_epi32(e, _mm256_mullo_epi32(q, _mm256_set1_epi32(3)));
+  __m256 y = _mm256_fmadd_ps(F(-0x1.559d8ap-7f), m, F(0x1.5c42ap-4f));
+  y = _mm256_fmadd_ps(y, m, F(-0x1.316cd6p-2f));
+  y = _mm256_fmadd_ps(y, m, F(0x1.6e8b9p-1f));
+  y = _mm256_fmadd_ps(y, m, F(0x1.03fa5cp-1f));
+  __m256 M = _mm256_mul_ps(m, P2I(r));
+  __m256 y0 = _mm256_mul_ps(y, _mm256_permutevar8x32_ps(_mm256_load_ps(CBRTF_CR3), r));
+  __m256 p = _mm256_mul_ps(y0, y0), pe = _mm256_fmsub_ps(y0, y0, p);
+  __m256 c = _mm256_fmadd_ps(y0, pe, _mm256_fmsub_ps(y0, p, M));                     /* y0^3 - M */
+  y0 = _mm256_sub_ps(y0, _mm256_div_ps(c, _mm256_mul_ps(F(3.0f), p)));
+  p = _mm256_mul_ps(y0, y0); pe = _mm256_fmsub_ps(y0, y0, p);
+  c = _mm256_mul_ps(y0, p);
+  __m256 ce = _mm256_fmsub_ps(y0, p, c);
+  __m256 R = _mm256_sub_ps(_mm256_sub_ps(M, c), _mm256_fmadd_ps(y0, pe, ce));        /* M - c exact */
+  __m256 d = _mm256_div_ps(R, _mm256_mul_ps(F(3.0f), p));
+#ifdef CRM_CBRTF_PLANT
+  d = _mm256_fmadd_ps(y0, F(0x1p-30f), d);
+#endif
+  __m256 xs = _mm256_and_ps(x, sgn);
+  __m256 doubt, f = fl_round(_mm256_xor_ps(y0, xs), _mm256_xor_ps(d, xs), CBRTF_TOL, &doubt);
+  __m256 yv = _mm256_mul_ps(f, P2I(q));                                              /* exact: 2^q in [2^-42, 2^42] */
+  int flag = _mm256_movemask_ps(_mm256_or_ps(doubt, _mm256_xor_ps(ok, _mm256_castsi256_ps(_mm256_set1_epi32(-1)))));
+  if (__builtin_expect(flag == 0, 1)) return yv;
+  return finish8f(x, yv, flag, cr_cbrtf);
+#undef F
+#undef P2I
+}
+#endif
 #if !CRMVEC_PORT
+#if !CBRTF_FL
 FLOAT_FROM_HALF(cbrtf, cbrtf_half, cr_cbrtf)
+#endif
+#if !ATANF_FL
 FLOAT_FROM_HALF(atanf, atanf_half, cr_atanf)
+#endif
+#if !(ATANF_FL && ASINF_FL)
 FLOAT_FROM_HALF(asinf, asinf_half, cr_asinf)
 FLOAT_FROM_HALF(acosf, acosf_half, cr_acosf)
+#endif
 
 AVX2 __m256 _ZGVdN8vv_atan2f(__m256 yf, __m256 xf)
 {
@@ -1652,10 +2299,117 @@ AVX2I static inline __m256d erfcf_half(__m128 xf, __m128i *redo)
 
 float cr_erff(float), cr_erfcf(float);
 #if !CRMVEC_PORT
-#if !CR_LOOP_ERFF
-FLOAT_FROM_HALF(erff, erff_half, cr_erff)
+#if ERFF_FL && CR_LOOP_ERFF
+#error "ERFF_FL and CR_LOOP_ERFF both define _ZGVdN8v_erff: set one to 0"
 #endif
+#if !CR_LOOP_ERFF && !ERFF_FL
+FLOAT_FROM_HALF(erff, erff_half, cr_erff)
+#elif ERFF_FL
+/* erff in float lanes (2026-10-02; openpocl's harness/tiers tier-erff.c, tier 2), replacing the double halves: as
+   ARM's vector erff, a = |x|, r = round(128 a)/128, d = a - r exact, and with S(r) = 2/sqrt(pi) e^(-r^2)
+     erf(r + d) = erf(r) + S(r) d (1 + d (-r + d ((2r^2 - 1)/3 + d (-r (2r^2 - 3)/6 + d (4r^4 - 12r^2 + 3)/30))))
+   erf(r) and S(r) as float pairs from crmvec-erff-t2-tab.h (gen-erff-t2-tab.py), read by gather; S d exact by FMA,
+   Fast2Sum with erf(r), the series in float, the low parts, x's sign. Largest error over every 2^-100 <= |x| <= 3.93:
+   2^-37.2 of the binade; the test at twice that. From |x| = 0x1.f5a88ap+1 (CORE-MATH's smallest float with erff = 1,
+   by bisection) and at inf the result is +-1, returned as such. The fast path starts at 2^-90, so no term is
+   subnormal (flush-to-zero callers); smaller x, nan and lanes in doubt go to CORE-MATH. */
+#include "crmvec-erff-t2-tab.h"
+#ifdef CRM_ERFF_TOL0
+#define ERFF_TOL 0.0f
+#else
+#define ERFF_TOL (3534 * 0x1p-48f)                          /* twice the measured 1767 units of 2^-48 */
+#endif
+AVX2 __m256 _ZGVdN8v_erff(__m256 x)
+{
+#define F(c) _mm256_set1_ps(c)
+#define COL(c, k) _mm256_i32gather_ps(&ERFF_T2[0][c], _mm256_slli_epi32(k, 2), 4)
+  const __m256 sgn = F(-0.0f);
+  __m256i axi = _mm256_and_si256(_mm256_castps_si256(x), _mm256_set1_epi32(0x7fffffff));
+  __m256 a = _mm256_castsi256_ps(axi), xs = _mm256_and_ps(x, sgn);
+  __m256 sat = _mm256_castsi256_ps(_mm256_andnot_si256(_mm256_cmpgt_epi32(_mm256_set1_epi32(0x407ad445), axi),
+                                                       _mm256_cmpgt_epi32(_mm256_set1_epi32(0x7f800001), axi)));  /* +-1 */
+  __m256 ok = _mm256_and_ps(_mm256_cmp_ps(a, F(0x1p-90f), _CMP_GE_OQ), _mm256_cmp_ps(a, F(3.93f), _CMP_LE_OQ));
+  __m256 ac = _mm256_min_ps(a, F(3.93f));
+  __m256 kf = _mm256_round_ps(_mm256_mul_ps(ac, F(128.0f)), _MM_FROUND_TO_NEAREST_INT | _MM_FROUND_NO_EXC);
+  __m256 r = _mm256_mul_ps(kf, F(0x1p-7f)), d = _mm256_sub_ps(ac, r);
+  __m256i k = _mm256_cvtps_epi32(kf);
+  __m256 eh = COL(0, k), el = COL(1, k), sh = COL(2, k), sl = COL(3, k);
+  __m256 r2 = _mm256_mul_ps(r, r);                                                    /* exact: r has 9 bits */
+  __m256 c3 = _mm256_fmadd_ps(r2, F(0x1.555556p-1f), F(-0x1.555556p-2f));              /* (2r^2 - 1)/3 */
+  __m256 c4 = _mm256_mul_ps(r, _mm256_fmadd_ps(r2, F(-0x1.555556p-2f), F(0.5f)));      /* -r (2r^2 - 3)/6 */
+  __m256 c5 = _mm256_fmadd_ps(r2, _mm256_fmadd_ps(r2, F(0x1.111112p-3f), F(-0.4f)), F(0.1f));     /* (4r^4 - 12r^2 + 3)/30 */
+  __m256 del = _mm256_fmadd_ps(d, _mm256_fmadd_ps(d, c5, c4), c3);
+  del = _mm256_mul_ps(d, _mm256_fmsub_ps(d, del, r));                                 /* the series minus 1 */
+  __m256 p = _mm256_mul_ps(sh, d), pe = _mm256_fmsub_ps(sh, d, p);                    /* S_hi d exactly */
+  __m256 h = _mm256_add_ps(eh, p), t = _mm256_sub_ps(p, _mm256_sub_ps(h, eh));       /* Fast2Sum: erf(r) >= |S d| unless r = 0 */
+  __m256 l = _mm256_add_ps(_mm256_add_ps(t, el), _mm256_fmadd_ps(p, del, _mm256_fmadd_ps(sl, d, pe)));
+  __m256 doubt, y = fl_round(_mm256_xor_ps(h, xs), _mm256_xor_ps(l, xs), ERFF_TOL, &doubt);
+  y = _mm256_blendv_ps(y, _mm256_or_ps(F(1.0f), xs), sat);
+  int flag = _mm256_movemask_ps(_mm256_andnot_ps(sat, _mm256_or_ps(doubt, _mm256_xor_ps(ok, _mm256_castsi256_ps(_mm256_set1_epi32(-1))))));
+  if (__builtin_expect(flag == 0, 1)) return y;
+  return finish8f(x, y, flag, cr_erff);
+#undef F
+#undef COL
+}
+#endif
+#if !ERFCF_FL
 FLOAT_FROM_HALF(erfcf, erfcf_half, cr_erfcf)
+#else
+/* erfcf in float lanes (2026-10-02; openpocl's harness/tiers tier-erfcf.c, tier 2), replacing the double halves
+   (CORE-MATH's scheme): a = |x| (at most 7.5 here), r = round(128 a)/128, d = a - r exact, and with
+   S(r) = 2/sqrt(pi) e^(-r^2) and the physicists' Hermite polynomials H_n,
+     erfc(r + d) = erfc(r) - S(r) d (1 + d (-H1/2 + d (H2/6 + d (-H3/24 + d (H4/120 - d H5/720)))))
+   erfc(r) and S(r) as float pairs from crmvec-erfcf-t2-tab.h (gen-erfcf-t2-tab.py), read by gather; S d exact by FMA,
+   Fast2Sum with erfc(r), the series in float, the low parts; 2 minus that for x < 0 (x <= -3.83 gives 2). Largest
+   error over every x <= 8.5 (the harness's range): 2^-30.1 of the binade; the test at twice that. From r = 7.5 the
+   table's rows are scaled by 2^64 (erfc(7.5) is 2^-85, so unscaled, its low parts and the terms under them would
+   come within reach of flush-to-zero), and the result is scaled back by 2^-64, exact while it is normal; so the fast
+   path runs to 9.1875, where erfc reaches the smallest normal float. (Until the same afternoon it stopped at 7.5,
+   and crtest's timing range, [-5, 9], sent 11% of lanes to CORE-MATH.) x < 0 keeps a <= 7 (the result is 2 from
+   -3.83 down; at 7.5 it would round to the first scaled row). Lanes whose result would be subnormal, x > 9.1875, nan and lanes in doubt go to CORE-MATH. */
+#include "crmvec-erfcf-t2-tab.h"
+#ifdef CRM_ERFCF_TOL0
+#define ERFCF_TOL 0.0f
+#else
+#define ERFCF_TOL (497508 * 0x1p-48f)                       /* twice the measured 248754 units of 2^-48 */
+#endif
+AVX2 __m256 _ZGVdN8v_erfcf(__m256 x)
+{
+#define F(c) _mm256_set1_ps(c)
+#define COL(c, k) _mm256_i32gather_ps(&ERFCF_T2[0][c], _mm256_slli_epi32(k, 2), 4)
+  const __m256 sgn = F(-0.0f);
+  __m256 ok = _mm256_cmp_ps(x, F(9.1875f), _CMP_LE_OQ);                              /* nan out */
+  /* x < 0: a <= 7 (the result is 2 from -3.83 down), so k <= 896 and never a scaled row: 7.5 itself rounds to k = 960 */
+  __m256 a = _mm256_min_ps(_mm256_andnot_ps(sgn, x), _mm256_blendv_ps(F(9.1875f), F(7.0f), x));
+  __m256 kf = _mm256_round_ps(_mm256_mul_ps(a, F(128.0f)), _MM_FROUND_TO_NEAREST_INT | _MM_FROUND_NO_EXC);
+  __m256 r = _mm256_mul_ps(kf, F(0x1p-7f)), d = _mm256_sub_ps(a, r);
+  __m256i k = _mm256_cvtps_epi32(kf);
+  __m256 eh = COL(0, k), el = COL(1, k), sh = COL(2, k), sl = COL(3, k);
+  /* the series after its first term: d (-r + d (H2/6 + d (-H3/24 + d (H4/120 - d H5/720)))) */
+  __m256 r2 = _mm256_mul_ps(r, r);                                                    /* exact */
+  __m256 c3 = _mm256_fmadd_ps(r2, F(0x1.555556p-1f), F(-0x1.555556p-2f));              /* H2/6 = (2r^2 - 1)/3 */
+  __m256 c4 = _mm256_mul_ps(r, _mm256_fmadd_ps(r2, F(-0x1.555556p-2f), F(0.5f)));      /* -H3/24 */
+  __m256 c5 = _mm256_fmadd_ps(r2, _mm256_fmadd_ps(r2, F(0x1.111112p-3f), F(-0.4f)), F(0.1f));     /* H4/120 */
+  __m256 c6 = _mm256_mul_ps(r, _mm256_fmadd_ps(r2, _mm256_fmadd_ps(r2, F(-0x1.6c16c2p-5f), F(0x1.c71c72p-3f)), F(-0x1.555556p-3f)));
+  __m256 del = _mm256_fmadd_ps(d, _mm256_fmadd_ps(d, _mm256_fmadd_ps(d, c6, c5), c4), c3);
+  del = _mm256_mul_ps(d, _mm256_fmsub_ps(d, del, r));
+  __m256 p = _mm256_mul_ps(sh, d), pe = _mm256_fmsub_ps(sh, d, p);
+  __m256 h = _mm256_sub_ps(eh, p), t = _mm256_sub_ps(_mm256_sub_ps(eh, h), p);      /* Fast2Sum: erfc(r) > 15 S d */
+  __m256 l = _mm256_sub_ps(_mm256_add_ps(t, el), _mm256_fmadd_ps(p, del, _mm256_fmadd_ps(sl, d, pe)));
+  __m256 h2 = _mm256_sub_ps(F(2.0f), h), t2 = _mm256_sub_ps(_mm256_sub_ps(F(2.0f), h2), h);   /* 2 - (h + l) */
+  __m256 l2 = _mm256_sub_ps(t2, l);
+  __m256 doubt, y = fl_round(_mm256_blendv_ps(h, h2, x), _mm256_blendv_ps(l, l2, x), ERFCF_TOL, &doubt);
+  /* the scaled rows (r >= 7.5, reached only by x > 0): back by 2^-64, exact unless the result is subnormal */
+  __m256 scaled = _mm256_cmp_ps(kf, F((float)ERFCF_T2_KS), _CMP_GE_OQ);
+  y = _mm256_mul_ps(y, _mm256_blendv_ps(F(1.0f), F(0x1p-64f), scaled));
+  doubt = _mm256_or_ps(doubt, _mm256_and_ps(scaled, _mm256_cmp_ps(y, F(0x1p-126f), _CMP_LT_OQ)));
+  int flag = _mm256_movemask_ps(_mm256_or_ps(doubt, _mm256_xor_ps(ok, _mm256_castsi256_ps(_mm256_set1_epi32(-1)))));
+  if (__builtin_expect(flag == 0, 1)) return y;
+  return finish8f(x, y, flag, cr_erfcf);
+#undef F
+#undef COL
+}
+#endif
 #else   /* PORT=1: port/crmvec-port.c supplies them (port-erff.h) */
 #if CR_LOOP_ERFF
 #error "PORT=1 replaces erff: keep CR_LOOP_ERFF at 0"
@@ -4359,6 +5113,48 @@ AVXC __m256d _ZGVdN4v_rsqrt(__m256d x)
   double a[4]; _mm256_storeu_pd(a, x); for (int i = 0; i < 4; i++) a[i] = cr_rsqrt(a[i]); return _mm256_loadu_pd(a);
 }
 
+#if !CRMVEC_PORT && ATANF_FL && ASINF_FL
+/* asinpif, acospif, atanpif in float lanes (2026-10-02; openpocl's tier-invpif.c, tier 2): asinf's and acosf's
+   pairs (asacosf_g) and atanf's (atan2(|x|, 1) of pairs), times 1/pi as a pair. |x| >= 2^-90 for asinpi and atanpi (below TINY_OK). Largest error over every input in range: 2^-31.8, 2^-31.9,
+   2^-32.2 of the binade; the tests at twice that. Until then they ran CORE-MATH lane by lane: about 3x faster. */
+#ifdef CRM_INVPIF_TOL0
+#define ASINPIF_TOL 0.0f
+#define ACOSPIF_TOL 0.0f
+#define ATANPIF_TOL 0.0f
+#else
+#define ASINPIF_TOL (341722 * 0x1p-48f)                     /* twice the measured 170861, 88577 (asacosf_g), 55796 */
+#define ACOSPIF_TOL (177154 * 0x1p-48f)
+#define ATANPIF_TOL (111592 * 0x1p-48f)
+#endif
+#define INVPIF(NAME, CR, OK, TOL, ...)                                                         \
+  AVX2 __attribute__((noinline)) static __m256 crvl_##NAME(__m256 x)                             \
+  {                                                                                             \
+    if (!crm_rn()) { float a[8]; _mm256_storeu_ps(a, x); for (int i = 0; i < 8; i++) a[i] = CR(a[i]); return _mm256_loadu_ps(a); } \
+    const __m256 sgn = _mm256_set1_ps(-0.0f), one = _mm256_set1_ps(1.0f), z = _mm256_setzero_ps(); \
+    __m256 a = _mm256_andnot_ps(sgn, x), xs = _mm256_and_ps(x, sgn), rh, rl;                     \
+    (void)one; (void)xs;                                                                        \
+    __m256 ok = OK;                                                                             \
+    __VA_ARGS__                                                                                 \
+    __m256 oh = _mm256_mul_ps(rh, _mm256_set1_ps(0x1.45f306p-2f));          /* times 1/pi */     \
+    __m256 ol = _mm256_fmadd_ps(rh, _mm256_set1_ps(0x1.b93910p-27f), _mm256_fmadd_ps(rl, _mm256_set1_ps(0x1.45f306p-2f), \
+                                _mm256_fmsub_ps(rh, _mm256_set1_ps(0x1.45f306p-2f), oh)));       \
+    __m256 doubt, y = fl_round(oh, ol, TOL, &doubt);                                             \
+    int flag = _mm256_movemask_ps(_mm256_or_ps(doubt, _mm256_xor_ps(ok, _mm256_castsi256_ps(_mm256_set1_epi32(-1))))); \
+    if (__builtin_expect(flag == 0, 1)) return y;                                                \
+    return finish8f(x, y, flag, CR);                                                             \
+  }
+/* |x| >= 2^-90: below, the low parts of x/pi (2^-26 of it and less) can be subnormal, and a caller running with
+   flush-to-zero (as -ffast-math programs do) would lose them: bcheck found 50 and 68 of 65536 inputs misrounded at
+   2^-100 (2026-10-02). Smaller x go to CORE-MATH, which runs with FTZ off (crmvec-fpenv.c) */
+#define TINY_OK(lim) _mm256_and_ps(_mm256_cmp_ps(a, _mm256_set1_ps(0x1p-90f), _CMP_GE_OQ), lim)
+INVPIF(asinpif, cr_asinpif, TINY_OK(_mm256_cmp_ps(a, one, _CMP_LT_OQ)), ASINPIF_TOL, asacosf_g(x, 0, &rh, &rl);)
+INVPIF(acospif, cr_acospif, _mm256_cmp_ps(a, one, _CMP_LT_OQ), ACOSPIF_TOL, asacosf_g(x, 1, &rh, &rl);)
+INVPIF(atanpif, cr_atanpif, TINY_OK(_mm256_castsi256_ps(_mm256_cmpgt_epi32(_mm256_set1_epi32(0x7f800000), _mm256_castps_si256(a)))), ATANPIF_TOL,
+       atanf_fl2(a, z, one, z, &rh, &rl); rh = _mm256_xor_ps(rh, xs); rl = _mm256_xor_ps(rl, xs);)
+#undef TINY_OK
+#undef INVPIF
+#define HAVE_INVPIF 1
+#endif
 #define BVF1(NAME)                                                                             \
   AVX2 __attribute__((noinline)) static __m128 bvf_##NAME(__m128 x)                             \
   { return _mm256_castps256_ps128(crvl_##NAME(_mm256_set_m128(x, x))); }                        \
@@ -4369,6 +5165,11 @@ BVF1(sinpif)
 BVF1(cospif)
 BVF1(rsqrtf)
 BVF1(tanpif)
+#ifdef HAVE_INVPIF
+BVF1(asinpif)
+BVF1(acospif)
+BVF1(atanpif)
+#endif
 
 /* SSE2: the AVX2 code on duplicated lanes where the CPU has it (pow's
    vector path is several times faster than scalar CORE-MATH), else per lane */
@@ -4407,6 +5208,15 @@ DV1(sinpif, cr_sinpif)
 DV1(cospif, cr_cospif)
 DV1(tanpif, cr_tanpif)
 DV1(rsqrtf, cr_rsqrtf)
+#ifdef HAVE_INVPIF
+DV1(asinpif, cr_asinpif)
+DV1(acospif, cr_acospif)
+DV1(atanpif, cr_atanpif)
+#else   /* no vector path built (PORT=1, or ATANF_FL or ASINF_FL off): lane by lane, as before 2026-10-02 */
+XL1(float, __m128, 4, _ZGVbN4v_asinpif, cr_asinpif(x), NOATTR) XL1(float, __m256, 8, _ZGVdN8v_asinpif, cr_asinpif(x), AVXC)
+XL1(float, __m128, 4, _ZGVbN4v_acospif, cr_acospif(x), NOATTR) XL1(float, __m256, 8, _ZGVdN8v_acospif, cr_acospif(x), AVXC)
+XL1(float, __m128, 4, _ZGVbN4v_atanpif, cr_atanpif(x), NOATTR) XL1(float, __m256, 8, _ZGVdN8v_atanpif, cr_atanpif(x), AVXC)
+#endif
 DV2(powr, __m256d, __m256d, double, double, 4, crm_powr)
 DV2(powrf, __m256, __m256, float, float, 8, crm_powrf)
 DV2(pown, __m256d, __m128i, double, int32_t, 4, crm_pown)

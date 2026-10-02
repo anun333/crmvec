@@ -6,7 +6,10 @@ Correctly rounded vector math, as a drop-in replacement for:
 - SLEEF's RVV `libsleef.so.3` on riscv64 (checked under emulation and
   natively on a SpacemiT X60).
 
-The latest release is 0.7.2: a vector path for double `rsqrt` on x86, 2.6
+The latest release is 0.8.0: 18 float functions on new AVX2 vector paths that
+compute just enough precision to decide the rounding, with the same results
+as before on every input and 0.22 to 0.90 of 0.7.2's time. 0.7.2 added a
+vector path for double `rsqrt` on x86, 2.6
 times faster than CORE-MATH's scalar `rsqrt` on a Zen 3, and CORE-MATH's current
 `powf.c` and `sin.c`, with no changed result found. 0.7.1 took a `powf.c`
 without an undefined shift that 0.7.0's copy reaches. 0.7.0 added, on riscv64, a build for VLEN 256, chosen at load, which
@@ -65,9 +68,10 @@ float and double, with SSE2 and AVX2 entry points on x86 and on aarch64:
 `sinpi` `cospi` `tanpi` `asinpi` `acospi` `atanpi` `atan2pi` `lgamma`
 `tgamma` `rsqrt` `powr` `pown`
 
-- **Vector code on x86:** `sinpi`, `cospi`, `tanpi` and `rsqrt` in float;
-  `rsqrt` in double (AVX2 and FMA, since 0.7.2); and `powr` and `pown` in
-  both precisions, built on the vector `pow`.
+- **Vector code on x86:** `sinpi`, `cospi`, `tanpi`, `asinpi`, `acospi`,
+  `atanpi` (since 0.8.0) and `rsqrt` in float; `rsqrt` in double (AVX2 and
+  FMA, since 0.7.2); and `powr` and `pown` in both precisions, built on the
+  vector `pow`.
 - **Scalar per lane:** the rest run CORE-MATH's scalar function on each lane,
   at its speed.
 - **Where they come from:** CORE-MATH has ten of the twelve; `powr` and
@@ -161,8 +165,11 @@ package's library passes `bcheck` and `cecheck c`, `d` and `e` built so).
 The Debian, Fedora and Nix recipes also run `make check` on the library
 they package, as part of the build (Debian's `nocheck` skips it). Checked
 2026-09-27 on Debian amd64 (Ubuntu 24.04), Fedora 44 (gcc 16) and Nix
-(nixpkgs 24.05): every verdict passes. That was version 0.1.0. The recipes
-now carry 0.7.2 and haven't been rebuilt since.
+(nixpkgs 24.05): every verdict passes. That was version 0.1.0. For 0.8.0
+(2026-10-02) the Fedora and Nix recipes were rebuilt on Fedora 44 (gcc
+16.2) and current nixpkgs (gcc 15.2), and every verdict passes. The Nix
+recipe had been skipping `make check` without saying so from 0.6.0 to
+0.7.2; it now names the target.
 
 Every push also runs `make check` on GitHub Actions
 (`.github/workflows/check.yml`), on an x86-64 runner and natively on an
@@ -240,18 +247,23 @@ Checked 2026-09-27:
 
 ## How each function is made correct
 
-- **One-argument float functions**: vector code in double precision. A lane's
-  result is rounded to float only if its error bound shows it cannot round
-  the other way; otherwise CORE-MATH's scalar function computes that lane.
-  `asinf`, `cbrtf`, `erff` and `erfcf` skip that test, and `tanf` has none:
-  for them the exhaustive check shows the vector result is always the
-  correctly rounded one. `expf`, `exp2f` and `exp10f` compute 8 lanes at a
-  time in float-float arithmetic, with a rounding test of their own. Each is
-  proven by checking all 2^32 inputs against CORE-MATH. `sinf`,
-  `cosf` and `tanf` follow CORE-MATH's own schemes, with arguments above 2^26
-  reduced by a table form of Payne-Hanek (`gen-pio2-table.py`); `erff` and
-  `erfcf` transcribe CORE-MATH's; the rest are built here on shared exp, log
-  and atan cores.
+- **One-argument float functions**: two designs, each proven by checking
+  all 2^32 inputs against CORE-MATH.
+  - **Float lanes** (since 0.8.0 for 18 of them: `logf`, `log2f`, `log10f`,
+    `log1pf`, `atanhf`, `asinhf`, `acoshf`, `expm1f`, `tanhf`, `atanf`,
+    `asinf`, `acosf`, `cbrtf`, `erff`, `erfcf`, and the float `asinpi`,
+    `acospi`, `atanpi`): 8 lanes at a time in float and float-float
+    arithmetic, to about 2^-31 to 2^-37 of the result, just enough to decide
+    nearly every rounding. A rounding test sends the rest, well under 1% of
+    inputs, to CORE-MATH's scalar function. `expf`, `exp2f` and `exp10f`
+    already worked this way, with a test of their own.
+  - **Double precision** (`sinf`, `cosf`, `tanf`, `sinhf`, `coshf`): a
+    lane's result is rounded to float only if its error bound shows it
+    cannot round the other way; otherwise CORE-MATH computes that lane.
+    `tanf` has no test: the exhaustive check shows its vector result is
+    always the correctly rounded one. `sinf`, `cosf` and `tanf` follow
+    CORE-MATH's own schemes, with arguments above 2^26 reduced by a table
+    form of Payne-Hanek (`gen-pio2-table.py`).
 - **`powf`, and every double function**: CORE-MATH's fast paths, transcribed
   operation for operation into AVX2. Each lane is decided by CORE-MATH's own
   proven rounding test; lanes it can't decide, and special inputs, go to

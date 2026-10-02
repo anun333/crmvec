@@ -21,16 +21,23 @@ verify: float one-argument functions on all 2^32 inputs; double ones on 2^27
 random over the main range, 2^26 with any exponent, CORE-MATH's hard cases
 +-1000 ulps and edge values; pow and powf on 2^28 random pairs (main range,
 integer y, x near 1, raw bits) and every pair of 40 specials. Exit status
-0 only when nothing differs, so the control exits 1 (since 2026-09-29).
+0 only when nothing differs, 1 when something differs (so the control exits 1,
+since 2026-09-29), 2 when the check could not run: no libcrref.so, a bad
+CTW_* setting, a kernel that failed to build, any other exception. Until
+2026-10-02 those exited 1 as well, the same as a difference.
 """
-import ctypes, os, re, sys, time
+import ctypes, os, re, sys, time, traceback
+
+def void(msg):
+    print("VOID: " + msg, file=sys.stderr)
+    sys.exit(2)
 
 def _crmvec_dir():
     here = os.path.dirname(os.path.abspath(__file__))
     for d in (os.environ.get("CRMVEC_DIR"), here, os.path.join(here, "..", "crmvec")):
         if d and os.path.exists(os.path.join(d, "libcrref.so")):
             return d
-    sys.exit("libcrref.so not found: build crmvec (make) and set CRMVEC_DIR")
+    void("libcrref.so not found: build crmvec (make) and set CRMVEC_DIR")
 
 
 CRM = _crmvec_dir()
@@ -185,9 +192,9 @@ def main():
     mode = os.environ.get("CTW_MODE", "verify")
     names = [n for n in os.environ.get("CTW_FUNCS", ",".join(KERNELS)).split(",") if n]
     if names == ["llvm24"]: names = FUNCS_LLVM24
-    if mode not in ("verify", "time"): sys.exit("CTW_MODE=%s: not a mode (verify, time)" % mode)
+    if mode not in ("verify", "time"): void("CTW_MODE=%s: not a mode (verify, time)" % mode)
     unknown = [n for n in names if n not in KERNELS and not (mode == "time" and n in ("mul", "muld"))]
-    if unknown or not names: sys.exit("CTW_FUNCS: no kernel for %s" % (",".join(unknown) or "(empty list)"))
+    if unknown or not names: void("CTW_FUNCS: no kernel for %s" % (",".join(unknown) or "(empty list)"))
     dev = next(d for p in cl.get_platforms() for d in p.get_devices())
     print("device:", dev.name, "| variant:", os.environ.get("POCL_KERNELLIB_NAME", "auto"), "| mode:", mode,
           "| LD_LIBRARY_PATH:", os.environ.get("LD_LIBRARY_PATH", "") or "-", "| functions:", ",".join(names))
@@ -198,4 +205,9 @@ def main():
 
 
 if __name__ == "__main__":
-    sys.exit(main())
+    try:
+        rc = main()
+    except Exception:                    # a build or run failure is not a difference
+        traceback.print_exc()
+        void("the check did not complete")
+    sys.exit(rc)
