@@ -63,7 +63,7 @@ footer { color: var(--muted); font-size: 0.88rem; padding-block: 1.6rem 3rem; bo
 <header>
   <h1 class="name">crmvec</h1>
   <p class="tag">Correctly rounded vector math, as a drop-in replacement for the libraries compilers call when they vectorize a loop over <code>sin</code>, <code>exp</code> or <code>pow</code>.</p>
-  <p class="meta">Version 0.8.0 · MIT licence · x86-64, aarch64, riscv64 · results are <a href="https://core-math.gitlabpages.inria.fr/">CORE-MATH</a>'s, bit for bit</p>
+  <p class="meta">Version 0.9.0 · MIT licence · x86-64, aarch64, riscv64 · results are <a href="https://core-math.gitlabpages.inria.fr/">CORE-MATH</a>'s, bit for bit</p>
   <nav class="links" aria-label="Project links">
     <a href="https://github.com/anun333/crmvec">Source on GitHub</a>
     <a href="https://github.com/anun333/crmvec/releases">Releases</a>
@@ -89,7 +89,8 @@ footer { color: var(--muted); font-size: 0.88rem; padding-block: 1.6rem 3rem; bo
   <ul>
     <li>glibc's <code>libmvec.so.1</code> on x86-64 and aarch64 (checked natively on both);</li>
     <li>SLEEF's <code>libsleefgnuabi.so.3</code> on aarch64;</li>
-    <li>SLEEF's RVV <code>libsleef.so.3</code> on riscv64 (checked under emulation and natively on a SpacemiT X60).</li>
+    <li>SLEEF's RVV <code>libsleef.so.3</code> on riscv64 (checked under emulation and natively on a SpacemiT X60);</li>
+    <li>since 0.9.0, on x86-64, a program's scalar libm calls too: <code>libcrpreload.so</code> has CORE-MATH's 76 functions under the C library's names, preloaded by <code>crmvec-run --libm</code>, with glibc's errno and exception flags.</li>
   </ul>
   <p>26 functions, each in float and double:</p>
   <p class="fns">sin cos tan asin acos atan atan2 sinh cosh tanh asinh acosh atanh exp exp2 exp10 expm1 log log2 log10 log1p pow cbrt hypot erf erfc</p>
@@ -101,8 +102,9 @@ footer { color: var(--muted); font-size: 0.88rem; padding-block: 1.6rem 3rem; bo
 <pre><code>make lib                   # the libraries (gcc on x86)
 make install PREFIX=/usr/local
 crmvec-run your-program    # its vector math from crmvec
+crmvec-run --libm your-program   # its scalar libm calls too (x86-64)
 pkg-config --cflags --libs crmvec</code></pre>
-  <p>The libraries install to <code>lib/crmvec/</code>, a directory of their own, and replace the system's only for programs run with <code>crmvec-run</code> or linked with pkg-config's rpath, never system-wide. Recipes for Debian and Ubuntu, Fedora and Nix are in the repository; a conda-forge recipe is under review (<a href="https://github.com/conda-forge/staged-recipes/pull/34976">staged-recipes#34976</a>).</p>
+  <p>The libraries install to <code>lib/crmvec/</code>, a directory of their own, and replace the system's only for programs run with <code>crmvec-run</code> or linked with pkg-config's rpath, never system-wide. Recipes for Debian and Ubuntu, Fedora and Nix are in the repository, and it is on conda-forge: <code>conda install -c conda-forge crmvec</code> (<a href="https://github.com/conda-forge/crmvec-feedstock">crmvec-feedstock</a>).</p>
 </section>
 
 <section>
