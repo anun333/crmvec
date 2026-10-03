@@ -12,7 +12,7 @@ ifeq ($(origin CC),default)
 CC      := gcc
 endif
 .DEFAULT_GOAL := all
-VERSION := 0.9.0
+VERSION := 0.10.0
 # install locations (make install PREFIX=... DESTDIR=...): the libraries go
 # to a directory of their own, so that nothing replaces the system's
 # libmvec.so.1 until a program asks for it (crmvec-run, or the rpath that
@@ -103,7 +103,7 @@ ifeq ($(MPFR42),)
 $(info mpfrcheck, pownf-search: left out, no MPFR 4.2 or later found (they call mpfr_pown, mpfr_sinpi, ...))
 endif
 all: libmvec.so.1 crtest libcrref.so bcheck cecheck lcheck hypot-midpoints hypotf-midpoints tan-poles bbench ebench $(if $(MPFR42),mpfrcheck pownf-search) f16check headercheck roundeven-check
-lib: libmvec.so.1 crpreload/libcrpreload.so
+lib: libmvec.so.1 crpreload/libcrpreload.so fast/libmvec.so.1
 LIBS_BUILT = libmvec.so.1 crpreload/libcrpreload.so
 endif
 
@@ -122,6 +122,7 @@ install: lib crmvec.h crmvec-simd.h crmvec.pc.in crmvec-run.in
 	install -m 755 $(LIBS_BUILT) $(DESTDIR)$(CRMDIR)/
 	ln -sf libmvec.so.1 $(DESTDIR)$(CRMDIR)/libmvec.so
 	[ ! -f $(DESTDIR)$(CRMDIR)/libsleefgnuabi.so.3 ] || ln -sf libsleefgnuabi.so.3 $(DESTDIR)$(CRMDIR)/libsleefgnuabi.so
+	[ ! -f fast/libmvec.so.1 ] || { install -d $(DESTDIR)$(CRMDIR)/fast && install -m 755 fast/libmvec.so.1 $(DESTDIR)$(CRMDIR)/fast/ && ln -sf libmvec.so.1 $(DESTDIR)$(CRMDIR)/fast/libmvec.so; }
 	install -m 644 crmvec.h $(DESTDIR)$(INCDIR)/crmvec.h
 	install -m 644 crmvec-simd.h $(DESTDIR)$(INCDIR)/crmvec-simd.h
 	sed -e 's|@CRMDIR@|$(CRMDIR)|g' -e 's|@INCDIR@|$(INCDIR)|g' -e 's|@VERSION@|$(VERSION)|g' crmvec.pc.in > $(DESTDIR)$(PKGDIR)/crmvec.pc
@@ -199,6 +200,10 @@ crmvec-avx2.o: crmvec.c $(HDR) $(PORTOBJ)
 
 libmvec.so.1: crmvec.o $(LIBC) crmvec-fpenv.c $(HDR) $(CR) libcrf16.a crmvec-exports.map
 	$(CC) $(CFLAGS) $(CPPFLAGS) $(FP) $(LDFLAGS) -fPIC -shared -Wl,-z,defs -Wl,-Bsymbolic-functions -Wl,--gc-sections -Wl,-soname,libmvec.so.1 -Wl,--version-script=crmvec-exports.map -o $@ crmvec.o $(PORTOBJ) $(LIBC) $(CR) $(CRWRAP) libcrf16.a -lm
+
+ifneq ($(HOSTARCH),aarch64)
+include fast/fast.mk
+endif
 
 crtest: crtest.c crtest-hard.h port/pow-parity.h crmvec-avx2.o $(LIBC) crmvec-fpenv.c $(HDR) $(CR) libcrf16.a
 	$(CC) $(CFLAGS) $(FP) -mavx2 -mfma -fopenmp -o $@ crtest.c crmvec-avx2.o $(PORTOBJ) $(LIBC) $(CR) $(CRWRAP) libcrf16.a -lm -ldl
@@ -396,7 +401,8 @@ $(RV64)/rv64-bench: port/rv64-bench.c $(RV64)/libcr.a
 
 clean:
 	rm -f check.log libmvec.so.1 crmvec.o crmvec-avx2.o crmvec-port.o crmvec-port-e.o crtest libcrref.so bcheck hypot-midpoints hypotf-midpoints tan-poles bbench ebench mpfrcheck pownf-search libcrf16.a f16check cecheck lcheck roundeven-check rsqrt-vcheck
-	rm -rf rsqrt-plant
+	rm -rf rsqrt-plant fast/obj fast/drv
+	rm -f fast/crmvec.o fast/libmvec.so.1 fast/fastcheck fast/fastbench
 	rm -rf $(A64) $(RV64) build-sleef build-f16
 	-$(MAKE) -C crpreload clean
 

@@ -11,7 +11,7 @@
 %global debug_package %{nil}
 
 Name:           crmvec
-Version:        0.9.0
+Version:        0.10.0
 Release:        1%{?dist}
 Summary:        Correctly rounded vector math (a drop-in libmvec)
 License:        MIT
@@ -61,6 +61,18 @@ make check
 %{_libdir}/pkgconfig/crmvec.pc
 
 %changelog
+* Fri Oct 02 2026 anun333 <anun333@posteo.net> - 0.10.0-1
+- x86-64: a fast mode, fast/libmvec.so.1 in lib/crmvec/fast/ (crmvec-run
+  --fast). Not correctly rounded: each of the 52 functions is one fixed
+  sequence of IEEE operations within OpenCL's accuracy bound for it, at a
+  median of 1.09 times glibc's time, and the same bits from every entry
+  point on every CPU with AVX2 and FMA; elsewhere, or outside
+  round-to-nearest, the correctly rounded results. The default library is
+  unchanged.
+- make check-fast: every bound as the OpenCL CTS measures it, every entry
+  point against the kernels, no estimate instructions, and the fallback
+  under qemu without AVX2.
+
 * Fri Oct 02 2026 anun333 <anun333@posteo.net> - 0.9.0-1
 - x86-64: libcrpreload.so, installed beside libmvec.so.1 in lib/crmvec/:
   CORE-MATH's 76 correctly rounded elementary functions under the C

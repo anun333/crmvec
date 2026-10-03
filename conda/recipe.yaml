@@ -41,12 +41,16 @@ tests:
         - lib/crmvec/libmvec.so.1
         - if: x86_64
           then: lib/crmvec/libcrpreload.so
+        - if: x86_64
+          then: lib/crmvec/fast/libmvec.so.1
       bin:
         - crmvec-run
   - script:
       - crmvec-run --help
       - if: x86_64
         then: crmvec-run --libm true
+      - if: x86_64
+        then: crmvec-run --fast true
 
 about:
   homepage: https://github.com/anun333/crmvec

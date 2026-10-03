@@ -1,0 +1,8 @@
+# build products of the fast mode (fast.mk), and local check output
+obj/
+drv/
+crmvec.o
+libmvec.so.1
+fastcheck
+fastbench
+results/
