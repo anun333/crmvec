@@ -121,6 +121,7 @@ footer { color: var(--muted); font-size: 0.88rem; padding-block: 1.6rem 3rem; bo
   <h2>Why</h2>
   <p>A correctly rounded function has exactly one right answer for every input, so every correct implementation agrees, on every machine and every version. Vector math libraries aim for speed instead, within a few ulps, and their last bits move with the library, its version and the CPU's instruction set. Through PoCL, for example, glibc's <code>libmvec</code> returns something other than the correctly rounded result for 42% of random double <code>exp</code> inputs and 63% of double <code>sin</code> inputs: within OpenCL's bounds, and not reproducible across libraries.</p>
   <p>crmvec gives those same entry points correctly rounded results, so a vectorized program computes the same bits on any machine, in any of the four rounding modes.</p>
+  <p>Its scalar preload does the same for the C library's libm. Against 14 LTS distributions, glibc's libm misrounds somewhere in 30 to 53 of the 54 functions measured, and its results depend on the CPU in up to 28 of them: <a href="https://github.com/anun333/crmvec/blob/main/docs/distros.md">what it changes on yours</a>.</p>
 </section>
 
 <section>
