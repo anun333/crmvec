@@ -108,7 +108,7 @@ Correct rounding costs speed: on a Zen 3, the vector library takes a median of
 about 3 to 4 times glibc `libmvec`'s time per element, and is faster than
 calling scalar CORE-MATH. The scalar preload is from 0.36 to 3.3 times glibc
 per function; a whole FreeSurfer run takes 13% longer with it, FSL FLIRT a few
-percent. The fast mode takes a median of 1.09 times glibc's time.
+percent. The fast mode takes a median of 1.02 times glibc's time.
 [`docs/speed.md`](docs/speed.md), [`docs/fast-mode.md`](docs/fast-mode.md).
 
 ## Limits

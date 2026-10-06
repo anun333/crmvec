@@ -5345,8 +5345,9 @@ DV2(pownf, __m256, __m256i, float, int32_t, 8, crm_pownf)
 /* The fast mode (2026-10-06): each AVX2 name is an IFUNC. On a CPU with AVX2 and FMA it binds to the kernel's own
    entry, crt1e_<name> (fast/tier.h and the rest), the rounding-mode test and the kernel in one function, so a call
    costs the test and nothing more; on any other CPU, to the AVX entry point above. The resolver runs once, at load.
-   The shipped entry tested crm_avx2, then crm_rn(), then called crt1_<name>: about 0.12 ns an element over the
-   kernel alone on the cheap floats (fastentry-ab, EPYC 7773X), half of it the rounding-mode test, which must stay.
+   Until then the AVX2 name was the AVX entry point, which tested crm_avx2, then crm_rn(), then called crt1_<name>:
+   about 0.1 ns an element over the kernel alone on the cheap floats (EPYC 7773X). This removes a median of two
+   thirds of that on the floats, the test now running inside the kernel's code (docs/fast-mode.md, Speed).
    The AVX names stay ordinary functions: crt1e_ falls back to them outside round-to-nearest. */
 #define CRVR(n, k) static void *crvr_##n(void)                                                  \
   { __builtin_cpu_init(); return __builtin_cpu_supports("avx2") && __builtin_cpu_supports("fma") ? (void *)crt1e_##n : (void *)k; }

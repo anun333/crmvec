@@ -69,14 +69,20 @@ must fail:
 
 **Speed**, against glibc 2.41's `libmvec` and this library's default, on one
 core of an AMD EPYC 7773X (Zen 3), 4096 inputs in L1 through the AVX2 entry
-points, best of four runs of `fast/fastbench` (crtest's input ranges): a
-median of 1.09 times glibc's time (floats 1.17, doubles 1.06), from 0.55
-(`tanh`) to 1.90 (`erfcf`), at or under glibc on 16 of the 52. The
-correctly rounded default takes 3.54 times at the median there. The kernels
-alone run at about glibc's speed (`expf` 0.46 ns an element against 0.43,
-`logf` 0.47 against 0.46); the rest is the entry point's CPU and
-rounding-mode checks and one more call, about 0.1 ns an element, which
-weighs most on the cheapest float functions.
+points, the fastest of six runs of `fast/fastbench` (each the best of seven
+passes; crtest's input ranges; 2026-10-06): a median of 1.02 times glibc's
+time (floats 1.00, doubles 1.03), from 0.50 (`tanh`) to 1.91 (`erfcf`), at
+or under glibc on 23 of the 52. The correctly rounded default takes 3.50
+times at the median there.
+
+Each AVX2 entry point is an IFUNC. On a CPU with AVX2 and FMA it binds at
+load time to the kernel's own entry, which is the rounding-mode test and then
+the kernel inline, so a call costs the kernel and that test (`expf` 0.46 ns an
+element against glibc's 0.43, `logf` 0.46 against 0.46). Until 2026-10-06 the
+entry point tested the CPU and the rounding mode and then called the kernel,
+about 0.1 ns an element more on the cheap floats. Measured head to head, the
+change takes a median 0.98 of the old time, and 0.75 to 0.80 on the cheapest
+floats (`hypotf`, `exp2f`, `tanhf`, `expf`, `expm1f`, `log2f`).
 
 **Checked** by `make check-fast` (about an hour on 8 threads; not part of
 `make check`): `fast/estimates.sh`; `fast/emu-check.sh` (under qemu's
@@ -84,7 +90,9 @@ Conroe and SandyBridge models, bcheck and cecheck, which demand the
 correctly rounded result, pass on the fast library, and natively cecheck
 fails on it, as it must); `fast/bounds.sh` (above); and `fastcheck`, every
 entry point against the kernel, bit for bit, on every float input of the
-one-argument floats and 2^24 inputs of the rest.
+one-argument floats and 2^24 inputs of the rest; and `fast/mode-check.sh`
+(natively, in each directed rounding mode, bcheck and cecheck c and d pass on
+the fast library, and in round-to-nearest cecheck fails on it, as it must).
 
 **Through PoCL** (the OpenCL CTS's own test, 2026-10-02): PoCL main built
 with its defaults, which vectorize `sin`, `cos`, `tan`, `exp`, `log` and `pow`

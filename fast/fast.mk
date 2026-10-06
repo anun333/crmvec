@@ -41,10 +41,12 @@ fast/fastcheck: fast/fastcheck.c $(FAST_OBJ) libcrref.so crmvec-functions.h
 # check-fast: the fast mode's own checks (not part of check: about an hour on 8 threads). fast/estimates.sh: no kernel
 # uses an estimate instruction (CPU-dependent bits); fast/emu-check.sh: without AVX2 it falls back to CORE-MATH (qemu);
 # fast/bounds.sh: every kernel within OpenCL's bound (floats on
-# every input); fastcheck: every entry point gives the kernel's bits
+# every input); fastcheck: every entry point gives the kernel's bits; fast/mode-check.sh: outside round-to-nearest
+# it falls back to CORE-MATH (natively)
 check-fast: fast/libmvec.so.1 fast/fastcheck libcrref.so bcheck cecheck
 	fast/estimates.sh
 	fast/emu-check.sh
+	fast/mode-check.sh
 	fast/bounds.sh
 	./fast/fastcheck fast/libmvec.so.1
 
