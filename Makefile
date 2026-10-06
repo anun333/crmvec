@@ -146,7 +146,7 @@ headercheck: crmvec.h crmvec-f16.c crmvec-scalar.c
 #            lengths in all four rounding modes);
 #   x86:     off. On Zen 3 the intrinsics are as fast or faster; on
 #            Cascade Lake the core built by clang takes 0.94 times their
-#            time at the median (2026-09-29, README "One portable source").
+#            time at the median (2026-09-29, docs/platforms.md "One portable source").
 # PORT=0 or PORT=1 on the command line sets both. The x86 file is built with
 # PORTCC (gcc or clang). Switching needs `make clean`: the objects do not
 # record which way they were built.
@@ -409,7 +409,7 @@ clean:
 	-$(MAKE) -C crpreload clean
 
 # a few minutes of the checks, for users and packagers (the full list is the
-# README's "Checking it"); each line must print a passing verdict, and the
+# docs/checking.md); each line must print a passing verdict, and the
 # controls must fail as they should. The AVX, AVX2 and AVX-512 entry points
 # are checked only on CPUs that have them (elsewhere the checker itself would
 # fault). Needs libmpfr-dev, as `make` does.

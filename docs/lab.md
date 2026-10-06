@@ -55,7 +55,7 @@ conda install -c conda-forge crmvec-libm
 
 Every program run from that environment, once activated (or through
 `conda run`), uses the correctly rounded math. `conda remove crmvec-libm`
-undoes it. Nothing changes in other environments. *(The `crmvec-libm` package is new in 0.11.0.)*
+undoes it. Nothing changes in other environments. *(The `crmvec-libm` package is new in 0.11.0, and is waiting to be published on conda-forge; until then this step doesn't work.)*
 
 **On a cluster with environment modules.** An administrator installs crmvec
 once (`make install PREFIX=/opt/crmvec`, or a conda environment holding it)

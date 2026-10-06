@@ -14,7 +14,7 @@
 
    Built with -mavx2 -mfma for the whole file, so any compiler passes the
    256-bit argument in a register (clang passes a target("avx2") function's
-   256-bit arguments in memory in a file built without AVX: README, Limits;
+   256-bit arguments in memory in a file built without AVX: docs/limits.md;
    trap 74 in openpocl's docs/outline/40-traps.md): gcc and clang can both
    build it. */
 #define VB 32

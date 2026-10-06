@@ -1,7 +1,7 @@
 #!/usr/bin/make -f
 # crmvec: build the libraries (make lib), then make check: a few minutes of
 # the checks, on the library being packaged (skipped with nocheck); the
-# full list runs from the source tree (README, "Checking it")
+# full list runs from the source tree (docs/checking.md)
 # no LTO: it would optimize across crmvec.c and CORE-MATH, code no check has run on
 export DEB_BUILD_MAINT_OPTIONS = hardening=+all optimize=-lto
 include /usr/share/dpkg/architecture.mk

@@ -1,7 +1,6 @@
 # crmvec for Nix: nix-build (default.nix), or callPackage ./package.nix {}.
 # Builds the libraries, then make check: a few minutes of the checks on the
-# library being packaged; the full list runs from the source tree (README,
-# "Checking it").
+# library being packaged; the full list runs from the source tree (docs/checking.md).
 { lib, stdenv, simde, mpfr }:
 
 stdenv.mkDerivation {

@@ -1,7 +1,7 @@
 /* crmvec-port-e.c: the portable core at 512 bits, for the AVX-512 entry
    points (added 2026-09-29). Before, _ZGVeN16v_expf and the rest ran the
    AVX2 code on each half; on a Cascade Lake, with two 512-bit FMA units,
-   this same C source built for 512-bit vectors is faster (README, "Speed").
+   this same C source built for 512-bit vectors is faster (docs/speed.md).
    The same headers as crmvec-port.c, at VB = 64, under the internal names
    crve_<name> (hidden by crmvec-exports.map); crmvec.c's AVX-512 entry
    points call them on a CPU with AVX512F and AVX512DQ in round-to-nearest,
