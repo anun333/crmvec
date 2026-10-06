@@ -1,9 +1,9 @@
 # conda-forge recipe for crmvec (rattler-build, recipe format v1). conda-forge
 # builds it from conda-forge/crmvec-feedstock, whose recipe/recipe.yaml is this
 # file without these comment lines. The sha256 is the release tarball's (git
-# tag v0.10.0 on anun333/crmvec).
+# tag v0.11.0 on anun333/crmvec).
 context:
-  version: "0.10.0"
+  version: "0.11.0"
 
 recipe:
   name: crmvec-split
@@ -11,7 +11,7 @@ recipe:
 
 source:
   url: https://github.com/anun333/crmvec/archive/refs/tags/v${{ version }}.tar.gz
-  sha256: deaf481e2933d267c22b0f93598fa7bc442951cedd7cd3aa973cd2885632c8fc
+  sha256: ac5a4af8501cec10e5d4b4d81f8469622c2b4c8c93c534822b320e0daa5f0f78
 
 build:
   number: 0
