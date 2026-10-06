@@ -11,7 +11,7 @@
 %global debug_package %{nil}
 
 Name:           crmvec
-Version:        0.11.0
+Version:        0.11.1
 Release:        1%{?dist}
 Summary:        Correctly rounded vector math (a drop-in libmvec)
 License:        MIT
@@ -62,6 +62,13 @@ make check
 %{_libdir}/pkgconfig/crmvec.pc
 
 %changelog
+* Tue Oct 06 2026 anun333 <anun333@posteo.net> - 0.11.1-1
+- CORE-MATH updated to e78b460: f16/cbrtf16.c no longer calls the C
+  library's cbrtf, so crmvec-cbrtf16.h, which pointed that call at
+  CORE-MATH's cbrtf, is gone. The same results: every half and bfloat16
+  input of every function in four rounding modes, against MPFR, before
+  and after (54,132,736 results).
+
 * Mon Oct 05 2026 anun333 <anun333@posteo.net> - 0.11.0-1
 - aarch64: libcrpreload.so, as on x86-64: CORE-MATH's 76 elementary
   functions under the C library's names (crmvec-run --libm). Checked

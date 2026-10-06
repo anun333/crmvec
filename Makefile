@@ -12,7 +12,7 @@ ifeq ($(origin CC),default)
 CC      := gcc
 endif
 .DEFAULT_GOAL := all
-VERSION := 0.11.0
+VERSION := 0.11.1
 # install locations (make install PREFIX=... DESTDIR=...): the libraries go
 # to a directory of their own, so that nothing replaces the system's
 # libmvec.so.1 until a program asks for it (crmvec-run, or the rpath that
@@ -74,12 +74,13 @@ CRWRAP  := crmvec-fpenv.c $(foreach n,$(shell grep -o 'CRW_[A-Z0-9]*([a-z0-9]*)'
 # visibility into an archive: each file also defines a stand-in under the
 # bare name (sinf16) that is not correctly rounded and must not be exported.
 # Each stand-in gets its own section, so --gc-sections drops them (they were
-# the source of the library's libm imports). cr_cbrtf16 itself returns
-# cbrtf((float)x), the C library's cbrtf, which need not be correctly rounded:
-# crmvec-cbrtf16.h points it at CORE-MATH's (found 2026-09-30 by repro-scan).
+# the source of the library's libm imports). Until 0.11.1, cr_cbrtf16 returned
+# cbrtf((float)x), the C library's cbrtf, and crmvec-cbrtf16.h pointed it at
+# CORE-MATH's (found 2026-09-30 by repro-scan); CORE-MATH's file has needed no
+# C library function since 398b235 (2026-10-05).
 F16SRC  := $(wildcard f16/*.c) $(wildcard bf16/*.c)
-F16FLAGS = -ffunction-sections $$([ $$f = f16/cbrtf16.c ] && echo -include crmvec-cbrtf16.h)
-libcrf16.a: $(F16SRC) crmvec-cbrtf16.h
+F16FLAGS = -ffunction-sections
+libcrf16.a: $(F16SRC)
 	rm -rf build-f16 && mkdir -p build-f16
 	for f in $(F16SRC); do $(CC) $(CFLAGS) $(CPPFLAGS) $(FP) $(F16FLAGS) -fPIC -fvisibility=hidden -c -o build-f16/$$(echo $$f | tr / -).o $$f || exit 1; done
 	rm -f $@ && ar rcs $@ build-f16/*.o
@@ -297,7 +298,7 @@ ifneq ($(filter aarch64,$(HOSTARCH))$(filter aarch64 sleef-exports $(A64)/%,$(MA
 $(error the aarch64 build needs GNU make 4.3 or later (grouped targets); this is $(MAKE_VERSION))
 endif
 endif
-$(A64OBJ) &: $(A64SRC) $(F16SRC) crmvec-cbrtf16.h
+$(A64OBJ) &: $(A64SRC) $(F16SRC)
 	mkdir -p $(A64)
 	$(A64CC) $(CFLAGS) $(CPPFLAGS) $(FP) -fPIC -fvisibility=hidden -c -o $(A64)/crmvec.o crmvec.c
 	$(A64CC) $(CFLAGS) $(CPPFLAGS) $(FP) -fPIC -fvisibility=hidden -c -o $(A64)/scalar.o crmvec-scalar.c

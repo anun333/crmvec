@@ -1,3 +1,13 @@
+crmvec (0.11.1) unstable; urgency=medium
+
+  * CORE-MATH updated to e78b460: f16/cbrtf16.c no longer calls the C
+    library's cbrtf, so crmvec-cbrtf16.h, which pointed that call at
+    CORE-MATH's cbrtf, is gone. The same results: every half and bfloat16
+    input of every function in four rounding modes, against MPFR, before
+    and after (54,132,736 results).
+
+ -- anun333 <anun333@posteo.net>  Tue, 06 Oct 2026 11:22:12 -0500
+
 crmvec (0.11.0) unstable; urgency=medium
 
   * aarch64: libcrpreload.so, as on x86-64: CORE-MATH's 76 elementary

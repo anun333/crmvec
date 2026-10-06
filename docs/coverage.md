@@ -54,8 +54,9 @@ void crmvec_f16_sincos(const uint16_t *x, uint16_t *s, uint16_t *c, size_t n);
 
 That covers `acos` … `tgamma`, including `exp2m1`, `log2p1`, `sinpi`,
 `rsqrt` and `sqrt` (the list is `crmvec-f16-list.h`). There is no vector
-code yet: each element runs CORE-MATH's function. One of them, binary16
-`cbrt`, rounds a binary32 cube root to half, and upstream that cube root is
-whatever `cbrtf` the C library has. crmvec builds it with CORE-MATH's
-`cbrtf` instead (`crmvec-cbrtf16.h`): with a `cbrtf` 1 ulp off, 10 of the
-65,536 results come out wrong (found 2026-09-30).
+code yet: each element runs CORE-MATH's function. Until 0.11.1, binary16
+`cbrt` rounded a binary32 cube root to half, and upstream that cube root was
+whatever `cbrtf` the C library had; with a `cbrtf` 1 ulp off, 10 of the
+65,536 results came out wrong (found 2026-09-30). crmvec built it with
+CORE-MATH's `cbrtf` instead, and since CORE-MATH's 398b235 (2026-10-05) the
+file needs no C library function.

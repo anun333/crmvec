@@ -17,7 +17,7 @@ every CPU, with every glibc version, and in every other correct library.
   OpenCL's accuracy bound for each function, at about glibc's speed, with the
   same bits on every CPU with AVX2 and FMA.
 
-The latest release is 0.11.0 ([changes](CHANGELOG.md)).
+The latest release is 0.11.1 ([changes](CHANGELOG.md)).
 
 ## Why
 
@@ -123,11 +123,9 @@ fast mode's double bounds were checked on samples. The rest:
 The scalar functions, their tables, and the error analyses the vector paths
 rely on are [CORE-MATH](https://core-math.gitlabpages.inria.fr/)'s, by Alexei
 Sibidanov, Paul Zimmermann, Tom Hubrecht and others. Their files are
-included unmodified under their own MIT license and copyright notices. 164 of
-the 165 are byte-identical to CORE-MATH's master branch at `e072473`
-(2026-10-05); `f16/cbrtf16.c` is the 2026-10-01 version, which calls the C
-library's `cbrtf`. crmvec builds it with CORE-MATH's `cbrtf` instead
-(`crmvec-cbrtf16.h`), which upstream's newer version now does itself. The
+included unmodified under their own MIT license and copyright notices. All
+165 are byte-identical to CORE-MATH's master branch at `e78b460`
+(2026-10-06). The
 `crmvec-*-tab.h` headers copy their tables. Everything else is under the MIT
 license in `LICENSE`.
 

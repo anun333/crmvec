@@ -5,6 +5,9 @@ checked, is in [`debian/changelog`](debian/changelog) (the same text as
 [`crmvec.spec`](crmvec.spec)'s), and on the
 [releases page](https://github.com/anun333/crmvec/releases).
 
+- **0.11.1:** CORE-MATH's current `f16/cbrtf16.c`, which no longer calls the
+  C library's `cbrtf`, so crmvec's workaround for it is gone; the same results
+  on every half and bfloat16 input.
 - **0.11.0:** `libcrpreload.so` on aarch64 too; in it, a faster path for
   underflowing `exp`, `exp2`, `exp10`, `erfc` and `tgamma` (a whole
   FreeSurfer run costs 13% more than with glibc, not 27%); ways to turn the
