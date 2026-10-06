@@ -21,8 +21,27 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-#include <xmmintrin.h>
 #include <gnu/libc-version.h>
+/* the flush controls: x86's MXCSR FTZ (0x8000) and DAZ (0x0040); on aarch64
+   one FPCR bit, FZ (bit 24), flushes inputs and outputs alike */
+#if defined(__x86_64__) || defined(__i386__)
+#include <xmmintrin.h>
+typedef unsigned fl_t;
+static fl_t fl_base(void) { return _mm_getcsr() & ~0x8040u; }
+static void fl_set(unsigned bits) { _mm_setcsr(_mm_getcsr() | bits); }
+static void fl_restore(fl_t b) { _mm_setcsr(b); }
+#define FZ_ 0x8000u
+#define DZ_ 0x0040u
+#elif defined(__aarch64__)
+typedef unsigned long fl_t;
+static fl_t fl_get_(void) { fl_t c; __asm__ volatile("mrs %0, fpcr" : "=r"(c)); return c; }
+static fl_t fl_base(void) { return fl_get_() & ~(1ul << 24); }
+static void fl_set(unsigned bits) { fl_t c = fl_get_() | bits; __asm__ volatile("msr fpcr, %0" : : "r"(c)); }
+static void fl_restore(fl_t b) { __asm__ volatile("msr fpcr, %0" : : "r"(b)); }
+#define FZ_ (1u << 24)
+#else
+#error "crpreload-check: no flush-to-zero control for this architecture"
+#endif
 #include "crpreload-list.h"
 
 typedef double (*d1)(double); typedef float (*f1)(float);
@@ -54,14 +73,22 @@ static int same_d(double a, double b) { return (isnan(a) && isnan(b)) || ubd(a) 
 static int same_f(float a, float b) { return (isnan(a) && isnan(b)) || ubf(a) == ubf(b); }
 static const int MODES[4] = {FE_TONEAREST, FE_UPWARD, FE_DOWNWARD, FE_TOWARDZERO};
 /* the conditions: a rounding mode (index into MODES) and the flush bits.
-   All 16 (four modes by none, FTZ, DAZ, both) by default since the
+   All 16 on x86 (four modes by none, FTZ, DAZ, both) by default since the
    flush-to-zero table (2026-10-01): with it, a call may run under any of
-   them without the guard. The "all" mode keeps the first five (the four
+   them without the guard. On aarch64 there are 8 (four modes, without and
+   with FZ). The "all" mode keeps the first five (the four
    modes, then nearest with both), 2^32 inputs each, unless
    CRPRELOAD_CONDS=16. */
-static const unsigned COND[16][2] = {{0, 0}, {1, 0}, {2, 0}, {3, 0}, {0, 0x8040}, {1, 0x8040}, {2, 0x8040}, {3, 0x8040},
-                                     {0, 0x8000}, {1, 0x8000}, {2, 0x8000}, {3, 0x8000}, {0, 0x40}, {1, 0x40}, {2, 0x40}, {3, 0x40}};
-static const char *CONDNAME[4] = {"", "+FTZ", "+DAZ", "+FTZ+DAZ"};
+#ifdef DZ_
+static const unsigned COND[16][2] = {{0, 0}, {1, 0}, {2, 0}, {3, 0}, {0, FZ_ | DZ_}, {1, FZ_ | DZ_}, {2, FZ_ | DZ_}, {3, FZ_ | DZ_},
+                                     {0, FZ_}, {1, FZ_}, {2, FZ_}, {3, FZ_}, {0, DZ_}, {1, DZ_}, {2, DZ_}, {3, DZ_}};
+#define NCOND 16
+static const char *condname(unsigned b) { return b == 0 ? "" : b == FZ_ ? "+FTZ" : b == DZ_ ? "+DAZ" : "+FTZ+DAZ"; }
+#else   /* aarch64: the four modes, then the four with FZ */
+static const unsigned COND[8][2] = {{0, 0}, {1, 0}, {2, 0}, {3, 0}, {0, FZ_}, {1, FZ_}, {2, FZ_}, {3, FZ_}};
+#define NCOND 8
+static const char *condname(unsigned b) { return b == 0 ? "" : "+FZ"; }
+#endif
 static long sum16(const long *a) { long t = 0; for (int i = 0; i < 16; i++) t += a[i]; return t; }
 #define ALLX (FE_INVALID | FE_DIVBYZERO | FE_OVERFLOW | FE_UNDERFLOW | FE_INEXACT)
 
@@ -72,7 +99,7 @@ static long sum16(const long *a) { long t = 0; for (int i = 0; i < 16; i++) t +=
    the next float or double up instead (a control: must differ) */
 static int one_(int shape, void *P, void *R, int mode, int ftz, double xd, double yd, const uint32_t *xb, int perturb)
 {
-  unsigned base = _mm_getcsr() & ~0x8040u;
+  fl_t base = fl_base();
   int fp, fr, bad = 0;
   /* the float arguments are made here, before the flags are cleared and
      before FTZ/DAZ: converting raises flags of its own (and flushes under
@@ -82,7 +109,7 @@ static int one_(int shape, void *P, void *R, int mode, int ftz, double xd, doubl
   float xf = xb ? fbits(*xb) : vxf, yf = vyf;
   float rxf = perturb ? nextafterf(xf, INFINITY) : xf; double rxd = perturb ? nextafter(xd, INFINITY) : xd;
   fesetround(mode);
-  if (ftz) _mm_setcsr(_mm_getcsr() | (unsigned)ftz);   /* ftz: the MXCSR bits, FTZ 0x8000 and/or DAZ 0x0040 */
+  if (ftz) fl_set((unsigned)ftz);   /* ftz: the flush bits of COND[] */
   feclearexcept(ALLX);
   double pd = 0, pd2 = 0; float pf = 0, pf2 = 0;
   switch (shape) {
@@ -91,7 +118,7 @@ static int one_(int shape, void *P, void *R, int mode, int ftz, double xd, doubl
     case SC: ((sc)P)(xd, &pd, &pd2); break; case SCF: ((scf)P)(xf, &pf, &pf2); break;
   }
   fp = fetestexcept(ALLX);
-  _mm_setcsr(base); fesetround(mode); feclearexcept(ALLX);
+  fl_restore(base); fesetround(mode); feclearexcept(ALLX);
   double rd = 0, rd2 = 0; float rf = 0, rf2 = 0;
   switch (shape) {
     case D1: rd = ((d1)R)(rxd); break; case F1: rf = ((f1)R)(rxf); break;
@@ -116,7 +143,7 @@ int main(int argc, char **argv)
   if (!hp || !hr || !hm) { printf("VOID: cannot load %s\n", dlerror()); return 2; }
   int all = argc > 3 && !strcmp(argv[3], "all");
   const char *ce = getenv("CRPRELOAD_CONDS");
-  int nc = ce ? atoi(ce) : all ? 5 : 16; if (nc < 1 || nc > 16) nc = 16;
+  int nc = ce ? atoi(ce) : all ? 5 : NCOND; if (nc < 1 || nc > NCOND) nc = NCOND;
   int lg = all ? 32 : argc > 3 ? atoi(argv[3]) : 22; long n = 1L << lg;
   long tot_bad = 0, tot_flag = 0, tested = 0; int voids = 0; unsigned nall = 0; long ctl_all_min = 1L << 40;
   for (unsigned f = 0; f < NF; f++) {
@@ -152,7 +179,7 @@ int main(int argc, char **argv)
     }
     if (sum16(bad) || sum16(flag)) {
       printf("%-9s differ:", FN[f].name);
-      for (int m = 0; m < nc; m++) if (bad[m] || flag[m]) printf(" %c%s results %ld flags %ld;", "NUDZ"[COND[m][0]], CONDNAME[COND[m][1] == 0 ? 0 : COND[m][1] == 0x8000 ? 1 : COND[m][1] == 0x40 ? 2 : 3], bad[m], flag[m]);
+      for (int m = 0; m < nc; m++) if (bad[m] || flag[m]) printf(" %c%s results %ld flags %ld;", "NUDZ"[COND[m][0]], condname(COND[m][1]), bad[m], flag[m]);
       printf("\n");
     }
   }
@@ -196,7 +223,7 @@ int main(int argc, char **argv)
       }
   }
   feclearexcept(ALLX);
-  printf("tested %ld calls (2^%d per function and condition%s; %d conditions: rounding modes by flush-to-zero and denormals-are-zero), %u functions\n", tested, lg, all ? ", every binary32 input" : "", nc, all ? nall : NF - voids);
+  printf("tested %ld calls (2^%d per function and condition%s; %d conditions: rounding modes by the flush settings), %u functions\n", tested, lg, all ? ", every binary32 input" : "", nc, all ? nall : NF - voids);
   printf("results differing from CORE-MATH: %ld; exception flags differing: %ld\n", tot_bad, tot_flag);
   printf("lgamma_r/lgammaf_r sign differing from glibc %s: %ld; at the poles, where C leaves it unspecified: %ld (reported, not judged)\n", gnu_get_libc_version(), sgbad, sgpole);
   printf("errno against glibc %s on special values: %ld of %ld calls differ (reported, not judged)\n", gnu_get_libc_version(), ediff, en);

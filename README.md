@@ -6,7 +6,12 @@ Correctly rounded vector math, as a drop-in replacement for:
 - SLEEF's RVV `libsleef.so.3` on riscv64 (checked under emulation and
   natively on a SpacemiT X60).
 
-The latest release is 0.10.0: on x86-64, a fast mode, `fast/libmvec.so.1`
+The latest release is 0.11.0: `libcrpreload.so` on aarch64 too; in it, a
+faster path for underflowing `exp`, `exp2`, `exp10`, `erfc` and `tgamma`
+(a whole FreeSurfer run costs 13% more than with glibc, not 27%); ways to
+turn the correctly rounded math on without changing the operating system
+(see "In a lab" below); and CORE-MATH's current `sin.c` and `pow.c`, with
+the same results. 0.10.0 added, on x86-64, a fast mode, `fast/libmvec.so.1`
 (`crmvec-run --fast`), which is not correctly rounded but stays within
 OpenCL's accuracy bound for each function at about glibc's speed, with the
 same bits on every CPU with AVX2 and FMA (see "The fast mode" below). 0.9.0
@@ -116,10 +121,10 @@ LD_LIBRARY_PATH=$PWD your-program
 Or install it:
 
 ```
-make lib                  # the libraries only: a C compiler is enough (on aarch64 also libsimde-dev; builds libmvec.so.1 and libsleefgnuabi.so.3; on x86-64 also crpreload/libcrpreload.so)
+make lib                  # the libraries only: a C compiler is enough (on aarch64 also libsimde-dev; builds libmvec.so.1, crpreload/libcrpreload.so, and on aarch64 libsleefgnuabi.so.3)
 make install PREFIX=/usr/local
 crmvec-run your-program   # the program's vector math from crmvec, nothing else changed (crmvec-run --help, --version)
-crmvec-run --libm your-program   # and its scalar libm calls too (x86-64; the preload below)
+crmvec-run --libm your-program   # and its scalar libm calls too (the preload below)
 pkg-config --cflags --libs crmvec   # to link crmvec.h's functions, with an rpath to crmvec
 ```
 
@@ -130,19 +135,28 @@ vector entry points (`_ZGV*`) and `crmvec.h`'s functions (`crmvec_*`), not
 CORE-MATH's `cr_*` functions or the library's internals
 (`crmvec-exports.map`).
 
-**Scalar math too, on x86-64: `libcrpreload.so`** (since 0.9.0). A program's
+**Scalar math too: `libcrpreload.so`** (x86-64 since 0.9.0, aarch64 since 0.11.0). A program's
 ordinary `libm` calls, the ones vectorization doesn't reach, still go to the
 C library, whose last bit depends on the CPU and the glibc version.
 `libcrpreload.so`, installed beside `libmvec.so.1`, has CORE-MATH's 76
 elementary functions under the C library's names (`exp`, `log`, `sin`, `pow`,
 `atan2`, `erfc`, `tgamma`, the float forms, C23's `sinpi` family).
-`crmvec-run --libm` preloads it, or `LD_PRELOAD` does. It holds two builds,
-with FMA and plain x86-64, and picks one per CPU at load; the results are the
-same. It sets `errno` and the exception flags as glibc does, and runs
+`crmvec-run --libm` preloads it, or `LD_PRELOAD` does. On x86-64 it holds
+two builds, with FMA and plain x86-64, and picks one per CPU at load; the
+results are the same. It sets `errno` and the exception flags as glibc does, and runs
 CORE-MATH with flush-to-zero off for `-ffast-math` callers. Where it was
 tried, it made FSL FLIRT, MCFLIRT and ANTs registrations that depended on the
 CPU (AVX2) and on the glibc version byte-identical across both. Its
 checks and costs: [`crpreload/README.md`](crpreload/README.md).
+
+**In a lab, without changing the operating system** (since 0.11.0): `conda install crmvec-libm` turns the correctly
+rounded math on for one conda environment and `conda remove` turns it off;
+`contrib/modules/` has Lmod and Tcl module files for clusters; a container
+needs one mounted file and one variable, no rebuild; and `crmvec-stamp
+OUTPUT_DIR` records in a run's outputs which math it used. What it changes,
+what it doesn't, and when to switch: [`docs/lab.md`](docs/lab.md). Measured
+cases from FSL, ANTs, fMRIPrep, FreeSurfer and AFNI:
+[`docs/evidence.md`](docs/evidence.md).
 
 Packages, from this repository:
 - **Debian and Ubuntu** (`debian/`, `dpkg-buildpackage -b`): built on Ubuntu

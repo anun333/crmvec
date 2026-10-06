@@ -12,7 +12,7 @@ ifeq ($(origin CC),default)
 CC      := gcc
 endif
 .DEFAULT_GOAL := all
-VERSION := 0.10.0
+VERSION := 0.11.0
 # install locations (make install PREFIX=... DESTDIR=...): the libraries go
 # to a directory of their own, so that nothing replaces the system's
 # libmvec.so.1 until a program asks for it (crmvec-run, or the rpath that
@@ -88,8 +88,8 @@ ifeq ($(HOSTARCH),aarch64)
 # a native aarch64 build: the aarch64 rules below with this compiler; the
 # x86 checks do not build here
 all: lib $(A64)/aarch64-check $(A64)/aarch64-check-advsimd $(A64)/nbench
-lib: $(A64)/libmvec.so.1 $(A64)/libsleefgnuabi.so.3
-LIBS_BUILT = $(A64)/libmvec.so.1 $(A64)/libsleefgnuabi.so.3
+lib: $(A64)/libmvec.so.1 $(A64)/libsleefgnuabi.so.3 crpreload/libcrpreload.so
+LIBS_BUILT = $(A64)/libmvec.so.1 $(A64)/libsleefgnuabi.so.3 crpreload/libcrpreload.so
 else
 # mpfrcheck and pownf-search call MPFR 4.2's functions (mpfr_pown,
 # mpfr_powr, mpfr_sinpi, ...): with an older MPFR (openSUSE 15.6 has 4.1)
@@ -107,17 +107,17 @@ lib: libmvec.so.1 crpreload/libcrpreload.so fast/libmvec.so.1
 LIBS_BUILT = libmvec.so.1 crpreload/libcrpreload.so
 endif
 
-# crpreload (x86-64, since 0.9.0): CORE-MATH's 76 elementary functions under their C library names, as a second
-# library beside libmvec.so.1, for programs whose scalar libm calls should be correctly rounded too (LD_PRELOAD, or
-# crmvec-run --libm). Built in crpreload/ from this directory's CORE-MATH copies (its Makefile reads print-sources).
-# aarch64 builds and runs its code but is not checked there yet, so it is left out of lib on aarch64.
+# crpreload (x86-64 since 0.9.0, aarch64 since 0.11.0): CORE-MATH's 76 elementary functions under their C
+# library names, as a second library beside libmvec.so.1, for programs whose scalar libm calls should be correctly
+# rounded too (LD_PRELOAD, or crmvec-run --libm). Built in crpreload/ from this directory's CORE-MATH copies (its
+# Makefile reads print-sources); on aarch64 a single build, every call guarded against FPCR's flush bits.
 CRP_DEPS := $(wildcard crpreload/*.c crpreload/*.h) crpreload/mkdispatch.sh crpreload/Makefile crmvec-fpenv.h
 crpreload/libcrpreload.so: $(CRP_DEPS) $(CR)
 	+$(MAKE) -C crpreload libcrpreload.so CC="$(CC)" CFLAGS="$(CFLAGS)"
 crpreload/crpreload-check: crpreload/crpreload-check.c crpreload/crpreload-list.h
 	+$(MAKE) -C crpreload crpreload-check CC="$(CC)"
 
-install: lib crmvec.h crmvec-simd.h crmvec.pc.in crmvec-run.in
+install: lib crmvec.h crmvec-simd.h crmvec.pc.in crmvec-run.in crmvec-stamp.in
 	install -d $(DESTDIR)$(CRMDIR) $(DESTDIR)$(INCDIR) $(DESTDIR)$(PKGDIR) $(DESTDIR)$(BINDIR)
 	install -m 755 $(LIBS_BUILT) $(DESTDIR)$(CRMDIR)/
 	ln -sf libmvec.so.1 $(DESTDIR)$(CRMDIR)/libmvec.so
@@ -128,6 +128,8 @@ install: lib crmvec.h crmvec-simd.h crmvec.pc.in crmvec-run.in
 	sed -e 's|@CRMDIR@|$(CRMDIR)|g' -e 's|@INCDIR@|$(INCDIR)|g' -e 's|@VERSION@|$(VERSION)|g' crmvec.pc.in > $(DESTDIR)$(PKGDIR)/crmvec.pc
 	sed -e 's|@CRMDIR@|$(CRMRUN)|g' -e 's|@VERSION@|$(VERSION)|g' crmvec-run.in > $(DESTDIR)$(BINDIR)/crmvec-run
 	chmod 755 $(DESTDIR)$(BINDIR)/crmvec-run
+	sed -e 's|@VERSION@|$(VERSION)|g' crmvec-stamp.in > $(DESTDIR)$(BINDIR)/crmvec-stamp
+	chmod 755 $(DESTDIR)$(BINDIR)/crmvec-stamp
 
 # crmvec.h declares what the library defines: compile the definitions with it
 headercheck: crmvec.h crmvec-f16.c crmvec-scalar.c
@@ -429,7 +431,7 @@ ifeq ($(HOSTARCH),aarch64)
 # AdvSIMD ones, through aarch64-check-advsimd; until 2026-09-29 it skipped
 # them all), the simd header, and loops gcc vectorized through this library
 # against CORE-MATH (the drop-in check)
-check: all $(A64)/dropin
+check: all $(A64)/dropin libcrref.so crpreload/crpreload-check
 	@set -e; v() { echo "$$1" | tee -a check.log | tail -1; echo "$$1" | tail -1 | grep -qE $(VERDICTS) || { echo "FAILED: $$2"; exit 1; }; }; \
 	: > check.log; \
 	if grep -qw sve /proc/cpuinfo; then ck=$(A64)/aarch64-check; else ck=$(A64)/aarch64-check-advsimd; echo "no SVE: the AdvSIMD entry points only ($$ck)"; fi; \
@@ -439,6 +441,7 @@ check: all $(A64)/dropin
 	v "$$(./simdcheck.sh $(CC) $(A64)/libmvec.so.1 2>&1)" "simdcheck (crmvec-simd.h: gcc vectorizes all 52 functions without -ffast-math)"; \
 	v "$$($(MAKE) -s --no-print-directory wrapcheck 2>&1 | grep -vE '^make(\[[0-9]+\])?: (Entering|Leaving) directory')" "wrapcheck (every CORE-MATH function called with flush-to-zero off)"; \
 	v "$$(./importcheck.sh $(A64)/libmvec.so.1)" "importcheck (no result depends on the C library's libm)"; \
+	v "$$(cd crpreload && ./crpreload-check ./libcrpreload.so ../libcrref.so 16 2>&1)" "crpreload-check (the libm preload against CORE-MATH: 2^16 inputs a function, every mode, with and without FPCR.FZ)"; \
 	echo "make check: every verdict passed (details in check.log)"
 
 # the AdvSIMD entry points' speed, one column per library (bbench's twin):

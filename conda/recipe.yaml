@@ -5,8 +5,8 @@
 context:
   version: "0.10.0"
 
-package:
-  name: crmvec
+recipe:
+  name: crmvec-split
   version: ${{ version }}
 
 source:
@@ -17,40 +17,75 @@ build:
   number: 0
   skip:
     - not linux
-  script:
-    - make clean
-    - make lib CC="$CC"
-    - make install PREFIX="$PREFIX"
 
-requirements:
-  build:
-    - ${{ compiler('c') }}
-    - ${{ stdlib('c') }}
-    - make
-  host:
-    - if: aarch64
-      then: simde
-  run_exports:
-    - ${{ pin_subpackage("crmvec", upper_bound="x.x") }}
+outputs:
+  - package:
+      name: crmvec
+    build:
+      script:
+        - make clean
+        - make lib CC="$CC"
+        - make install PREFIX="$PREFIX"
+    requirements:
+      build:
+        - ${{ compiler('c') }}
+        - ${{ stdlib('c') }}
+        - make
+      host:
+        - if: aarch64
+          then: simde
+      run_exports:
+        - ${{ pin_subpackage("crmvec", upper_bound="x.x") }}
+    tests:
+      - package_contents:
+          include:
+            - crmvec.h
+          files:
+            - lib/crmvec/libmvec.so.1
+            - lib/crmvec/libcrpreload.so
+            - if: x86_64
+              then: lib/crmvec/fast/libmvec.so.1
+          bin:
+            - crmvec-run
+            - crmvec-stamp
+      - script:
+          - crmvec-run --help
+          - crmvec-run --libm true
+          - crmvec-stamp --help
+          - if: x86_64
+            then: crmvec-run --fast true
 
-tests:
-  - package_contents:
-      include:
-        - crmvec.h
-      files:
-        - lib/crmvec/libmvec.so.1
-        - if: x86_64
-          then: lib/crmvec/libcrpreload.so
-        - if: x86_64
-          then: lib/crmvec/fast/libmvec.so.1
-      bin:
-        - crmvec-run
-  - script:
-      - crmvec-run --help
-      - if: x86_64
-        then: crmvec-run --libm true
-      - if: x86_64
-        then: crmvec-run --fast true
+  # crmvec-libm: installing it is the choice to use crmvec's correctly rounded math for every program run from
+  # this environment (an activation script preloads libcrpreload.so); removing it undoes that. Nothing else.
+  - package:
+      name: crmvec-libm
+    build:
+      noarch: generic
+      script:
+        - mkdir -p $PREFIX/etc/conda/activate.d $PREFIX/etc/conda/deactivate.d
+        - cp conda/libm/activate.sh $PREFIX/etc/conda/activate.d/crmvec-libm.sh
+        - cp conda/libm/deactivate.sh $PREFIX/etc/conda/deactivate.d/crmvec-libm.sh
+        - cp conda/libm/activate.csh $PREFIX/etc/conda/activate.d/crmvec-libm.csh
+        - cp conda/libm/deactivate.csh $PREFIX/etc/conda/deactivate.d/crmvec-libm.csh
+    requirements:
+      run:
+        - ${{ pin_subpackage("crmvec", upper_bound="x.x") }}
+    tests:
+      - package_contents:
+          files:
+            - etc/conda/activate.d/crmvec-libm.sh
+            - etc/conda/deactivate.d/crmvec-libm.sh
+    about:
+      summary: Use crmvec's correctly rounded math for every program run from this environment
+      description: |
+        Installing crmvec-libm makes every program run from this conda
+        environment use crmvec's correctly rounded math functions (exp, log,
+        sin, pow, ...) in place of the system's, through an activation
+        script; removing it undoes that. Correctly rounded math has one
+        result per input, so results stop depending on the CPU and the C
+        library version. They can differ once from results computed with the
+        system's math library: switch at a study boundary. crmvec-stamp
+        OUTPUT_DIR records which math a run used.
 
 about:
   homepage: https://github.com/anun333/crmvec
@@ -63,9 +98,9 @@ about:
   description: |
     The vector functions gcc and clang call when they vectorize a loop over
     sin, exp, pow and 23 more, correctly rounded (bit for bit CORE-MATH's)
-    in every rounding mode; half-precision and bfloat16 arrays. On x86-64,
-    also libcrpreload.so: CORE-MATH's correctly rounded functions under the
-    C library's names, for a program's scalar math (crmvec-run --libm).
+    in every rounding mode; half-precision and bfloat16 arrays. Also
+    libcrpreload.so: CORE-MATH's correctly rounded functions under the C
+    library's names, for a program's scalar math (crmvec-run --libm).
     Installed in lib/crmvec, used through crmvec-run or pkg-config crmvec.
 
 extra:

@@ -11,7 +11,7 @@
 %global debug_package %{nil}
 
 Name:           crmvec
-Version:        0.10.0
+Version:        0.11.0
 Release:        1%{?dist}
 Summary:        Correctly rounded vector math (a drop-in libmvec)
 License:        MIT
@@ -55,12 +55,31 @@ make check
 %license LICENSE LICENSE.CORE-MATH
 %doc README.md
 %{_bindir}/crmvec-run
+%{_bindir}/crmvec-stamp
 %{_includedir}/crmvec.h
 %{_includedir}/crmvec-simd.h
 %{_libdir}/crmvec/
 %{_libdir}/pkgconfig/crmvec.pc
 
 %changelog
+* Mon Oct 05 2026 anun333 <anun333@posteo.net> - 0.11.0-1
+- aarch64: libcrpreload.so, as on x86-64: CORE-MATH's 76 elementary
+  functions under the C library's names (crmvec-run --libm). Checked
+  against CORE-MATH on a Neoverse N1: every input of the 33 one-argument
+  float functions in the four rounding modes and under FZ, and 2^20 inputs
+  of every function in each mode with and without FZ.
+- libcrpreload.so: errno for an underflowing exp, exp2, exp10, erfc or
+  tgamma without testing the exception flag (19 ns a call, from about
+  230); a whole FreeSurfer recon-all costs 13% more than with glibc,
+  from 27%.
+- crmvec-stamp and crmvec-run --stamp record in a run's outputs which math
+  it used; contrib/modules/ has Lmod and Tcl module files; docs/lab.md and
+  docs/evidence.md.
+- CORE-MATH updated to e072473: sin.c (builds where a 128-bit integer to
+  double conversion is missing) and pow.c (no spurious underflow flag in
+  directed rounding). The same results on 2^24 inputs in each rounding
+  mode.
+
 * Fri Oct 02 2026 anun333 <anun333@posteo.net> - 0.10.0-1
 - x86-64: a fast mode, fast/libmvec.so.1 in lib/crmvec/fast/ (crmvec-run
   --fast). Not correctly rounded: each of the 52 functions is one fixed

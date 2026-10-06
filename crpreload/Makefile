@@ -16,7 +16,16 @@ FP      := -ffp-contract=off -frounding-math
 CR      := $(addprefix $(CM)/,$(filter %.c,$(shell $(MAKE) -s -C $(CM) print-sources 2>/dev/null)))
 OBJ     := $(patsubst $(CM)/%.c,obj/%.o,$(CR)) obj/crmvec-roundeven.o
 
+ARCH    := $(shell $(CC) -dumpmachine | cut -d- -f1)
+ifeq ($(ARCH),x86_64)
 all: libcrpreload.so libcrpreload-generic.so libcrpreload-v3.so crpreload-check crpreload-bench
+CHECKED := libcrpreload.so libcrpreload-generic.so libcrpreload-v3.so
+else
+# elsewhere (aarch64, 2026-10-03) one build: no x86-64-v3 copy to dispatch to, and no flush-to-zero table, so
+# every call goes through crmvec-fpenv.h's guard (FPCR's FZ, FZ16 and FIZ off during the call)
+all: libcrpreload.so crpreload-check crpreload-bench
+CHECKED := libcrpreload.so
+endif
 
 obj/%.o: $(CM)/%.c
 	@mkdir -p $(dir $@)
@@ -35,14 +44,21 @@ obj/crpreload.o: crpreload.c $(CM)/crmvec-fpenv.h $(OBJ) $(wildcard crpreload-ft
 libcrpreload-generic.so: obj/crpreload.o $(OBJ)
 	$(CC) $(CFLAGS) -shared -Wl,-z,defs -Wl,-Bsymbolic-functions -Wl,-soname,libcrpreload.so $(LDFLAGS) -o $@ $^ -lm
 
+ifneq ($(ARCH),x86_64)
+libcrpreload.so: obj/crpreload.o $(OBJ)
+	$(CC) $(CFLAGS) -shared -Wl,-z,defs -Wl,-Bsymbolic-functions -Wl,-soname,libcrpreload.so $(LDFLAGS) -o $@ $^ -lm
+endif
+
 # libcrpreload.so (2026-10-01): both builds, each libm name a trampoline to
 # the x86-64-v3 code on a CPU with AVX2 and FMA, the generic code otherwise
 # (mkdispatch.sh); the -generic and -v3 libraries force one, for the checks
+ifeq ($(ARCH),x86_64)
 libcrpreload.so: obj/crpreload.o objv3/crpreload.o $(OBJ) $(OBJV3) mkdispatch.sh
 	bash ./mkdispatch.sh   # not ./: Nix's build sandbox has no /bin/bash for the #! line
 	$(CC) -c -o objd/dispatch.o objd/dispatch.S
 	$(CC) $(CFLAGS) -fPIC -c -o objd/pick.o objd/pick.c
 	$(CC) $(CFLAGS) -shared -Wl,-z,defs -Wl,-Bsymbolic-functions -Wl,-soname,libcrpreload.so -Wl,--version-script=objd/exports.map $(LDFLAGS) -o $@ objd/crpreload-g.o $(OBJ) objd/crpreload-v3.o objd/v3/*.o objd/dispatch.o objd/pick.o -lm
+endif
 
 # the same library built for x86-64-v3 (AVX2, FMA inline instead of calls
 # to glibc's fma); the results are the same, since fma is exact
@@ -66,8 +82,8 @@ print-objects:
 print-objects-v3:
 	@echo $(sort $(OBJV3))
 
-bench: libcrpreload.so libcrpreload-v3.so crpreload-bench
-	./crpreload-bench ./libcrpreload.so ./libcrpreload-v3.so
+bench: $(CHECKED) crpreload-bench
+	./crpreload-bench $(addprefix ./,$(filter-out libcrpreload-generic.so,$(CHECKED)))
 
 # the checks call CORE-MATH directly (crmvec's libcrref.so) as the reference
 crpreload-check: crpreload-check.c crpreload-list.h
@@ -76,7 +92,7 @@ crpreload-bench: crpreload-bench.c crpreload-list.h
 	$(CC) -O2 $(FP) -fno-builtin -o $@ $< -ldl -lm
 
 check: all
-	for l in libcrpreload.so libcrpreload-generic.so libcrpreload-v3.so; do echo "== $$l"; ./crpreload-check ./$$l $(CM)/libcrref.so | tail -1; done
+	for l in $(CHECKED); do echo "== $$l"; ./crpreload-check ./$$l $(CM)/libcrref.so | tail -1; done
 
 clean:
 	rm -rf obj objv3 objd libcrpreload.so libcrpreload-generic.so libcrpreload-v3.so crpreload-check crpreload-bench

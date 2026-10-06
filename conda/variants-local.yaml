@@ -1,0 +1,10 @@
+# variants for a local build of conda/recipe.yaml with rattler-build (conda-forge's CI supplies its own):
+#   rattler-build build --recipe conda/recipe.yaml -m conda/variants-local.yaml -c conda-forge
+c_compiler:
+  - gcc
+c_compiler_version:
+  - "14"
+c_stdlib:
+  - sysroot
+c_stdlib_version:
+  - "2.17"

@@ -91,12 +91,30 @@ static inline int crp_plain_d(double r, int sub)
     unsigned s_ = crp_clear_uf(); crm_fpenv_t e_ = crm_fp_enter(); (void)(call);             \
     int u_ = crp_underflowed(); crp_leave(e_); crp_restore_uf(s_); if (u_) errno = ERANGE;   \
   }
-#define CRP_ERRNO1(TINY, r, x, call)                                                         \
+/* The U functions' tiny results need no flag test: exp, exp10, erfc and tgamma (and their float forms) have no
+   exact zero or subnormal value at a finite argument, so such a result is always an underflow, and exp2's is exact
+   exactly at the integers down to the smallest subnormal. errno then follows from the argument alone. The flag test
+   (clear, call again, test, restore) costs about 200 ns on x86: exp of -800 took 236 ns against glibc's 24, and
+   FreeSurfer's mri_ca_register makes 30 billion exp calls, many of them underflowing, which made it about 2.6 times
+   slower (2026-10-03). The other functions keep it: their zero can be exact (sinpi(3), log(1)). */
+#define CRP_EXACTTINY_exp(x) 0
+#define CRP_EXACTTINY_expf(x) 0
+#define CRP_EXACTTINY_exp10(x) 0
+#define CRP_EXACTTINY_exp10f(x) 0
+#define CRP_EXACTTINY_erfc(x) 0
+#define CRP_EXACTTINY_erfcf(x) 0
+#define CRP_EXACTTINY_tgamma(x) 0
+#define CRP_EXACTTINY_tgammaf(x) 0
+#define CRP_EXACTTINY_exp2(x) ((x) == __builtin_trunc(x) && (x) >= -1074)
+#define CRP_EXACTTINY_exp2f(x) ((x) == __builtin_truncf(x) && (x) >= -149)
+#define CRP_UF1_CRP_SUB(n, r, x, ok, call) if ((ok) && !CRP_EXACTTINY_##n(x)) errno = ERANGE;
+#define CRP_UF1_CRP_ZERO(n, r, x, ok, call) CRP_UF(CRP_ZERO, r, ok, call)
+#define CRP_ERRNO1(n, TINY, r, x, call)                                                      \
   do {                                                                                       \
     if (__builtin_expect(CRP_PLAIN(TINY, r), 1)) break;                                      \
     if (__builtin_expect(isnan(r), 0)) { if (!isnan(x)) errno = EDOM; }                      \
     else if (__builtin_expect(isinf(r), 0)) { if (isfinite(x)) errno = ERANGE; }             \
-    else CRP_UF(TINY, r, x != 0 && isfinite(x), call)                                        \
+    else { CRP_UF1_##TINY(n, r, x, x != 0 && isfinite(x), call) }                            \
   } while (0)
 #define CRP_ERRNO2(TINY, r, x, y, call)                                                      \
   do {                                                                                       \
@@ -126,10 +144,10 @@ static inline int crp_safe(const uint32_t *t, float x) { uint32_t u; memcpy(&u, 
 #define CRP_1F(n, TINY) float cr_##n(float); float n(float x)                                    \
   { float r; if (__builtin_expect(CRP_SAFE(n, x), 1)) r = cr_##n(x);                          \
     else { crm_fpenv_t e = crm_fp_enter(); r = cr_##n(x); crp_leave(e); }                     \
-    CRP_ERRNO1(TINY, r, x, cr_##n(x)); return r; }
+    CRP_ERRNO1(n, TINY, r, x, cr_##n(x)); return r; }
 #define CRP_1(T, n, TINY) T cr_##n(T); T n(T x)                                              \
   { crm_fpenv_t e = crm_fp_enter(); T r = cr_##n(x); crp_leave(e);                           \
-    CRP_ERRNO1(TINY, r, x, cr_##n(x)); return r; }
+    CRP_ERRNO1(n, TINY, r, x, cr_##n(x)); return r; }
 #define CRP_2(T, n, TINY) T cr_##n(T, T); T n(T x, T y)                                      \
   { crm_fpenv_t e = crm_fp_enter(); T r = cr_##n(x, y); crp_leave(e);                        \
     CRP_ERRNO2(TINY, r, x, y, cr_##n(x, y)); return r; }
@@ -171,11 +189,11 @@ static int sign_d(double x)
 static int sign_f(float x) { return sign_d((double)x); }
 double lgamma_r(double x, int *sg)
 { crm_fpenv_t e = crm_fp_enter(); double r = cr_lgamma(x); crp_leave(e); *sg = sign_d(x);
-  CRP_ERRNO1(CRP_ZERO, r, x, cr_lgamma(x)); return r; }
+  CRP_ERRNO1(lgamma, CRP_ZERO, r, x, cr_lgamma(x)); return r; }
 float lgammaf_r(float x, int *sg)
 { float r; if (__builtin_expect(CRP_SAFE(lgammaf, x), 1)) r = cr_lgammaf(x);
   else { crm_fpenv_t e = crm_fp_enter(); r = cr_lgammaf(x); crp_leave(e); } *sg = sign_f(x);
-  CRP_ERRNO1(CRP_ZERO, r, x, cr_lgammaf(x)); return r; }
+  CRP_ERRNO1(lgammaf, CRP_ZERO, r, x, cr_lgammaf(x)); return r; }
 double lgamma(double x) { int s; double r = lgamma_r(x, &s); signgam = s; return r; }
 float lgammaf(float x) { int s; float r = lgammaf_r(x, &s); signgam = s; return r; }
 
