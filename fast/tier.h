@@ -128,7 +128,16 @@ __attribute__((target("avx2,fma"))) static inline __m256 tier2(__m256 x, float t
 #if TIER_LIB == 1 && defined(TIER_CRMVEC)
 /* crmvec's fast mode (its fast/ directory): the kernel under an internal name, which crmvec.c's entry points call on a
    CPU with AVX2 and FMA; the library's export map keeps it local */
+/* both entries below take the kernel inline: with two callers gcc kept cbrtf's out of line, a call in each */
+static inline __m256 tier1(__m256) __attribute__((target("avx2,fma"), always_inline));
 __attribute__((target("avx2,fma"))) __m256 CAT(crt1_, FN)(__m256 x) { return tier1(x); }
+/* the AVX2 entry point (2026-10-06): crmvec.c's IFUNC binds the AVX2 name here on a CPU with AVX2 and FMA. The
+   rounding-mode test and the kernel in one function; outside round-to-nearest, the AVX entry point, which loops over
+   CORE-MATH. The shipped entry tested crm_avx2 and crm_rn() and then called crt1_. */
+#include "../crmvec-rn.h"
+__m256 CAT(_ZGVcN8v_, FN)(__m256);
+__attribute__((target("avx2,fma"))) __m256 CAT(crt1e_, FN)(__m256 x)
+{ if (__builtin_expect(crm_rn(), 1)) return tier1(x); return CAT(_ZGVcN8v_, FN)(x); }
 #elif TIER_LIB == 1
 __attribute__((target("avx2,fma"))) __m256 CAT(_ZGVdN8v_, FN)(__m256 x) { return tier1(x); }
 /* every width runs the same 8-lane kernel (lanes are independent), so a result never depends on which vector width

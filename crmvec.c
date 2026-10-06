@@ -68,18 +68,7 @@
    the median function's time, the additions 5% (2026-09-27); the empty asm
    keeps the compiler from folding them. Elsewhere it asks fegetround. */
 #include "crmvec-rename.h"
-#if defined(CRM_GUARD_OFF)   /* the checks' control: the vector code in every mode */
-static inline __attribute__((always_inline)) int crm_rn(void) { return 1; }
-#elif defined(__x86_64__) || defined(__i386__)
-static inline __attribute__((always_inline)) int crm_rn(void) {
-  __m128d a = _mm_set_pd(-1.0, 1.0);
-  __asm__("" : "+x"(a));
-  __m128d r = _mm_add_pd(a, _mm_set_pd(-0x3p-54, 0x3p-54));
-  return _mm_movemask_pd(_mm_cmpeq_pd(r, _mm_set_pd(-0x1.0000000000001p0, 0x1.0000000000001p0))) == 3;
-}
-#else
-static inline __attribute__((always_inline)) int crm_rn(void) { return fegetround() == FE_TONEAREST; }
-#endif
+#include "crmvec-rn.h"
 
 float cr_expf(float), cr_exp2f(float), cr_exp10f(float);
 float cr_logf(float), cr_log2f(float), cr_log10f(float);
@@ -5352,10 +5341,29 @@ DV2(pownf, __m256, __m256i, float, int32_t, 8, crm_pownf)
    there, and until 2026-09-29 these ran AVX2 code unconditionally (SIGILL on
    Sandy Bridge; emu-check.sh now runs them on one). The only cost is the
    crm_avx2 test. */
+#if CRMVEC_FAST
+/* The fast mode (2026-10-06): each AVX2 name is an IFUNC. On a CPU with AVX2 and FMA it binds to the kernel's own
+   entry, crt1e_<name> (fast/tier.h and the rest), the rounding-mode test and the kernel in one function, so a call
+   costs the test and nothing more; on any other CPU, to the AVX entry point above. The resolver runs once, at load.
+   The shipped entry tested crm_avx2, then crm_rn(), then called crt1_<name>: about 0.12 ns an element over the
+   kernel alone on the cheap floats (fastentry-ab, EPYC 7773X), half of it the rounding-mode test, which must stay.
+   The AVX names stay ordinary functions: crt1e_ falls back to them outside round-to-nearest. */
+#define CRVR(n, k) static void *crvr_##n(void)                                                  \
+  { __builtin_cpu_init(); return __builtin_cpu_supports("avx2") && __builtin_cpu_supports("fma") ? (void *)crt1e_##n : (void *)k; }
+#define F1(n) AVX2 __m256 crt1e_##n(__m256); CRVR(n, _ZGVcN8v_##n)                                \
+  AVXC __m256 crvd_##n(__m256) __asm__("_ZGVdN8v_" #n) __attribute__((ifunc("crvr_" #n)));
+#define D1(n) AVX2 __m256d crt1e_##n(__m256d); CRVR(n, _ZGVcN4v_##n)                              \
+  AVXC __m256d crvd_##n(__m256d) __asm__("_ZGVdN4v_" #n) __attribute__((ifunc("crvr_" #n)));
+#define F2(n) AVX2 __m256 crt1e_##n(__m256, __m256); CRVR(n, _ZGVcN8vv_##n)                       \
+  AVXC __m256 crvd_##n(__m256, __m256) __asm__("_ZGVdN8vv_" #n) __attribute__((ifunc("crvr_" #n)));
+#define D2(n) AVX2 __m256d crt1e_##n(__m256d, __m256d); CRVR(n, _ZGVcN4vv_##n)                    \
+  AVXC __m256d crvd_##n(__m256d, __m256d) __asm__("_ZGVdN4vv_" #n) __attribute__((ifunc("crvr_" #n)));
+#else
 #define F1(n) AVXC __m256 crvd_##n(__m256) __asm__("_ZGVdN8v_" #n) __attribute__((alias("_ZGVcN8v_" #n)));
 #define D1(n) AVXC __m256d crvd_##n(__m256d) __asm__("_ZGVdN4v_" #n) __attribute__((alias("_ZGVcN4v_" #n)));
 #define F2(n) AVXC __m256 crvd_##n(__m256, __m256) __asm__("_ZGVdN8vv_" #n) __attribute__((alias("_ZGVcN8vv_" #n)));
 #define D2(n) AVXC __m256d crvd_##n(__m256d, __m256d) __asm__("_ZGVdN4vv_" #n) __attribute__((alias("_ZGVcN4vv_" #n)));
+#endif
 #else
 /* Elsewhere (the SIMDe route, called by crmvec-aarch64.c and crmvec-sve.c):
    in round-to-nearest, the vector code (crvi_<name>); in any other mode,

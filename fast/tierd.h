@@ -70,7 +70,16 @@ static double tierd_plant;          /* the planted control, as tier.h's TIER_PLA
 #endif
 #ifdef TIER_CRMVEC
 /* crmvec's fast mode: the kernel under an internal name (as tier.h's) */
+/* both entries below take the kernel inline (as tier.h's) */
+static inline __m256d tier1(__m256d) __attribute__((target("avx2,fma"), always_inline));
 __attribute__((target("avx2,fma"))) __m256d CAT(crt1_, FN)(__m256d x) { return tier1(x); }
+/* the AVX2 entry point (2026-10-06): crmvec.c's IFUNC binds the AVX2 name here on a CPU with AVX2 and FMA. The
+   rounding-mode test and the kernel in one function; outside round-to-nearest, the AVX entry point, which loops over
+   CORE-MATH. The shipped entry tested crm_avx2 and crm_rn() and then called crt1_. */
+#include "../crmvec-rn.h"
+__m256d CAT(_ZGVcN4v_, FN)(__m256d);
+__attribute__((target("avx2,fma"))) __m256d CAT(crt1e_, FN)(__m256d x)
+{ if (__builtin_expect(crm_rn(), 1)) return tier1(x); return CAT(_ZGVcN4v_, FN)(x); }
 #else
 __attribute__((target("avx2,fma"))) __m256d CAT(_ZGVdN4v_, FN)(__m256d x) { return tier1(x); }
 __attribute__((target("avx2,fma"))) __m256d CAT(_ZGVcN4v_, FN)(__m256d x) { return tier1(x); }

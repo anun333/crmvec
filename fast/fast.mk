@@ -17,7 +17,7 @@ FAST_LIST := expf:tier-expf.c: exp2f:tier-exp2f.c: exp10f:tier-exp10f.c: logf:ti
   sinh:tierd-expm1.c:-DFAM=1 tanh:tierd-expm1.c:-DFAM=3 pow:tierd-pow.c: atan2:tierd-atan2.c:-DFAM=0 hypot:tierd-hypot.c:
 FAST_NAMES := $(foreach e,$(FAST_LIST),$(word 1,$(subst :, ,$(e))))
 FAST_OBJ   := $(addprefix fast/obj/,$(addsuffix .o,$(FAST_NAMES)))
-FAST_HDR   := $(wildcard fast/*.h) crtest-hard.h
+FAST_HDR   := $(wildcard fast/*.h) crtest-hard.h crmvec-rn.h
 # contraction off: the source is the sequence of operations (gcc's default had fused a multiply and an add in atan2)
 FASTFLAGS  := -O3 -mavx2 -mfma -ffp-contract=off -fno-math-errno -fPIC -DTIER_LIB=1 -DTIER_CRMVEC
 fast_src    = $(word 2,$(subst :, ,$(filter $(1):%,$(FAST_LIST))))
