@@ -16,6 +16,9 @@ build-sleef/
 f16check
 cecheck
 lcheck
+craccuracy
+craccuracy-zsign
+cpupath
 libcrf16.a
 build-f16/
 build-dropin-x86/

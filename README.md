@@ -35,7 +35,8 @@ A correctly rounded function has exactly one right answer for every input, so
 every correct implementation agrees on every machine. Where this was tried,
 it made FSL FLIRT, MCFLIRT and ANTs registrations, and FreeSurfer's Talairach
 transform, that depended on the CPU and the glibc version byte-identical
-across both ([`docs/evidence.md`](docs/evidence.md)).
+across both ([`docs/evidence.md`](docs/evidence.md)). What it changes on each
+LTS distribution, function by function: [`docs/distros.md`](docs/distros.md).
 
 ## Install
 

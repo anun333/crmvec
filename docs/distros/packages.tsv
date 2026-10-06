@@ -1,0 +1,15 @@
+# image	release	glibc package	image created
+centos-7	CentOS Linux 7 (Core)	glibc-2.17-317.el7.x86_64	2021-09-15
+ubuntu-18.04	Ubuntu 18.04.6 LTS	libc6 2.27-3ubuntu1.6	2023-05-30
+almalinux-8	AlmaLinux 8.10 (Cerulean Leopard)	glibc-2.28-251.el8_10.40.x86_64	2026-09-02
+ubuntu-20.04	Ubuntu 20.04.6 LTS	libc6 2.31-0ubuntu9.17	2025-04-08
+debian-11	Debian GNU/Linux 11 (bullseye)	libc6 2.31-13+deb11u14	2026-08-24
+almalinux-9	AlmaLinux 9.8 (Olive Jaguar)	glibc-2.34-275.el9_8.x86_64	2026-10-02
+ubuntu-22.04	Ubuntu 22.04.5 LTS	libc6 2.35-0ubuntu3.14	2026-09-03
+debian-12	Debian GNU/Linux 12 (bookworm)	libc6 2.36-9+deb12u14	2026-09-18
+opensuse-leap-15.6	openSUSE Leap 15.6	glibc-2.38-150600.14.46.1.x86_64	2026-04-24
+ubuntu-24.04	Ubuntu 24.04.5 LTS	libc6 2.39-0ubuntu8.9	2026-09-11
+almalinux-10	AlmaLinux 10.2 (Lavender Lion)	glibc-2.39-128.el10_2.alma.1.x86_64	2026-10-02
+opensuse-leap-16.0	openSUSE Leap 16.0	glibc-2.40-160000.7.1.x86_64	2025-08-26
+debian-13	Debian GNU/Linux 13 (trixie)	libc6 2.41-12+deb13u4	2026-09-18
+ubuntu-26.04	Ubuntu 26.04.1 LTS	libc6 2.43-2ubuntu2.4	2026-09-27

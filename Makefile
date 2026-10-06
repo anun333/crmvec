@@ -211,8 +211,23 @@ endif
 crtest: crtest.c crtest-hard.h port/pow-parity.h crmvec-avx2.o $(LIBC) crmvec-fpenv.c $(HDR) $(CR) libcrf16.a
 	$(CC) $(CFLAGS) $(FP) -mavx2 -mfma -fopenmp -o $@ crtest.c crmvec-avx2.o $(PORTOBJ) $(LIBC) $(CR) $(CRWRAP) libcrf16.a -lm -ldl
 
-libcrref.so: crref.c crmvec-scalar.c crmvec-pownf-tab.h $(CR)
-	$(CC) $(CFLAGS) $(FP) -fPIC -shared -Wl,-z,defs -fopenmp -o $@ crref.c crmvec-scalar.c $(CR) -lm
+# CRREF_OMP= builds it without OpenMP (crref.c's array loops then run serially), and with crmvec-roundeven.c it
+# needs nothing newer than glibc 2.17: so built in manylinux2014 it loads in any distribution (docs/distros.md)
+CRREF_OMP ?= -fopenmp
+libcrref.so: crref.c crmvec-scalar.c crmvec-roundeven.c crmvec-pownf-tab.h $(CR)
+	$(CC) $(CFLAGS) $(FP) -fPIC -shared -Wl,-z,defs $(CRREF_OMP) -o $@ crref.c crmvec-scalar.c crmvec-roundeven.c $(CR) -lm
+
+# how far the C library's libm is from correct rounding, against libcrref.so (docs/distros.md); not part of `all`
+craccuracy: craccuracy.c
+	$(CC) $(CFLAGS) -fno-builtin -pthread -o $@ craccuracy.c -ldl -lm
+
+# craccuracy's other half: results where both are zero with opposite signs (docs/distros.md); not part of `all`
+craccuracy-zsign: craccuracy-zsign.c
+	$(CC) $(CFLAGS) -fno-builtin -pthread -o $@ craccuracy-zsign.c -ldl -lm
+
+# whether the C library's libm gives other bits with AVX2 and FMA hidden (docs/distros.md); not part of `all`
+cpupath: cpupath.c
+	$(CC) $(CFLAGS) -fno-builtin -pthread -o $@ cpupath.c -lm
 
 # baseline x86-64 on purpose (no -mavx): the SSE2 entry points' check must run on a CPU without AVX
 bcheck: bcheck.c crtest-ftz.h
@@ -403,7 +418,7 @@ $(RV64)/rv64-bench: port/rv64-bench.c $(RV64)/libcr.a
 	$(RVCC) -o $@ $(RV64)/rv64-bench.o $(RV64)/libcr.a -ldl -lm
 
 clean:
-	rm -f check.log libmvec.so.1 crmvec.o crmvec-avx2.o crmvec-port.o crmvec-port-e.o crtest libcrref.so bcheck hypot-midpoints hypotf-midpoints tan-poles bbench ebench mpfrcheck pownf-search libcrf16.a f16check cecheck lcheck roundeven-check rsqrt-vcheck
+	rm -f check.log libmvec.so.1 crmvec.o crmvec-avx2.o crmvec-port.o crmvec-port-e.o crtest libcrref.so bcheck hypot-midpoints hypotf-midpoints tan-poles bbench ebench mpfrcheck pownf-search libcrf16.a f16check cecheck lcheck roundeven-check rsqrt-vcheck craccuracy craccuracy-zsign cpupath
 	rm -rf rsqrt-plant fast/obj fast/drv
 	rm -f fast/crmvec.o fast/libmvec.so.1 fast/fastcheck fast/fastbench
 	rm -rf $(A64) $(RV64) build-sleef build-f16
