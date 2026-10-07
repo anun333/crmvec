@@ -39,8 +39,8 @@
   "@type": "Person",
   "name": "anun333"
  },
- "version": "0.11.1",
- "downloadUrl": "https://github.com/anun333/crmvec/releases/tag/v0.11.1"
+ "version": "0.12.0",
+ "downloadUrl": "https://github.com/anun333/crmvec/releases/tag/v0.12.0"
 }
 </script>
 
@@ -102,7 +102,7 @@ footer { color: var(--muted); font-size: 0.88rem; padding-block: 1.6rem 3rem; bo
 <header>
   <h1 class="name">crmvec</h1>
   <p class="tag">Correctly rounded vector math, as a drop-in replacement for the libraries compilers call when they vectorize a loop over <code>sin</code>, <code>exp</code> or <code>pow</code>.</p>
-  <p class="meta">Version 0.11.1 · MIT licence · x86-64, aarch64, riscv64 · results are <a href="https://core-math.gitlabpages.inria.fr/">CORE-MATH</a>'s, bit for bit (and, opt-in, a fast mode that is not)</p>
+  <p class="meta">Version 0.12.0 · MIT licence · x86-64, aarch64, riscv64 · results are <a href="https://core-math.gitlabpages.inria.fr/">CORE-MATH</a>'s, bit for bit (and, opt-in, a fast mode that is not)</p>
   <nav class="links" aria-label="Project links">
     <a href="https://github.com/anun333/crmvec">Source on GitHub</a>
     <a href="https://github.com/anun333/crmvec/releases">Releases</a>
@@ -132,7 +132,7 @@ footer { color: var(--muted); font-size: 0.88rem; padding-block: 1.6rem 3rem; bo
     <li>SLEEF's RVV <code>libsleef.so.3</code> on riscv64 (checked under emulation and natively on a SpacemiT X60);</li>
     <li>since 0.9.0 on x86-64, and since 0.11.0 on aarch64, a program's scalar libm calls too: <code>libcrpreload.so</code> has CORE-MATH's 76 functions under the C library's names, preloaded by <code>crmvec-run --libm</code>, with glibc's errno and exception flags, on glibc 2.17 and later;</li>
     <li>since 0.11.0, ways to turn it on without changing the operating system: module files for clusters, a container recipe of one mounted file and one variable, and <code>crmvec-stamp</code>, which records in a run's outputs which math it used (<a href="https://github.com/anun333/crmvec/blob/main/docs/lab.md">docs/lab.md</a>);</li>
-    <li>since 0.10.0, on x86-64, a fast mode: <code>fast/libmvec.so.1</code>, run with <code>crmvec-run --fast</code>. It is not correctly rounded: each function stays within OpenCL's accuracy bound for it, at a median of 1.09 times glibc's time, with the same bits on every CPU with AVX2 and FMA. Through PoCL, the OpenCL conformance tests' math checks pass with it for the functions PoCL vectorizes (with glibc's <code>libmvec</code>, <code>exp</code> and <code>log</code> fail).</li>
+    <li>since 0.10.0, on x86-64, a fast mode: <code>fast/libmvec.so.1</code>, run with <code>crmvec-run --fast</code>. It is not correctly rounded: each function stays within OpenCL's accuracy bound for it, at a median of 1.02 times glibc's time, with the same bits on every CPU with AVX2 and FMA. Since 0.12.0 those results are versioned: a release that changes any of them says so. Through PoCL, the OpenCL conformance tests' math checks pass with it for the functions PoCL vectorizes (with glibc's <code>libmvec</code>, <code>exp</code> and <code>log</code> fail).</li>
   </ul>
   <p>26 functions, each in float and double:</p>
   <p class="fns">sin cos tan asin acos atan atan2 sinh cosh tanh asinh acosh atanh exp exp2 exp10 expm1 log log2 log10 log1p pow cbrt hypot erf erfc</p>
