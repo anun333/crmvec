@@ -5,7 +5,7 @@
 
 stdenv.mkDerivation {
   pname = "crmvec";
-  version = "0.11.1";
+  version = "0.12.0";
   src = lib.cleanSource ./.;
 
   # SIMDe supplies the x86 intrinsics on aarch64

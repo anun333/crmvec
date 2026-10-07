@@ -5,6 +5,12 @@ checked, is in [`debian/changelog`](debian/changelog) (the same text as
 [`crmvec.spec`](crmvec.spec)'s), and on the
 [releases page](https://github.com/anun333/crmvec/releases).
 
+- **0.12.0:** the fast mode's AVX2 entry points bind straight to its kernels
+  (a median 1.02 times glibc's time, from 1.09) with the same results, which
+  are now versioned and checked (kernel version 1, unchanged since 0.10.0);
+  `crmvec-stamp` records a fast-mode run as such; and
+  [docs/distros.md](docs/distros.md), what crmvec changes on 14 LTS
+  distributions.
 - **0.11.1:** CORE-MATH's current `f16/cbrtf16.c`, which no longer calls the
   C library's `cbrtf`, so crmvec's workaround for it is gone; the same results
   on every half and bfloat16 input.

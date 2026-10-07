@@ -11,7 +11,7 @@
 %global debug_package %{nil}
 
 Name:           crmvec
-Version:        0.11.1
+Version:        0.12.0
 Release:        1%{?dist}
 Summary:        Correctly rounded vector math (a drop-in libmvec)
 License:        MIT
@@ -62,6 +62,25 @@ make check
 %{_libdir}/pkgconfig/crmvec.pc
 
 %changelog
+* Tue Oct 06 2026 anun333 <anun333@posteo.net> - 0.12.0-1
+- The fast mode's AVX2 entry points are IFUNCs, bound at load time to each
+  kernel's own entry, which holds the rounding-mode test: a median 1.02
+  times glibc 2.41's libmvec time on an EPYC 7773X (from 1.09), floats
+  1.00 (from 1.17), and the same results as before on every input.
+- The fast mode's results are versioned: fast/fastbits and
+  fast/bits-v1.txt record kernel version 1, unchanged since 0.10.0, and
+  make check-fast fails on any change; a release that changes a result
+  bumps the version (docs/fast-mode.md). fast/mode-check.sh checks its
+  fallback outside round-to-nearest.
+- crmvec-stamp records a crmvec-run --fast run as the fast mode, not
+  correctly rounded, with its kernel version; it was recorded as correctly
+  rounded.
+- docs/distros.md: what crmvec changes on 14 LTS distributions (glibc 2.17
+  to 2.43), with craccuracy, craccuracy-zsign and cpupath to rerun it
+  (make targets, not in all). libcrref.so links crmvec-roundeven.c and
+  takes CRREF_OMP=, so it loads on glibc 2.17.
+- The correctly rounded library and libcrpreload.so are unchanged.
+
 * Tue Oct 06 2026 anun333 <anun333@posteo.net> - 0.11.1-1
 - CORE-MATH updated to e78b460: f16/cbrtf16.c no longer calls the C
   library's cbrtf, so crmvec-cbrtf16.h, which pointed that call at
