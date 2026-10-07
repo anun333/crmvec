@@ -35,7 +35,7 @@ fast/libmvec.so.1: fast/crmvec.o $(FAST_OBJ) $(LIBC) crmvec-fpenv.c $(HDR) $(CR)
 
 # fastcheck: every entry point of fast/libmvec.so.1 against the kernels (fast/fastcheck.c); the kernels' own checks
 # against OpenCL's bounds are fast/tier*.c's t1ulp modes (fast/bounds.sh)
-fast/fastcheck: fast/fastcheck.c $(FAST_OBJ) libcrref.so crmvec-functions.h
+fast/fastcheck: fast/fastcheck.c fast/fastinputs.h $(FAST_OBJ) libcrref.so crmvec-functions.h
 	$(CC) -O2 -mavx2 -mfma -fopenmp -o $@ fast/fastcheck.c $(FAST_OBJ) -L. -lcrref -Wl,-rpath,'$$ORIGIN/..' -ldl -lm
 
 # check-fast: the fast mode's own checks (not part of check: about an hour on 8 threads). fast/estimates.sh: no kernel
@@ -43,15 +43,20 @@ fast/fastcheck: fast/fastcheck.c $(FAST_OBJ) libcrref.so crmvec-functions.h
 # fast/bounds.sh: every kernel within OpenCL's bound (floats on
 # every input); fastcheck: every entry point gives the kernel's bits; fast/mode-check.sh: outside round-to-nearest
 # it falls back to CORE-MATH (natively)
-check-fast: fast/libmvec.so.1 fast/fastcheck libcrref.so bcheck cecheck
+check-fast: fast/libmvec.so.1 fast/fastcheck fast/fastbits libcrref.so bcheck cecheck
 	fast/estimates.sh
 	fast/emu-check.sh
 	fast/mode-check.sh
+	./fast/fastbits fast/libmvec.so.1 fast/bits-v$(FAST_KERNELS).txt
 	fast/bounds.sh
 	./fast/fastcheck fast/libmvec.so.1
 
+# fastbits: the fast mode's results against those its kernel version records (fast/fastbits.c, docs/fast-mode.md)
+fast/fastbits: fast/fastbits.c fast/fastinputs.h crmvec-functions.h
+	$(CC) -O2 -mavx2 -mfma -fopenmp -o $@ fast/fastbits.c -ldl
+
 clean-fast:
-	rm -rf fast/obj fast/drv fast/crmvec.o fast/libmvec.so.1 fast/fastcheck fast/fastbench
+	rm -rf fast/obj fast/drv fast/crmvec.o fast/libmvec.so.1 fast/fastcheck fast/fastbench fast/fastbits
 .PHONY: check-fast clean-fast
 
 # fastbench: the fast mode's speed against glibc's libmvec and the correctly rounded library (fast/fastbench.c)

@@ -1,17 +1,20 @@
 #!/bin/sh
-# crmvec-stamp DIR: record in DIR that the results in it were computed with crmvec's correctly rounded math, so that
-# whoever reads them later knows. Writes DIR/crmvec-libm.json; when DIR holds a BIDS dataset_description.json, also
-# adds one crmvec entry to its GeneratedBy list. It records what it finds in the environment it runs in (the one the
-# program ran in): libcrpreload.so in LD_PRELOAD (scalar math: crmvec-run --libm, the crmvec-libm conda package or
-# module), crmvec's directory in LD_LIBRARY_PATH (vector math: crmvec-run). With neither, it stamps nothing and says so.
+# crmvec-stamp DIR: record in DIR which of crmvec's math the results in it were computed with, so that whoever reads
+# them later knows. Writes DIR/crmvec-libm.json; when DIR holds a BIDS dataset_description.json, also adds one crmvec
+# entry to its GeneratedBy list. It records what it finds in the environment it runs in (the one the program ran in):
+# libcrpreload.so in LD_PRELOAD (scalar math: crmvec-run --libm, the crmvec-libm conda package or module), and for the
+# vector math the first LD_LIBRARY_PATH directory holding a libmvec.so.1, which is the one the loader uses: crmvec's
+# (correctly rounded: crmvec-run) or crmvec's fast/ (the fast mode, not correctly rounded: crmvec-run --fast, since
+# 2026-10-06; before, a fast-mode run was stamped as correctly rounded). With neither, it stamps nothing and says so.
 # crmvec-run --stamp DIR runs it after the program; it can also be run by hand in the same shell.
 #   crmvec-stamp DIR | --help | --version
 case "${1-}" in
 --help | -h)
   echo "usage: crmvec-stamp DIR"
   echo "Records in DIR/crmvec-libm.json (and in DIR/dataset_description.json's GeneratedBy, for a BIDS"
-  echo "derivative) that the math in this environment was crmvec's correctly rounded one: the same result"
-  echo "on every CPU and C library version. Run it in the environment the program ran in."
+  echo "derivative) which of crmvec's math this environment uses: correctly rounded (the same result on every"
+  echo "CPU and C library version), or the fast mode (not correctly rounded; the same result on every x86-64"
+  echo "CPU with AVX2 and FMA for its kernel version, @FASTKERNELS@). Run it in the environment the program ran in."
   exit 0 ;;
 --version) echo "crmvec-stamp @VERSION@"; exit 0 ;;
 esac
@@ -19,34 +22,50 @@ dir=${1-}
 [ -n "$dir" ] && [ -d "$dir" ] || { echo "usage: crmvec-stamp DIR (DIR must exist; see crmvec-stamp --help)" >&2; exit 2; }
 libm=no; vec=no
 case " ${LD_PRELOAD-} " in *libcrpreload.so*) libm=yes ;; esac
-case ":${LD_LIBRARY_PATH-}:" in *crmvec*) vec=yes ;; esac
+old_ifs=$IFS; IFS=:
+for d in ${LD_LIBRARY_PATH-}; do
+  [ -n "$d" ] && [ -f "$d/libmvec.so.1" ] || continue
+  case ${d%/} in *crmvec*/fast) vec=fast ;; *crmvec*) vec=yes ;; esac
+  break
+done
+IFS=$old_ifs
 if [ $libm = no ] && [ $vec = no ]; then
-  echo "crmvec-stamp: crmvec is not active in this environment (no libcrpreload.so in LD_PRELOAD, no crmvec" >&2
-  echo "directory in LD_LIBRARY_PATH): nothing stamped" >&2
+  echo "crmvec-stamp: crmvec is not active in this environment (no libcrpreload.so in LD_PRELOAD, and the first" >&2
+  echo "LD_LIBRARY_PATH directory with a libmvec.so.1 is not crmvec's): nothing stamped" >&2
   exit 1
 fi
 glibc=$( (ldd --version 2>/dev/null || true) | head -1 | sed 's/.* //')
 now=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+cr="Correctly rounded math has one result per input, so these results do not depend on the CPU or the C library version for the functions crmvec provides. They can differ from results computed with the system's math library, which is accurate to about an ulp but not correctly rounded."
+case $vec in
+yes) vm="correctly rounded (crmvec libmvec.so.1)"; meaning=$cr; desc="correctly rounded math (see crmvec-libm.json)"; kv= ;;
+fast) vm="crmvec's fast mode, not correctly rounded (fast/libmvec.so.1, kernel version @FASTKERNELS@)"
+  meaning="The vector functions ran in crmvec's fast mode, which is not correctly rounded: each result is within OpenCL's accuracy bound for the function, and the same on every x86-64 CPU with AVX2 and FMA for fast-mode kernel version @FASTKERNELS@. Another kernel version, another library, or a CPU without AVX2 and FMA can give other results."
+  [ $libm = yes ] && meaning="$meaning The scalar functions were correctly rounded (CORE-MATH): one result per input, on every CPU and C library version."
+  desc="crmvec's fast mode, not correctly rounded (see crmvec-libm.json)"; kv="
+  \"FastKernelVersion\": @FASTKERNELS@," ;;
+*) vm="the system's"; meaning=$cr; desc="correctly rounded math (see crmvec-libm.json)"; kv= ;;
+esac
 cat > "$dir/crmvec-libm.json" <<EOF
 {
   "Name": "crmvec",
   "Version": "@VERSION@",
   "CodeURL": "https://github.com/anun333/crmvec",
   "ScalarMath": "$( [ $libm = yes ] && echo "correctly rounded (libcrpreload.so, CORE-MATH)" || echo "the system's" )",
-  "VectorMath": "$( [ $vec = yes ] && echo "correctly rounded (crmvec libmvec.so.1)" || echo "the system's" )",
+  "VectorMath": "$vm",$kv
   "Machine": "$(uname -m)",
   "SystemCLibrary": "glibc ${glibc:-unknown}",
   "Stamped": "$now",
-  "Meaning": "Correctly rounded math has one result per input, so these results do not depend on the CPU or the C library version for the functions crmvec provides. They can differ from results computed with the system's math library, which is accurate to about an ulp but not correctly rounded."
+  "Meaning": "$meaning"
 }
 EOF
 echo "crmvec-stamp: wrote $dir/crmvec-libm.json"
 dd="$dir/dataset_description.json"
 if [ -f "$dd" ]; then
   if command -v python3 >/dev/null 2>&1; then
-    python3 - "$dd" "@VERSION@" <<'PY'
+    python3 - "$dd" "@VERSION@" "$desc" <<'PY'
 import json, sys
-path, version = sys.argv[1], sys.argv[2]
+path, version, desc = sys.argv[1], sys.argv[2], sys.argv[3]
 with open(path) as f:
     d = json.load(f)
 gen = d.get("GeneratedBy")
@@ -56,7 +75,7 @@ if any(isinstance(g, dict) and g.get("Name") == "crmvec" for g in gen):
     print("crmvec-stamp: %s already names crmvec in GeneratedBy" % path)
 else:
     gen.append({"Name": "crmvec", "Version": version,
-                "Description": "correctly rounded math (see crmvec-libm.json)",
+                "Description": desc,
                 "CodeURL": "https://github.com/anun333/crmvec"})
     print("crmvec-stamp: added crmvec to GeneratedBy in %s" % path)
 d["GeneratedBy"] = gen

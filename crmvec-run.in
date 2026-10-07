@@ -51,7 +51,7 @@ if [ -n "$fast" ]; then
   fd=; dirs="@CRMDIR@"; old_ifs=$IFS; IFS=:
   for d in $dirs; do [ -f "$d/fast/libmvec.so.1" ] && fd="${fd:+$fd:}$d/fast"; done
   IFS=$old_ifs
-  [ -n "$fd" ] || { echo "crmvec-run: --fast: no fast/libmvec.so.1 in @CRMDIR@ (it is built on x86-64 and aarch64)" >&2; exit 2; }
+  [ -n "$fd" ] || { echo "crmvec-run: --fast: no fast/libmvec.so.1 in @CRMDIR@ (the fast mode is built on x86-64 only)" >&2; exit 2; }
   path="$fd:$path"
 fi
 LD_LIBRARY_PATH="$path${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"; export LD_LIBRARY_PATH

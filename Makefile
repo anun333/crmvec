@@ -13,6 +13,9 @@ CC      := gcc
 endif
 .DEFAULT_GOAL := all
 VERSION := 0.11.1
+# the fast mode's kernel version: its results are those fast/bits-v$(FAST_KERNELS).txt records; a release that
+# changes any of them bumps this and says so (docs/fast-mode.md, "Versions")
+FAST_KERNELS := 1
 # install locations (make install PREFIX=... DESTDIR=...): the libraries go
 # to a directory of their own, so that nothing replaces the system's
 # libmvec.so.1 until a program asks for it (crmvec-run, or the rpath that
@@ -129,7 +132,7 @@ install: lib crmvec.h crmvec-simd.h crmvec.pc.in crmvec-run.in crmvec-stamp.in
 	sed -e 's|@CRMDIR@|$(CRMDIR)|g' -e 's|@INCDIR@|$(INCDIR)|g' -e 's|@VERSION@|$(VERSION)|g' crmvec.pc.in > $(DESTDIR)$(PKGDIR)/crmvec.pc
 	sed -e 's|@CRMDIR@|$(CRMRUN)|g' -e 's|@VERSION@|$(VERSION)|g' crmvec-run.in > $(DESTDIR)$(BINDIR)/crmvec-run
 	chmod 755 $(DESTDIR)$(BINDIR)/crmvec-run
-	sed -e 's|@VERSION@|$(VERSION)|g' crmvec-stamp.in > $(DESTDIR)$(BINDIR)/crmvec-stamp
+	sed -e 's|@VERSION@|$(VERSION)|g' -e 's|@FASTKERNELS@|$(FAST_KERNELS)|g' crmvec-stamp.in > $(DESTDIR)$(BINDIR)/crmvec-stamp
 	chmod 755 $(DESTDIR)$(BINDIR)/crmvec-stamp
 
 # crmvec.h declares what the library defines: compile the definitions with it
@@ -420,7 +423,7 @@ $(RV64)/rv64-bench: port/rv64-bench.c $(RV64)/libcr.a
 clean:
 	rm -f check.log libmvec.so.1 crmvec.o crmvec-avx2.o crmvec-port.o crmvec-port-e.o crtest libcrref.so bcheck hypot-midpoints hypotf-midpoints tan-poles bbench ebench mpfrcheck pownf-search libcrf16.a f16check cecheck lcheck roundeven-check rsqrt-vcheck craccuracy craccuracy-zsign cpupath
 	rm -rf rsqrt-plant fast/obj fast/drv
-	rm -f fast/crmvec.o fast/libmvec.so.1 fast/fastcheck fast/fastbench
+	rm -f fast/crmvec.o fast/libmvec.so.1 fast/fastcheck fast/fastbench fast/fastbits
 	rm -rf $(A64) $(RV64) build-sleef build-f16
 	-$(MAKE) -C crpreload clean
 

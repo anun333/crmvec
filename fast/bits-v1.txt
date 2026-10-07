@@ -1,0 +1,58 @@
+# The fast mode's kernel version 1 (crmvec 0.10.0 onward): for each function, fast/fastbits's hash of its AVX2 entry
+# point's outputs on fastcheck's inputs (fast/fastinputs.h). make check-fast fails if a library's hashes differ; a
+# release that changes any of them must bump FAST_KERNELS in the Makefile and add bits-v2.txt (docs/fast-mode.md).
+# Recorded 2026-10-06 from 0.11.1's fast library (gcc 14, x86-64, AMD EPYC 7773X); 0.10.0's and 0.12.0's give the
+# same 52 hashes, and the correctly rounded library differs in all 52. Kernels built by clang differ in atan2 only:
+# where both arguments are NaN, which argument's NaN it returns (3 results of fastcheck's inputs).
+expf e1b7044160c6e6eb
+exp2f 596df4fa3287486c
+exp10f 56c41e21ee4cb440
+logf 9da8fede44b5d788
+log2f 23a073f7d2e95ccc
+log10f 4f205197e695d10b
+sinf 6bd4ece4baee2c35
+cosf 3c6dd09d3e46e72d
+tanf e2fe3dc3d0c74095
+acosf 90eb69aac9808669
+acoshf b24c4a6d55f7453c
+asinf 2680b6c21b987c65
+asinhf 163ae172317d9cf1
+atanf b13f83a9c7563d7f
+atanhf 006239aac0f56e9b
+cbrtf 2b61c2f0f53482bd
+coshf eaebc4c84b194de0
+erff fbf7dcf3bfcb22fd
+erfcf 26c835c3da19ac91
+expm1f 0ab05a7b46485c15
+log1pf cc5a851108bf3827
+sinhf 04507a3a2e66dacd
+tanhf 14ae87c273d50d99
+exp e611c3bc601d78d5
+log 8bb4e6c136362697
+sin ec48e048a219760e
+cos 3dfc3e20ce94eaa1
+tan e22282f0c4a4721c
+acos 6aa2636041e0de86
+acosh 4ea2abf5e1fdec64
+asin 3f62350cea04a6cc
+asinh 109a538106afdcd2
+atan 95f4128854139ddc
+atanh 12df079ee8ca9bcf
+cbrt 9fcab7cb322dc3ad
+cosh 4eade695d9fbf784
+erf 5313d71c8b3e80f6
+erfc f943681a04bd0187
+exp10 de2804634e7ccb5d
+exp2 79ab50dbb1e2c4fd
+expm1 a79b55587dbbff20
+log10 c8581465a40f7322
+log1p 0e1038b6a2bc006c
+log2 0f3acde3b150cc0f
+sinh 0366c3a439b8539a
+tanh dedd791884b276a7
+powf 8b20cf62cbfd964f
+atan2f 9110e91a36fa855f
+hypotf 181992ae2ac30593
+pow 03d348dd4186a45d
+atan2 56c9a056fa5091e0
+hypot 862901f9e68ac9aa

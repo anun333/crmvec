@@ -92,7 +92,31 @@ fails on it, as it must); `fast/bounds.sh` (above); and `fastcheck`, every
 entry point against the kernel, bit for bit, on every float input of the
 one-argument floats and 2^24 inputs of the rest; and `fast/mode-check.sh`
 (natively, in each directed rounding mode, bcheck and cecheck c and d pass on
-the fast library, and in round-to-nearest cecheck fails on it, as it must).
+the fast library, and in round-to-nearest cecheck fails on it, as it must); and
+`fast/fastbits` against `fast/bits-v1.txt` (below).
+
+**Versions.** The fast mode's results are defined by its kernels, not by
+mathematics, so a change to a kernel would change them, and a run repeated
+with a later crmvec would not reproduce. So they are versioned:
+- **Kernel version 1** has been unchanged since the fast mode shipped in
+  0.10.0. `fast/bits-v1.txt` holds, for each function, a hash of its outputs
+  on fastcheck's inputs. The fast libraries of 0.10.0, 0.11.1 and this release
+  give the same 52 hashes, and `make check-fast` fails on any library that
+  doesn't. (The check can fail: the correctly rounded library differs in all
+  52.)
+- **A release that changes any result** bumps the kernel version
+  (`FAST_KERNELS` in the Makefile, with a new `fast/bits-v2.txt`) and says so
+  in its notes.
+- **`crmvec-run --fast --stamp DIR`** records the kernel version in
+  `DIR/crmvec-libm.json` (`FastKernelVersion`), so results can be traced to
+  the kernels that made them.
+- **Built by gcc.** Kernels built by clang give the same results except in
+  `atan2`, which, when both arguments are NaN, returns the other argument's
+  NaN.
+
+The correctly rounded mode needs no such version. Its results are the one
+right answer for each input, so a later release gives the same results,
+except where a bug is fixed, and then the result moves to that answer.
 
 **Through PoCL** (the OpenCL CTS's own test, 2026-10-02): PoCL main built
 with its defaults, which vectorize `sin`, `cos`, `tan`, `exp`, `log` and `pow`

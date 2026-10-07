@@ -97,6 +97,9 @@ crmvec-run --libm --stamp OUTPUT_DIR PROGRAM ...   # or both at once
 This writes `OUTPUT_DIR/crmvec-libm.json` (crmvec's version, the machine, the
 C library version, and what the setting means) and, when the directory is a
 BIDS derivative, adds crmvec to `dataset_description.json`'s `GeneratedBy`.
+After a `crmvec-run --fast` run it records the fast mode, which is not
+correctly rounded, and its kernel version ([fast-mode.md](fast-mode.md),
+"Versions"). Before 0.12.0 such a run was recorded as correctly rounded.
 Whoever reads the results later then knows how they were computed. It refuses
 to stamp when crmvec is not active in the environment.
 
