@@ -1,0 +1,5 @@
+ba7ab673660a69bc 54132736 results
+f16check hash, recorded 2026-10-07 from two builds whose f16check matched MPFR on every one of those results, with its
+control caught (AlmaLinux 10, gcc 14.3; openSUSE Leap 16.0, gcc 15.3; both the same hash). make check compares it where
+MPFR is older than 4.2. When the half-precision functions or f16check's inputs change, run ./f16check (it must say
+IDENTICAL) and then ./f16check hash, and replace the first line.
