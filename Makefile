@@ -283,11 +283,13 @@ ebench: ebench.c
 # RUNPATH, which LD_LIBRARY_PATH would override), and check that they did
 mpfrcheck: mpfrcheck.c crtest-own.h crmvec-pownf-tab.h libmvec.so.1 pow/pow.c powf.c
 	$(if $(MPFR42),,$(error mpfrcheck needs MPFR 4.2 or later))
-	$(CC) $(CFLAGS) $(FP) -mavx2 -mfma -fopenmp -o $@ mpfrcheck.c pow/pow.c powf.c libmvec.so.1 -Wl,--disable-new-dtags,-rpath,'$$ORIGIN' -lmpfr -lm
+	$(CC) $(CFLAGS) $(FP) -mavx2 -mfma -fopenmp -o $@ mpfrcheck.c pow/pow.c powf.c libmvec.so.1 -Wl,--disable-new-dtags,-rpath,'$$ORIGIN' -lmpfr -lm -ldl
 
 # crmvec-f16.c's functions against MPFR on every input, all four modes
+# Without MPFR 4.2 (RHEL 8 and 9, Ubuntu 22.04, openSUSE Leap 15) f16check is built without MPFR, and make check
+# compares its output hash with f16check-hash.txt, recorded from a build whose outputs matched MPFR (2026-10-07)
 f16check: f16check.c crmvec-f16-list.h crtest-own.h libmvec.so.1
-	$(CC) $(CFLAGS) $(FP) -fopenmp -o $@ f16check.c libmvec.so.1 -Wl,--disable-new-dtags,-rpath,'$$ORIGIN' -lmpfr -lm
+	$(CC) $(CFLAGS) $(FP) -fopenmp $(if $(MPFR42),,-DNO_MPFR) -o $@ f16check.c libmvec.so.1 -Wl,--disable-new-dtags,-rpath,'$$ORIGIN' $(if $(MPFR42),-lmpfr) -lm -ldl
 
 PWS     := crmvec-scalar.c $(CR)
 pownf-search: pownf-search.c crmvec-pownf-tab.h $(PWS)
@@ -502,7 +504,9 @@ check: all rsqrt-vcheck rsqrt-plant/libmvec.so.1 crpreload/libcrpreload.so crpre
 	else echo "rsqrt-vcheck control: with the rounding test off, the hard cases differ, as they must"; fi; \
 	else echo "mpfrcheck, crtest, hypot-midpoints, hypotf-midpoints, rsqrt-vcheck: skipped, no AVX2 and FMA (they call the AVX2 entry points)"; fi; \
 	v "$$(./lcheck .)" "lcheck (every input of sinpif, cospif, tanpif, rsqrtf)"; \
-	v "$$(./f16check | tail -1)" "f16check"; \
+	if [ -n "$(MPFR42)" ]; then v "$$(./f16check | tail -1)" "f16check"; else echo "f16check against MPFR: skipped, MPFR older than 4.2 (the hash below stands in)"; fi; \
+	h=$$(./f16check hash | sed -n 's/^output hash \([0-9a-f]*\) .*/\1/p'); w=$$(awk 'NR==1{print $$1}' f16check-hash.txt); \
+	v "$$(if [ -n "$$h" ] && [ "$$h" = "$$w" ]; then echo "f16check hash $$h: IDENTICAL to the MPFR-checked outputs"; else echo "f16check hash $${h:-none}: differs from the MPFR-checked $$w"; fi)" "f16check hash (f16check-hash.txt)"; \
 	v "$$(./roundeven-check)" "roundeven-check (the library's own roundeven, for glibc before 2.25)"; \
 	v "$$(./simdcheck.sh $(CC) ./libmvec.so.1 2>&1)" "simdcheck (crmvec-simd.h: gcc vectorizes all 52 functions without -ffast-math)"; \
 	v "$$($(MAKE) -s --no-print-directory wrapcheck 2>&1 | grep -vE '^make(\[[0-9]+\])?: (Entering|Leaving) directory')" "wrapcheck (every CORE-MATH function called with flush-to-zero off)"; \
