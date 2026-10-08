@@ -19,6 +19,16 @@ URL:            https://github.com/anun333/crmvec
 Source0:        %{name}-%{version}.tar.gz
 ExclusiveArch:  x86_64 aarch64
 BuildRequires:  gcc make
+# gcc 12 or newer (x86-64 _Float16; __builtin_convertvector from gcc 9): RHEL 8 and 9 build with gcc-toolset-14,
+# openSUSE Leap 15 with gcc13 (2026-10-07: their own gcc 8.5, 11.5 and 7.5 fail)
+%if 0%{?rhel} && 0%{?rhel} < 10
+BuildRequires:  gcc-toolset-14-gcc gcc-toolset-14-annobin-plugin-gcc
+%global crmvec_env . /opt/rh/gcc-toolset-14/enable;
+%endif
+%if 0%{?suse_version} && 0%{?suse_version} < 1600
+BuildRequires:  gcc13
+%global crmvec_cc CC=gcc-13
+%endif
 %ifarch aarch64
 BuildRequires:  simde-devel
 %endif
@@ -43,13 +53,13 @@ or linked with pkg-config crmvec.
 # from clean: a source tree holding an earlier build would otherwise ship
 # that build, since make finds it newer than the sources
 make clean
-%make_build lib CFLAGS="%{optflags}"
+%{?crmvec_env} %make_build lib CFLAGS="%{optflags}" %{?crmvec_cc}
 
 %check
-make check
+%{?crmvec_env} make check %{?crmvec_cc}
 
 %install
-%make_install PREFIX=%{_prefix} LIBDIR=%{_libdir}
+%{?crmvec_env} %make_install PREFIX=%{_prefix} LIBDIR=%{_libdir} %{?crmvec_cc}
 
 %files
 %license LICENSE LICENSE.CORE-MATH

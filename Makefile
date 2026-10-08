@@ -83,7 +83,13 @@ CRWRAP  := crmvec-fpenv.c $(foreach n,$(shell grep -o 'CRW_[A-Z0-9]*([a-z0-9]*)'
 # C library function since 398b235 (2026-10-05).
 F16SRC  := $(wildcard f16/*.c) $(wildcard bf16/*.c)
 F16FLAGS = -ffunction-sections
-libcrf16.a: $(F16SRC)
+# The compiler must have _Float16 (gcc 12 or newer on x86-64) and __builtin_convertvector (gcc 9): checked once,
+# before the first object, so that an older gcc stops with this message, not pages of errors (2026-10-07: RHEL 8's
+# gcc 8.5, RHEL 9's and Ubuntu 22.04's 11, openSUSE Leap 15's 7.5)
+cc-check:
+	@printf 'typedef float v4 __attribute__((vector_size(16)));\ntypedef int i4 __attribute__((vector_size(16)));\n_Float16 h;\ni4 f(v4 a) { return __builtin_convertvector(a, i4); }\n' \
+	  | $(CC) -x c -c -o /dev/null - 2>/dev/null || { echo "crmvec needs gcc 12 or newer: $(CC) $$($(CC) -dumpfullversion 2>/dev/null || $(CC) -dumpversion) lacks _Float16 or __builtin_convertvector. RHEL 8 and 9: . /opt/rh/gcc-toolset-14/enable first; Ubuntu 22.04: make CC=gcc-12; openSUSE Leap 15: make CC=gcc-13" >&2; exit 1; }
+libcrf16.a: $(F16SRC) | cc-check
 	rm -rf build-f16 && mkdir -p build-f16
 	for f in $(F16SRC); do $(CC) $(CFLAGS) $(CPPFLAGS) $(FP) $(F16FLAGS) -fPIC -fvisibility=hidden -c -o build-f16/$$(echo $$f | tr / -).o $$f || exit 1; done
 	rm -f $@ && ar rcs $@ build-f16/*.o
@@ -172,6 +178,7 @@ A64PORT := $(if $(PORT),$(PORT),1)
 PORTCC  ?= $(CC)
 PORTDEFS ?=   # extra -D flags for the port object only (speed experiments)
 PORTOBJ := $(if $(filter 1,$(X86PORT)),crmvec-port.o)
+crmvec-port.o: | cc-check
 crmvec-port.o: port/crmvec-port.c port/portable.h port/port-log.h port/port-exp.h port/port-expf.h port/port-sincos.h port/port-sinf.h port/port-hypf.h port/port-erff.h port/port-logf.h port/port-powf.h port/port-log1pf.h port/port-atanf.h port/port-tanf.h port/port-dfast.h port/port-erf.h port/port-tanh.h port/port-pow.h port/port-expm1.h port/port-sinhcosh.h port/port-asinh.h port/port-atanh.h port/port-atan.h port/port-asin.h port/port-atan2.h port/port-cbrt.h crmvec-powf-tab.h crmvec-atan2-tab.h crmvec-asin-tab.h crmvec-atan-tab.h crmvec-erf-tab.h crmvec-pow-tab.h crmvec-erff-tab.h crmvec-erfcf-tab.h crmvec-rows-tab.h crmvec-exp-tab.h crmvec-sin-tab.h
 	$(PORTCC) $(CPPFLAGS) -O3 -ffp-contract=off -fno-math-errno -mavx2 -mfma -fPIC $(PORTDEFS) -c -o $@ port/crmvec-port.c
 
@@ -184,7 +191,7 @@ ifneq ($(filter-out 0 1,$(E512)),)
 $(error E512 must be 0 or 1, not "$(E512)")
 endif
 EOBJ    := $(if $(filter 1,$(E512)),crmvec-port-e.o)
-crmvec-port-e.o: port/crmvec-port-e.c port/portable.h $(wildcard port/port-*.h) $(HDR) crmvec-functions.h
+crmvec-port-e.o: port/crmvec-port-e.c port/portable.h $(wildcard port/port-*.h) $(HDR) crmvec-functions.h | cc-check
 	$(PORTCC) $(CPPFLAGS) -O3 -ffp-contract=off -fno-math-errno -mavx512f -mavx512dq -mfma -fPIC $(PORTDEFS) -c -o $@ port/crmvec-port-e.c
 PORTOBJ += $(EOBJ)
 
@@ -514,4 +521,4 @@ CRH     := log/dint.h log10/dint.h pow/pow.h pow/dint.h pow/qint.h atan2/tint.h 
 libmvec.so.1 crtest libcrref.so hypot-midpoints hypotf-midpoints tan-poles mpfrcheck pownf-search \
   $(A64)/libmvec.so.1 $(A64)/libsleefgnuabi.so.3 $(A64)/aarch64-check $(A64)/aarch64-check-advsimd $(RV64)/libcr.a: $(CRH)
 
-.PHONY: all lib install headercheck wrapcheck check clean print-sources aarch64 sleef-exports riscv64
+.PHONY: all lib install headercheck wrapcheck check clean cc-check print-sources aarch64 sleef-exports riscv64

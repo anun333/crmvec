@@ -5,6 +5,10 @@ checked, is in [`debian/changelog`](debian/changelog) (the same text as
 [`crmvec.spec`](crmvec.spec)'s), and on the
 [releases page](https://github.com/anun333/crmvec/releases).
 
+- **Unreleased:** building needs gcc 12 or newer (x86-64 `_Float16`), and
+  `make` now says so before compiling anything; `crmvec.spec` builds with
+  gcc-toolset-14 on RHEL 8 and 9 and with gcc13 on openSUSE Leap 15, whose own
+  gcc is older.
 - **0.12.0:** the fast mode's AVX2 entry points bind straight to its kernels
   (a median 1.02 times glibc's time, from 1.09) with the same results, which
   are now versioned and checked (kernel version 1, unchanged since 0.10.0);
