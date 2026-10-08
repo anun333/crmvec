@@ -12,7 +12,7 @@ ifeq ($(origin CC),default)
 CC      := gcc
 endif
 .DEFAULT_GOAL := all
-VERSION := 0.12.0
+VERSION := 0.12.1
 # the fast mode's kernel version: its results are those fast/bits-v$(FAST_KERNELS).txt records; a release that
 # changes any of them bumps this and says so (docs/fast-mode.md, "Versions")
 FAST_KERNELS := 1

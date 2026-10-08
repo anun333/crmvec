@@ -11,7 +11,7 @@
 %global debug_package %{nil}
 
 Name:           crmvec
-Version:        0.12.0
+Version:        0.12.1
 Release:        1%{?dist}
 Summary:        Correctly rounded vector math (a drop-in libmvec)
 License:        MIT
@@ -72,6 +72,21 @@ make clean
 %{_libdir}/pkgconfig/crmvec.pc
 
 %changelog
+* Thu Oct 08 2026 anun333 <anun333@posteo.net> - 0.12.1-1
+- Building needs gcc 13 or newer on x86-64 (__bf16; _Float16 and
+  __builtin_convertvector need 12 and 9), and make now checks before the
+  first object and names the compiler to use on each older release.
+- crmvec.spec builds with gcc-toolset-14 on RHEL 8 and 9 and with gcc13 on
+  openSUSE Leap 15. Its packages build, pass make check, install and run on
+  AlmaLinux 8, 9 and 10, openSUSE Leap 15.6 and 16.0 and Debian 13, as on
+  Fedora and Ubuntu 24.04.
+- The checks find which libmvec.so.1 they loaded by asking the loader: on
+  openSUSE, whose gcc builds non-PIE executables, mpfrcheck came out VOID.
+- f16check builds without MPFR 4.2 and then compares its output hash with
+  f16check-hash.txt, recorded from builds that matched MPFR; mpfrcheck and
+  f16check link -ldl, for glibc before 2.34.
+- The libraries are the same as 0.12.0's.
+
 * Tue Oct 06 2026 anun333 <anun333@posteo.net> - 0.12.0-1
 - The fast mode's AVX2 entry points are IFUNCs, bound at load time to each
   kernel's own entry, which holds the rounding-mode test: a median 1.02

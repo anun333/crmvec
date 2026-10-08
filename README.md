@@ -17,7 +17,7 @@ every CPU, with every glibc version, and in every other correct library.
   OpenCL's accuracy bound for each function, at about glibc's speed, with the
   same bits on every CPU with AVX2 and FMA.
 
-The latest release is 0.12.0 ([changes](CHANGELOG.md)).
+The latest release is 0.12.1 ([changes](CHANGELOG.md)).
 
 ## Why
 
