@@ -19,8 +19,8 @@ URL:            https://github.com/anun333/crmvec
 Source0:        %{name}-%{version}.tar.gz
 ExclusiveArch:  x86_64 aarch64
 BuildRequires:  gcc make
-# gcc 12 or newer (x86-64 _Float16; __builtin_convertvector from gcc 9): RHEL 8 and 9 build with gcc-toolset-14,
-# openSUSE Leap 15 with gcc13 (2026-10-07: their own gcc 8.5, 11.5 and 7.5 fail)
+# gcc 13 or newer (x86-64 __bf16 arithmetic; _Float16 from gcc 12; __builtin_convertvector from gcc 9): RHEL 8 and 9
+# build with gcc-toolset-14, openSUSE Leap 15 with gcc13 (2026-10-07: their own gcc 8.5, 11.5 and 7.5 fail)
 %if 0%{?rhel} && 0%{?rhel} < 10
 BuildRequires:  gcc-toolset-14-gcc gcc-toolset-14-annobin-plugin-gcc
 %global crmvec_env . /opt/rh/gcc-toolset-14/enable;

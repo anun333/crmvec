@@ -46,11 +46,12 @@ From conda-forge:
 conda install -c conda-forge crmvec
 ```
 
-From source (gcc 12 or newer for the libraries; the checks also need MPFR;
-the x86 library needs gcc, see [Limits](docs/limits.md)). Older releases ship a
-newer gcc beside their own: on RHEL 8 and 9, run
-`. /opt/rh/gcc-toolset-14/enable` first; on Ubuntu 22.04 add `CC=gcc-12` to
-each make; on openSUSE Leap 15, `CC=gcc-13`.
+From source (gcc 13 or newer for the libraries; the checks also need MPFR;
+the x86 library needs gcc, see [Limits](docs/limits.md)). Some older releases
+ship a newer gcc beside their own: on RHEL 8 and 9, run
+`. /opt/rh/gcc-toolset-14/enable` first; on openSUSE Leap 15, add `CC=gcc-13`
+to each make. Debian 12 and Ubuntu 22.04 have no gcc 13; conda-forge's crmvec
+runs there.
 
 ```
 make lib                          # on aarch64 also libsimde-dev

@@ -83,12 +83,12 @@ CRWRAP  := crmvec-fpenv.c $(foreach n,$(shell grep -o 'CRW_[A-Z0-9]*([a-z0-9]*)'
 # C library function since 398b235 (2026-10-05).
 F16SRC  := $(wildcard f16/*.c) $(wildcard bf16/*.c)
 F16FLAGS = -ffunction-sections
-# The compiler must have _Float16 (gcc 12 or newer on x86-64) and __builtin_convertvector (gcc 9): checked once,
-# before the first object, so that an older gcc stops with this message, not pages of errors (2026-10-07: RHEL 8's
-# gcc 8.5, RHEL 9's and Ubuntu 22.04's 11, openSUSE Leap 15's 7.5)
+# The compiler must have __bf16 arithmetic (gcc 13 on x86-64), _Float16 (gcc 12) and __builtin_convertvector (gcc 9):
+# checked once, before the first object, so that an older gcc stops with this message, not pages of errors
+# (2026-10-07: RHEL 8's gcc 8.5, RHEL 9's and Ubuntu 22.04's 11, openSUSE Leap 15's 7.5, Debian 12's 12.2)
 cc-check:
-	@printf 'typedef float v4 __attribute__((vector_size(16)));\ntypedef int i4 __attribute__((vector_size(16)));\n_Float16 h;\ni4 f(v4 a) { return __builtin_convertvector(a, i4); }\n' \
-	  | $(CC) -x c -c -o /dev/null - 2>/dev/null || { echo "crmvec needs gcc 12 or newer: $(CC) $$($(CC) -dumpfullversion 2>/dev/null || $(CC) -dumpversion) lacks _Float16 or __builtin_convertvector. RHEL 8 and 9: . /opt/rh/gcc-toolset-14/enable first; Ubuntu 22.04: make CC=gcc-12; openSUSE Leap 15: make CC=gcc-13" >&2; exit 1; }
+	@printf 'typedef float v4 __attribute__((vector_size(16)));\ntypedef int i4 __attribute__((vector_size(16)));\n_Float16 h;\n__bf16 g(__bf16 a) { return (float)a * 2.0f; }\ni4 f(v4 a) { return __builtin_convertvector(a, i4); }\n' \
+	  | $(CC) -x c -c -o /dev/null - 2>/dev/null || { echo "crmvec needs gcc 13 or newer: $(CC) $$($(CC) -dumpfullversion 2>/dev/null || $(CC) -dumpversion) lacks __bf16, _Float16 or __builtin_convertvector. RHEL 8 and 9: . /opt/rh/gcc-toolset-14/enable first; openSUSE Leap 15: make CC=gcc-13" >&2; exit 1; }
 libcrf16.a: $(F16SRC) | cc-check
 	rm -rf build-f16 && mkdir -p build-f16
 	for f in $(F16SRC); do $(CC) $(CFLAGS) $(CPPFLAGS) $(FP) $(F16FLAGS) -fPIC -fvisibility=hidden -c -o build-f16/$$(echo $$f | tr / -).o $$f || exit 1; done
