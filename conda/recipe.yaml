@@ -3,7 +3,7 @@
 # file without these comment lines. The sha256 is the release tarball's (git
 # tag v0.12.0 on anun333/crmvec).
 context:
-  version: "0.12.0"
+  version: "0.12.1"
 
 recipe:
   name: crmvec-split
@@ -11,7 +11,7 @@ recipe:
 
 source:
   url: https://github.com/anun333/crmvec/archive/refs/tags/v${{ version }}.tar.gz
-  sha256: 453ff31c2b090a688ab0cd3d085c19fd792ca6d43ffca212459067a233c17879
+  sha256: 11dd26b8762c0bad253e4cd6d9c387796ce2d38d90152763f99def7612f180d3
 
 build:
   number: 0
