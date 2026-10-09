@@ -129,8 +129,8 @@ The scalar functions, their tables, and the error analyses the vector paths
 rely on are [CORE-MATH](https://core-math.gitlabpages.inria.fr/)'s, by Alexei
 Sibidanov, Paul Zimmermann, Tom Hubrecht and others. Their files are
 included unmodified under their own MIT license and copyright notices. All
-165 are byte-identical to CORE-MATH's master branch at `e78b460`
-(2026-10-06). The
+165 are byte-identical to CORE-MATH's master branch at `040ee48`
+(2026-10-09). The
 `crmvec-*-tab.h` headers copy their tables. Everything else is under the MIT
 license in `LICENSE`.
 
