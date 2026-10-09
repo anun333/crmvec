@@ -1,5 +1,5 @@
 /* generic-expf.c: the portable core's first spike (the forward plan's item
-   2, 2026-09-27; Seth: "3 and 2"), now built from port-expf.h (2026-09-28),
+   2, chosen 2026-09-27), now built from port-expf.h (2026-09-28),
    the same code the library's PORT=1 files use: crmvec's float-lane expf
    family (crmvec.c, expf_fl_core with EXPF_REDUCE, EXP2F_REDUCE and
    EXP10F_REDUCE) in GCC/clang generic vector types, the width VB (bytes)
