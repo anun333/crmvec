@@ -11,9 +11,11 @@ checked, is in [`debian/changelog`](debian/changelog) (the same text as
   111867): those files are now compiled with fp16 off there; packages built
   for the baseline architecture were not affected. On AArch64, `make check`
   now checks every half and bfloat16 input. The CORE-MATH files are those of
-  its master at `ea7a421`, with the same results and exception flags as
-  before on every input checked. The libraries' results are otherwise the
-  same as 0.12.1's.
+  its master at `ea7a421`, with the same numeric results and exception flags
+  as before on every input checked. `sin` of an infinity or a NaN now
+  returns +NaN (it was -NaN), as CORE-MATH's does since 040ee48, so the fast
+  mode's kernel version is 2 (only `sin` differs from version 1). The
+  libraries' results are otherwise the same as 0.12.1's.
 - **0.12.1:** builds on older distribution releases: `crmvec.spec` builds
   with gcc-toolset-14 on RHEL 8 and 9 and with gcc13 on openSUSE Leap 15, and
   its packages pass `make check` on AlmaLinux 8, 9 and 10, Leap 15.6 and 16.0

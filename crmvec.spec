@@ -83,9 +83,13 @@ make clean
   checks every half and bfloat16 input, against MPFR 4.2 or the recorded
   output hash.
 - The CORE-MATH files are those of its master branch at ea7a421 (from
-  e78b460): old against new, the same results and exception flags on
-  805,831,028 and 686,469,600 calls on x86-64 and aarch64, every worst case of
-  the updated binary64 functions included.
+  e78b460): old against new, the same numeric results and exception flags on
+  805,831,028 and 686,469,600 calls on x86-64 and aarch64 (any two NaNs
+  counted equal), every worst case of the updated binary64 functions included.
+- sin of +inf, -inf and a NaN now returns +NaN, where 0.12.1 returned -NaN, in
+  both libraries and the libm preload: CORE-MATH's sin does so since 040ee48.
+  The fast mode's kernel version is therefore 2 (fast/bits-v2.txt): only sin's
+  hash differs from version 1.
 - The libraries' results are otherwise the same as 0.12.1's.
 
 * Thu Oct 08 2026 anun333 <anun333@posteo.net> - 0.12.1-1

@@ -93,17 +93,21 @@ entry point against the kernel, bit for bit, on every float input of the
 one-argument floats and 2^24 inputs of the rest; and `fast/mode-check.sh`
 (natively, in each directed rounding mode, bcheck and cecheck c and d pass on
 the fast library, and in round-to-nearest cecheck fails on it, as it must); and
-`fast/fastbits` against `fast/bits-v1.txt` (below).
+`fast/fastbits` against the kernel version's file, `fast/bits-v2.txt` since 0.12.2 (below).
 
 **Versions.** The fast mode's results are defined by its kernels, not by
 mathematics, so a change to a kernel would change them, and a run repeated
 with a later crmvec would not reproduce. So they are versioned:
-- **Kernel version 1** has been unchanged since the fast mode shipped in
-  0.10.0. `fast/bits-v1.txt` holds, for each function, a hash of its outputs
-  on fastcheck's inputs. The fast libraries of 0.10.0, 0.11.1 and this release
-  give the same 52 hashes, and `make check-fast` fails on any library that
-  doesn't. (The check can fail: the correctly rounded library differs in all
-  52.)
+- **Kernel version 1**, from 0.10.0 to 0.12.1. `fast/bits-v1.txt` holds, for
+  each function, a hash of its outputs on fastcheck's inputs; the fast
+  libraries of 0.10.0, 0.11.1, 0.12.0 and 0.12.1 give the same 52 hashes.
+- **Kernel version 2**, from 0.12.2 (`fast/bits-v2.txt`). Only `sin` changed:
+  for +inf, -inf and a NaN it returns +NaN, where version 1 returned -NaN,
+  because CORE-MATH's `sin`, which the kernel calls for those inputs, does
+  since its commit 040ee48. Every other output of `sin`, and of the other 51
+  functions, is version 1's. `make check-fast` fails on any library that
+  doesn't give the current version's hashes. (The check can fail: the
+  correctly rounded library differs in all 52.)
 - **A release that changes any result** bumps the kernel version
   (`FAST_KERNELS` in the Makefile, with a new `fast/bits-v2.txt`) and says so
   in its notes.

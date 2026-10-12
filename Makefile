@@ -15,7 +15,7 @@ endif
 VERSION := 0.12.2
 # the fast mode's kernel version: its results are those fast/bits-v$(FAST_KERNELS).txt records; a release that
 # changes any of them bumps this and says so (docs/fast-mode.md, "Versions")
-FAST_KERNELS := 1
+FAST_KERNELS := 2
 # install locations (make install PREFIX=... DESTDIR=...): the libraries go
 # to a directory of their own, so that nothing replaces the system's
 # libmvec.so.1 until a program asks for it (crmvec-run, or the rpath that
