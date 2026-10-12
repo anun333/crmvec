@@ -11,7 +11,7 @@
 %global debug_package %{nil}
 
 Name:           crmvec
-Version:        0.12.1
+Version:        0.12.2
 Release:        1%{?dist}
 Summary:        Correctly rounded vector math (a drop-in libmvec)
 License:        MIT
@@ -72,6 +72,22 @@ make clean
 %{_libdir}/pkgconfig/crmvec.pc
 
 %changelog
+* Mon Oct 12 2026 anun333 <anun333@posteo.net> - 0.12.2-1
+- The bfloat16 functions were wrong (125,576 of 54,132,736 results in
+  f16check) when built by GCC 13 on AArch64 with the fp16 extension, as
+  -march=native gives on most current Arm cores: GCC 13 loads a __bf16
+  constant as binary16 (GCC bug 111867, fixed in GCC 14). bf16/*.c are now
+  compiled with fp16 off under GCC before 14. Packages built for the baseline
+  architecture were not affected.
+- On aarch64, make check now builds f16check against the aarch64 library and
+  checks every half and bfloat16 input, against MPFR 4.2 or the recorded
+  output hash.
+- The CORE-MATH files are those of its master branch at ea7a421 (from
+  e78b460): old against new, the same results and exception flags on
+  805,831,028 and 686,469,600 calls on x86-64 and aarch64, every worst case of
+  the updated binary64 functions included.
+- The libraries' results are otherwise the same as 0.12.1's.
+
 * Thu Oct 08 2026 anun333 <anun333@posteo.net> - 0.12.1-1
 - Building needs gcc 13 or newer on x86-64 (__bf16; _Float16 and
   __builtin_convertvector need 12 and 9), and make now checks before the

@@ -5,6 +5,15 @@ checked, is in [`debian/changelog`](debian/changelog) (the same text as
 [`crmvec.spec`](crmvec.spec)'s), and on the
 [releases page](https://github.com/anun333/crmvec/releases).
 
+- **0.12.2:** the bfloat16 functions are correctly rounded when built by GCC
+  13 on AArch64 with the fp16 extension (`-march=native` on most current Arm
+  cores), where GCC 13 loads `__bf16` constants as binary16 (GCC bug
+  111867): those files are now compiled with fp16 off there; packages built
+  for the baseline architecture were not affected. On AArch64, `make check`
+  now checks every half and bfloat16 input. The CORE-MATH files are those of
+  its master at `ea7a421`, with the same results and exception flags as
+  before on every input checked. The libraries' results are otherwise the
+  same as 0.12.1's.
 - **0.12.1:** builds on older distribution releases: `crmvec.spec` builds
   with gcc-toolset-14 on RHEL 8 and 9 and with gcc13 on openSUSE Leap 15, and
   its packages pass `make check` on AlmaLinux 8, 9 and 10, Leap 15.6 and 16.0
