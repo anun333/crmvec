@@ -89,11 +89,21 @@ F16FLAGS = -ffunction-sections
 cc-check:
 	@printf 'typedef float v4 __attribute__((vector_size(16)));\ntypedef int i4 __attribute__((vector_size(16)));\n_Float16 h;\n__bf16 g(__bf16 a) { return (float)a * 2.0f; }\ni4 f(v4 a) { return __builtin_convertvector(a, i4); }\n' \
 	  | $(CC) -x c -c -o /dev/null - 2>/dev/null || { echo "crmvec needs gcc 13 or newer: $(CC) $$($(CC) -dumpfullversion 2>/dev/null || $(CC) -dumpversion) lacks __bf16, _Float16 or __builtin_convertvector. RHEL 8 and 9: . /opt/rh/gcc-toolset-14/enable first; openSUSE Leap 15: make CC=gcc-13" >&2; exit 1; }
-libcrf16.a: $(F16SRC) | cc-check
+# bf16/*.c get crmvec-gcc13-bf16.h: GCC 13 with AArch64's fp16 miscompiles __bf16 constants (GCC PR111867)
+BF16FIX = case $$f in bf16/*) x="-include crmvec-gcc13-bf16.h";; *) x=;; esac
+libcrf16.a: $(F16SRC) crmvec-gcc13-bf16.h | cc-check
 	rm -rf build-f16 && mkdir -p build-f16
-	for f in $(F16SRC); do $(CC) $(CFLAGS) $(CPPFLAGS) $(FP) $(F16FLAGS) -fPIC -fvisibility=hidden -c -o build-f16/$$(echo $$f | tr / -).o $$f || exit 1; done
+	for f in $(F16SRC); do $(BF16FIX); $(CC) $(CFLAGS) $(CPPFLAGS) $(FP) $(F16FLAGS) $$x -fPIC -fvisibility=hidden -c -o build-f16/$$(echo $$f | tr / -).o $$f || exit 1; done
 	rm -f $@ && ar rcs $@ build-f16/*.o
 
+# mpfrcheck and pownf-search call MPFR 4.2's functions (mpfr_pown,
+# mpfr_powr, mpfr_sinpi, ...): with an older MPFR (openSUSE 15.6 has 4.1)
+# they are left out of all and check, with a message, instead of stopping
+# the build (f16check, on both architectures, falls back to its output hash); an MPFR elsewhere goes in through CC or CFLAGS (-I, -L)
+# (the probe writes '#' as printf's \043: make 4.3 and later keep the
+# backslash of a \# inside $(shell), so the directives never reached the
+# compiler and every MPFR passed; a header saying 4.1 caught it, 2026-10-01)
+MPFR42  := $(shell printf '\043include <mpfr.h>\n\043if MPFR_VERSION < MPFR_VERSION_NUM(4,2,0)\n\043error\n\043endif\n' | $(CC) $(CFLAGS) -x c -E - > /dev/null 2>&1 && echo yes)
 ifeq ($(HOSTARCH),aarch64)
 # a native aarch64 build: the aarch64 rules below with this compiler; the
 # x86 checks do not build here
@@ -101,14 +111,6 @@ all: lib $(A64)/aarch64-check $(A64)/aarch64-check-advsimd $(A64)/nbench
 lib: $(A64)/libmvec.so.1 $(A64)/libsleefgnuabi.so.3 crpreload/libcrpreload.so
 LIBS_BUILT = $(A64)/libmvec.so.1 $(A64)/libsleefgnuabi.so.3 crpreload/libcrpreload.so
 else
-# mpfrcheck and pownf-search call MPFR 4.2's functions (mpfr_pown,
-# mpfr_powr, mpfr_sinpi, ...): with an older MPFR (openSUSE 15.6 has 4.1)
-# they are left out of all and check, with a message, instead of stopping
-# the build; an MPFR elsewhere goes in through CC or CFLAGS (-I, -L)
-# (the probe writes '#' as printf's \043: make 4.3 and later keep the
-# backslash of a \# inside $(shell), so the directives never reached the
-# compiler and every MPFR passed; a header saying 4.1 caught it, 2026-10-01)
-MPFR42  := $(shell printf '\043include <mpfr.h>\n\043if MPFR_VERSION < MPFR_VERSION_NUM(4,2,0)\n\043error\n\043endif\n' | $(CC) $(CFLAGS) -x c -E - > /dev/null 2>&1 && echo yes)
 ifeq ($(MPFR42),)
 $(info mpfrcheck, pownf-search: left out, no MPFR 4.2 or later found (they call mpfr_pown, mpfr_sinpi, ...))
 endif
@@ -325,12 +327,12 @@ ifneq ($(filter aarch64,$(HOSTARCH))$(filter aarch64 sleef-exports $(A64)/%,$(MA
 $(error the aarch64 build needs GNU make 4.3 or later (grouped targets); this is $(MAKE_VERSION))
 endif
 endif
-$(A64OBJ) &: $(A64SRC) $(F16SRC)
+$(A64OBJ) &: $(A64SRC) $(F16SRC) crmvec-gcc13-bf16.h
 	mkdir -p $(A64)
 	$(A64CC) $(CFLAGS) $(CPPFLAGS) $(FP) -fPIC -fvisibility=hidden -c -o $(A64)/crmvec.o crmvec.c
 	$(A64CC) $(CFLAGS) $(CPPFLAGS) $(FP) -fPIC -fvisibility=hidden -c -o $(A64)/scalar.o crmvec-scalar.c
 	$(A64CC) $(CFLAGS) $(CPPFLAGS) $(FP) -fPIC -fvisibility=hidden -c -o $(A64)/f16.o crmvec-f16.c
-	rm -rf $(A64)/f16src && mkdir -p $(A64)/f16src && for f in $(F16SRC); do $(A64CC) $(CFLAGS) $(CPPFLAGS) $(FP) $(F16FLAGS) -fPIC -fvisibility=hidden -c -o $(A64)/f16src/$$(echo $$f | tr / -).o $$f || exit 1; done
+	rm -rf $(A64)/f16src && mkdir -p $(A64)/f16src && for f in $(F16SRC); do $(BF16FIX); $(A64CC) $(CFLAGS) $(CPPFLAGS) $(FP) $(F16FLAGS) $$x -fPIC -fvisibility=hidden -c -o $(A64)/f16src/$$(echo $$f | tr / -).o $$f || exit 1; done
 	rm -f $(A64)/libcrf16.a && ar rcs $(A64)/libcrf16.a $(A64)/f16src/*.o
 	$(A64CC) $(CFLAGS) $(CPPFLAGS) $(FP) -DCRMVEC_PORT=$(A64PORT) -fPIC -fvisibility=hidden -c -o $(A64)/advsimd.o crmvec-aarch64.c
 	$(if $(filter 1,$(A64PORT)),$(A64CC) $(CPPFLAGS) -O3 -ffp-contract=off -fno-math-errno -fPIC -fvisibility=hidden $(PORTDEFS) -c -o $(A64)/port.o port/crmvec-port-a64.c)
@@ -454,12 +456,16 @@ wrapcheck: lib
 	 m=$$(comm -23 $$d/defined $$d/wrapped | tr '\n' ' '); n=$$(wc -l < $$d/defined); rm -rf $$d; \
 	 if [ -n "$$m" ] || [ "$$n" -eq 0 ]; then echo "wrapcheck: not wrapped (add to crmvec-fpenv.c): $$m-- FAILED"; exit 1; fi; \
 	 echo "wrapcheck: $$n CORE-MATH functions in $$lib, EVERY CALL WRAPPED"
+# f16check against the aarch64 library: the f16 and bf16 functions on aarch64 had no check until 2026-10-12, when a
+# gcc 13 build with fp16 gave 125,576 wrong results of 54,132,736 there (GCC PR111867, crmvec-gcc13-bf16.h)
+$(A64)/f16check: f16check.c crmvec-f16-list.h crtest-own.h $(A64)/libmvec.so.1
+	$(A64CC) $(CFLAGS) $(FP) -fopenmp $(if $(MPFR42),,-DNO_MPFR) -o $@ f16check.c $(A64)/libmvec.so.1 -Wl,--disable-new-dtags,-rpath,'$$ORIGIN' $(if $(MPFR42),-lmpfr) -lm -ldl
 ifeq ($(HOSTARCH),aarch64)
 # on aarch64: every entry point against CORE-MATH (on a CPU without SVE the
 # AdvSIMD ones, through aarch64-check-advsimd; until 2026-09-29 it skipped
 # them all), the simd header, and loops gcc vectorized through this library
 # against CORE-MATH (the drop-in check)
-check: all $(A64)/dropin libcrref.so crpreload/crpreload-check
+check: all $(A64)/dropin $(A64)/f16check libcrref.so crpreload/crpreload-check
 	@set -e; v() { echo "$$1" | tee -a check.log | tail -1; echo "$$1" | tail -1 | grep -qE $(VERDICTS) || { echo "FAILED: $$2"; exit 1; }; }; \
 	: > check.log; \
 	if grep -qw sve /proc/cpuinfo; then ck=$(A64)/aarch64-check; else ck=$(A64)/aarch64-check-advsimd; echo "no SVE: the AdvSIMD entry points only ($$ck)"; fi; \
@@ -470,6 +476,9 @@ check: all $(A64)/dropin libcrref.so crpreload/crpreload-check
 	v "$$($(MAKE) -s --no-print-directory wrapcheck 2>&1 | grep -vE '^make(\[[0-9]+\])?: (Entering|Leaving) directory')" "wrapcheck (every CORE-MATH function called with flush-to-zero off)"; \
 	v "$$(./importcheck.sh $(A64)/libmvec.so.1)" "importcheck (no result depends on the C library's libm)"; \
 	v "$$(cd crpreload && ./crpreload-check ./libcrpreload.so ../libcrref.so 16 2>&1)" "crpreload-check (the libm preload against CORE-MATH: 2^16 inputs a function, every mode, with and without FPCR.FZ)"; \
+	if [ -n "$(MPFR42)" ]; then v "$$($(A64)/f16check | tail -1)" "$(A64)/f16check"; else echo "f16check against MPFR: skipped, MPFR older than 4.2 (the hash below stands in)"; fi; \
+	h=$$($(A64)/f16check hash | sed -n 's/^output hash \([0-9a-f]*\) .*/\1/p'); w=$$(awk 'NR==1{print $$1}' f16check-hash.txt); \
+	v "$$(if [ -n "$$h" ] && [ "$$h" = "$$w" ]; then echo "f16check hash $$h: IDENTICAL to the MPFR-checked outputs"; else echo "f16check hash $${h:-none}: differs from the MPFR-checked $$w"; fi)" "$(A64)/f16check hash (f16check-hash.txt)"; \
 	echo "make check: every verdict passed (details in check.log)"
 
 # the AdvSIMD entry points' speed, one column per library (bbench's twin):

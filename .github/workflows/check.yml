@@ -93,6 +93,13 @@ jobs:
         run: make -j"$(nproc)"
       - name: make check
         run: make check
+      - name: f16check built with fp16 (gcc 13 miscompiles __bf16 constants there; crmvec-gcc13-bf16.h)
+        run: |
+          gcc --version | head -1
+          mkdir /tmp/crm-fp16 && git archive HEAD | tar -x -C /tmp/crm-fp16 && cd /tmp/crm-fp16   # a fresh tree: no object built without fp16
+          make -j"$(nproc)" CFLAGS="-O2 -march=armv8.2-a+fp16" build-aarch64/f16check >/dev/null
+          h=$(build-aarch64/f16check hash | sed -n 's/^output hash \([0-9a-f]*\) .*/\1/p'); w=$(awk 'NR==1{print $1}' f16check-hash.txt)
+          echo "f16check hash ${h:-none}, MPFR-checked $w"; [ -n "$h" ] && [ "$h" = "$w" ]
       - name: Speed of the AdvSIMD entry points (a shared runner, so noisy)
         run: build-aarch64/nbench build-aarch64/libmvec.so.1 /usr/lib/aarch64-linux-gnu/libmvec.so.1
       - name: The portable core (port/), checked and timed on this CPU
